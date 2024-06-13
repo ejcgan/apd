@@ -1,7 +1,7 @@
 [project]
-name = "mypkg"
+name = "weight_factors"
 version = "0.0.1"
-description = "Sample repository using Apollo best engineering practices"
+description = "Sparse Factorization of Network Weights"
 requires-python = ">=3.11"
 readme = "README.md"
 dependencies = [
@@ -10,16 +10,18 @@ dependencies = [
     "pydantic~=2.0",
     "wandb~=0.16.2",
     "fire~=0.5.0",
-    "tqdm~=4.65.0",
-    "pytest~=8.0.0",
+    "tqdm~=4.66.1",
+    "pytest~=8.1.2",
     "ipykernel~=6.29.0",
+    "transformers~=4.41.2",
+    "transformer-lens~=2.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "ruff~=0.1.14",
-    "pyright~=1.1.348",
-    "pre-commit~=3.6.0",
+    "ruff~=0.4.8",
+    "pyright~=1.1.367",
+    "pre-commit~=3.7.1",
 ]
 
 [build-system]
@@ -27,11 +29,14 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["mypkg"]
+packages = ["weight_factors", "weight_factors.models", "weight_factors.scripts"]
 
 [tool.ruff]
 line-length = 100
 fix = true
+ignore = [
+    "F722" # Incompatible with jaxtyping
+]
 
 [tool.ruff.lint]
 select = [
@@ -57,7 +62,7 @@ docstring-code-format = true
 known-third-party = ["wandb"]
 
 [tool.pyright]
-include = ["mypkg", "tests"]
+include = ["weight_factors", "tests"]
 
 strictListInference = true
 strictDictionaryInference = true
@@ -79,3 +84,9 @@ reportUnusedExpression = true
 reportMatchNotExhaustive = true
 reportShadowedImports = true
 reportPrivateImportUsage = false
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # https://github.com/google/python-fire/pull/447
+    "ignore::DeprecationWarning:fire:59",
+]
