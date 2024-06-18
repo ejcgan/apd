@@ -58,7 +58,8 @@ class Model(nn.Module):
         # W: [instance, n_features, n_hidden]
         hidden = torch.einsum("...if,ifh->...ih", features, self.W)
         out = torch.einsum("...ih,ifh->...if", hidden, self.W)
-        out = out + self.b_final
+        # out = out + self.b_final
+        out = out
         out = F.relu(out)
         return out
 
@@ -177,6 +178,6 @@ if __name__ == "__main__":
     )
     optimize(model)
     # %%
-    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features.png")
+    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features_nobias.png")
 
 # %%
