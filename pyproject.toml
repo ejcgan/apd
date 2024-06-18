@@ -16,6 +16,7 @@ dependencies = [
     "transformers~=4.41.2",
     "transformer-lens~=2.1.0",
     "matplotlib~=3.9.0",
+    "numpy~=1.26.4",
 ]
 
 [project.optional-dependencies]
