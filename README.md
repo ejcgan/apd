@@ -1,4 +1,4 @@
-# weight_factors
+# spd - Sparse Parameter Decomposition
 
 ## Installation
 
