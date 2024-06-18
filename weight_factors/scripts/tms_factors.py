@@ -26,6 +26,8 @@ class Config:
 
     # We could potentially use torch.vmap instead.
     n_instances: int
+    # Number of parameter factors
+    k: int
 
 
 class Model(nn.Module):
@@ -38,10 +40,18 @@ class Model(nn.Module):
     ):
         super().__init__()
         self.config = config
-        self.W = nn.Parameter(
-            torch.empty((config.n_instances, config.n_features, config.n_hidden), device=device)
+        # self.W = nn.Parameter(
+        #     torch.empty((config.n_instances, config.n_features, config.n_hidden), device=device)
+        # )
+        self.A = nn.Parameter(
+            torch.empty((config.n_instances, config.n_features, config.k), device=device)
         )
-        nn.init.xavier_normal_(self.W)
+        self.B = nn.Parameter(
+            torch.empty((config.n_instances, config.k, config.n_hidden), device=device)
+        )
+        # nn.init.xavier_normal_(self.W)
+        nn.init.xavier_normal_(self.A)
+        nn.init.xavier_normal_(self.B)
         self.b_final = nn.Parameter(
             torch.zeros((config.n_instances, config.n_features), device=device)
         )
@@ -53,26 +63,36 @@ class Model(nn.Module):
             importance = torch.ones(())
         self.importance = importance.to(device)
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
+    def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return the output and intermediate hidden states."""
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
-        hidden = torch.einsum("...if,ifh->...ih", features, self.W)
-        out = torch.einsum("...ih,ifh->...if", hidden, self.W)
+        # A: [instance, n_features, k]
+        # B: [instance, k, n_hidden]
+
+        h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
+        hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
+
+        h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
+        out = torch.einsum("...ik,ifk->...if", h_1, self.A)
+
+        # hidden = torch.einsum("...if,ifh->...ih", features, self.W)
+        # out = torch.einsum("...ih,ifh->...if", hidden, self.W)
         out = out + self.b_final
         out = F.relu(out)
-        return out
+        return out, h_0, h_1
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
-            (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
+            (n_batch, self.config.n_instances, self.config.n_features), device=self.A.device
         )
         batch = torch.where(
             torch.rand(
-                (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
+                (n_batch, self.config.n_instances, self.config.n_features), device=self.A.device
             )
             <= self.feature_probability,
             feat,
-            torch.zeros((), device=self.W.device),
+            torch.zeros((), device=self.A.device),
         )
         return batch
 
@@ -96,6 +116,8 @@ def optimize(
     print_freq: int = 100,
     lr: float = 1e-3,
     lr_scale: Callable[[int, int], float] = linear_lr,
+    pnorm: float = 0.5,
+    sparsity_coeff: float = 0.001,
 ) -> None:
     hooks = []
     cfg = model.config
@@ -109,9 +131,14 @@ def optimize(
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)
             batch = model.generate_batch(n_batch)
-            out = model(batch)
+            out, h_0, h_1 = model(batch)
             error = model.importance * (batch.abs() - out) ** 2
-            loss = einops.reduce(error, "b i f -> i", "mean").sum()
+            recon_loss = einops.reduce(error, "b i f -> i", "mean").sum()
+            sparsity_loss = einops.reduce(
+                (h_0 + h_1).norm(p=pnorm, dim=-1), "b i -> i", "mean"
+            ).sum()
+            loss = recon_loss + sparsity_coeff * sparsity_loss
+            # loss = einops.reduce(error, "b i f -> i", "mean").sum()
             loss.backward()
             opt.step()
 
@@ -130,7 +157,8 @@ def optimize(
 
 def plot_intro_diagram(model: Model, filepath: Path) -> None:
     cfg = model.config
-    WA = model.W.detach()
+    WA = model.A.detach() @ model.B.detach()
+    # WA = model.W.detach()
     N = len(WA[:, 0])
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
     plt.rcParams["axes.prop_cycle"] = plt.cycler(
@@ -160,11 +188,16 @@ def plot_intro_diagram(model: Model, filepath: Path) -> None:
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Set torch seeds for reproducibility
+    torch.manual_seed(0)
+    np.random.seed(0)
+
     # %%
     config = Config(
         n_features=5,
         n_hidden=2,
         n_instances=10,
+        k=10,
     )
 
     model = Model(
@@ -175,8 +208,17 @@ if __name__ == "__main__":
         # Sweep feature frequency across the instances from 1 (fully dense) to 1/20
         feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
     )
-    optimize(model)
+    optimize(
+        model,
+        n_batch=1024,
+        steps=20_000,
+        print_freq=100,
+        lr=1e-3,
+        lr_scale=cosine_decay_lr,
+        pnorm=0.5,
+        sparsity_coeff=0.0,
+    )
     # %%
-    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features.png")
+    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_factors_features.png")
 
 # %%

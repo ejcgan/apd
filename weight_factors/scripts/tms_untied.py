@@ -38,10 +38,14 @@ class Model(nn.Module):
     ):
         super().__init__()
         self.config = config
-        self.W = nn.Parameter(
+        self.W_0 = nn.Parameter(
             torch.empty((config.n_instances, config.n_features, config.n_hidden), device=device)
         )
-        nn.init.xavier_normal_(self.W)
+        self.W_1 = nn.Parameter(
+            torch.empty((config.n_instances, config.n_features, config.n_hidden), device=device)
+        )
+        nn.init.xavier_normal_(self.W_0)
+        nn.init.xavier_normal_(self.W_1)
         self.b_final = nn.Parameter(
             torch.zeros((config.n_instances, config.n_features), device=device)
         )
@@ -56,23 +60,23 @@ class Model(nn.Module):
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
-        hidden = torch.einsum("...if,ifh->...ih", features, self.W)
-        out = torch.einsum("...ih,ifh->...if", hidden, self.W)
+        hidden = torch.einsum("...if,ifh->...ih", features, self.W_0)
+        out = torch.einsum("...ih,ifh->...if", hidden, self.W_1)
         out = out + self.b_final
         out = F.relu(out)
         return out
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
-            (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
+            (n_batch, self.config.n_instances, self.config.n_features), device=self.W_0.device
         )
         batch = torch.where(
             torch.rand(
-                (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
+                (n_batch, self.config.n_instances, self.config.n_features), device=self.W_0.device
             )
             <= self.feature_probability,
             feat,
-            torch.zeros((), device=self.W.device),
+            torch.zeros((), device=self.W_0.device),
         )
         return batch
 
@@ -128,9 +132,9 @@ def optimize(
                 )
 
 
-def plot_intro_diagram(model: Model, filepath: Path) -> None:
+def plot_intro_diagram(model: Model) -> None:
     cfg = model.config
-    WA = model.W.detach()
+    WA = model.W_1.detach()
     N = len(WA[:, 0])
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
     plt.rcParams["axes.prop_cycle"] = plt.cycler(
@@ -155,7 +159,7 @@ def plot_intro_diagram(model: Model, filepath: Path) -> None:
             ax.spines[spine].set_visible(False)
         for spine in ["bottom", "left"]:
             ax.spines[spine].set_position("center")
-    plt.savefig(filepath)
+    plt.savefig(Path(__file__).parent / "out" / "tms_features_untied.png")
 
 
 if __name__ == "__main__":
@@ -177,6 +181,6 @@ if __name__ == "__main__":
     )
     optimize(model)
     # %%
-    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features.png")
+    plot_intro_diagram(model)
 
 # %%
