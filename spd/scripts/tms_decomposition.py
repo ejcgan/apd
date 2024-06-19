@@ -194,35 +194,38 @@ def optimize(
 
             # The above sparsity loss calculates the gradient on a single output direction. We want the gradient on all
             # output dimensions
-            sparsity_loss = torch.zeros(
-                out.shape[0], out.shape[1], h_0.shape[-1], device=h_0.device, requires_grad=True
-            )
+            # sparsity_loss = torch.zeros(
+            #     out.shape[0], out.shape[1], h_0.shape[-1], device=h_0.device, requires_grad=True
+            # )
+            sparsity_loss = 0
             for feature_idx in range(out.shape[-1]):
-                grad_h_0, grad_h_1 = torch.autograd.grad(
-                    out[:, :, feature_idx].sum(), (h_0, h_1), retain_graph=True
-                )
-                sparsity_inner = grad_h_0.detach() * h_0 + grad_h_1.detach() * h_1
+                # grad_h_0, grad_h_1 = torch.autograd.grad(
+                #     out[:, :, feature_idx].sum(),
+                #     (h_0, h_1),
+                #     grad_outputs=torch.tensor(1.0, device=out.device),
+                #     retain_graph=True,
+                # )
+                # sparsity_inner = (
+                #     (grad_h_0.detach() * h_0) ** 2 + (grad_h_1.detach() * h_1) ** 2 + 1e-16
+                # ).sqrt()
+                sparsity_inner = h_0
                 sparsity_loss = sparsity_loss + sparsity_inner**2
 
-            sparsity_loss = (sparsity_loss / out.shape[-1]).sqrt()
+            sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
             sparsity_loss = einops.reduce(
                 sparsity_loss.norm(p=pnorm, dim=-1), "b i -> i", "mean"
             ).sum()
 
-            # sparsity_loss = einops.reduce(
-            #     sparsity_inner.norm(p=pnorm, dim=-1), "b i -> i", "mean"
-            # ).sum()
-
             loss = recon_loss + sparsity_coeff * sparsity_loss
-            if step % print_freq == 0:
+            if step % print_freq == print_freq - 1 or step == 0:
                 tqdm.write(f"Reconstruction loss: {recon_loss.item()}")
                 tqdm.write(f"Sparsity loss: {sparsity_loss.item()}")
-                tqdm.write(f"W after {step} steps")
+                tqdm.write(f"W after {step + 1} steps (before gradient update)")
                 plot_intro_diagram(
                     model,
                     weight=model.A.detach() @ model.B.detach(),
                 )
-                tqdm.write(f"B after {step} steps")
+                tqdm.write(f"B after {step + 1} steps (before gradient update)")
                 plot_intro_diagram(
                     model,
                     weight=model.B.detach(),
@@ -233,18 +236,8 @@ def optimize(
             # loss = einops.reduce(error, "b i f -> i", "mean").sum()
             loss.backward()
             opt.step()
-
-            if hooks:
-                hook_data = dict(
-                    model=model, step=step, opt=opt, error=error, loss=loss, lr=step_lr
-                )
-                for h in hooks:
-                    h(hook_data)
-            if step % print_freq == 0 or (step + 1 == steps):
-                t.set_postfix(
-                    loss=loss.item() / cfg.n_instances,
-                    lr=step_lr,
-                )
+            # Force the A matrix to have norm 1 in the second last dimension (the hidden dimension)
+            model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
 
 
 if __name__ == "__main__":
@@ -258,13 +251,13 @@ if __name__ == "__main__":
         n_features=5,
         n_hidden=2,
         n_instances=3,
-        k=5,
+        k=6,
         n_batch=1024,
-        steps=30_000,
+        steps=20_000,
         print_freq=5000,
         lr=1e-3,
         lr_scale=cosine_decay_lr,
-        pnorm=0.5,
+        pnorm=0.75,
         sparsity_coeff=0.001,
     )
 

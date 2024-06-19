@@ -3,7 +3,7 @@
 To use the logger, import it in any module and use it as follows:
 
     ```
-    from weight_factors.log import logger
+    from spd.log import logger
 
     logger.info("Info message")
     logger.warning("Warning message")
