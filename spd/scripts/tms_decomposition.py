@@ -34,10 +34,11 @@ class Config:
     lr: float
     lr_scale: Callable[[int, int], float]
     pnorm: float
-    sparsity_coeff: float
+    max_sparsity_coeff: float
     init_file: str | None = None
     bias_file: str | None = None
     bias_val: float | None = None
+    sparsity_warmup_pct: float = 0.0
 
 
 class Model(nn.Module):
@@ -88,7 +89,7 @@ class Model(nn.Module):
             self.b_final.data = loaded_bias
         elif bias_val is not None:
             print(f"Setting bias to a constant value of {bias_val}")
-            self.b_final.data = torch.ones_like(self.b_final) * bias_val
+            self.b_final = torch.ones_like(self.b_final) * bias_val
 
         if feature_probability is None:
             feature_probability = torch.ones(())
@@ -198,13 +199,20 @@ def optimize(
     print_freq: int = 100,
     lr: float = 1e-3,
     lr_scale: Callable[[int, int], float] = linear_lr,
-    pnorm: float = 0.5,
-    sparsity_coeff: float = 0.001,
+    pnorm: float = 0.75,
+    max_sparsity_coeff: float = 0.01,
+    sparsity_warmup_pct: float = 0.0,
 ) -> None:
     hooks = []
     cfg = model.config
 
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
+
+    def get_sparsity_coeff_linear_warmup(step: int) -> float:
+        warmup_steps = int(steps * sparsity_warmup_pct)
+        if step < warmup_steps:
+            return max_sparsity_coeff * (step / warmup_steps)
+        return max_sparsity_coeff
 
     with trange(steps) as t:
         for step in t:
@@ -293,6 +301,7 @@ def optimize(
             recon_loss = recon_loss.sum()
             sparsity_loss = sparsity_loss.sum()
 
+            sparsity_coeff = get_sparsity_coeff_linear_warmup(step)
             loss = recon_loss + sparsity_coeff * sparsity_loss
 
             # tqdm.write(f"sparsity_inner final instance: {sparsity_inner[:5, -1, :]}")
@@ -355,10 +364,11 @@ if __name__ == "__main__":
         lr=1e-3,
         lr_scale=cosine_decay_lr,
         pnorm=0.75,
-        sparsity_coeff=0.03,
+        max_sparsity_coeff=0.02,
+        # sparsity_warmup_pct=0.2,
         # init_file="tms_factors_features.pt",
         # bias_file="b_final.pt",
-        bias_val=-0.5,
+        # bias_val=-0.1,
     )
 
     model = Model(
@@ -371,8 +381,9 @@ if __name__ == "__main__":
         # feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
         # feature_probability=torch.tensor([1 / 20])[:, None],
         feature_probability=torch.tensor([1 / 20])[:],
-        init_file=config.init_file,
-        bias_file=config.bias_file,
+        # init_file=config.init_file,
+        # bias_file=config.bias_file,
+        # bias_val=config.bias_val,
     )
     # print("Plot of initial W")
     # plot_intro_diagram(
@@ -393,7 +404,8 @@ if __name__ == "__main__":
         lr=config.lr,
         lr_scale=config.lr_scale,
         pnorm=config.pnorm,
-        sparsity_coeff=config.sparsity_coeff,
+        max_sparsity_coeff=config.max_sparsity_coeff,
+        sparsity_warmup_pct=config.sparsity_warmup_pct,
     )
     # Store the weight matrix and bias
     # weight_info = {"A": model.A.detach(), "B": model.B.detach()}
