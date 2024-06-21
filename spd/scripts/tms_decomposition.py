@@ -35,6 +35,7 @@ class Config:
     lr_scale: Callable[[int, int], float]
     pnorm: float
     sparsity_coeff: float
+    init_file: str | None = None
 
 
 class Model(nn.Module):
@@ -44,6 +45,7 @@ class Model(nn.Module):
         feature_probability: torch.Tensor | None = None,
         importance: torch.Tensor | None = None,
         device: str = "cuda",
+        init_file: str | None = None,
     ):
         super().__init__()
         self.config = config
@@ -61,16 +63,17 @@ class Model(nn.Module):
         #     torch.zeros((config.n_instances, config.n_features), device=device)
         # )
         # nn.init.xavier_normal_(self.W)
-        # nn.init.xavier_normal_(self.A)
-        # nn.init.xavier_normal_(self.B)
-
-        # Init A to the the identity in n_features and k, repeaet over the n_instance dimension
-        weight_info = torch.load("tms_factors_features.pt")
-        self.A.data = (
-            torch.eye(config.n_features, config.k).repeat(config.n_instances, 1, 1).to(device)
-        )
-        # # # init B to be the same as W from the initial run
-        self.B.data = weight_info["A"] @ weight_info["B"]
+        if init_file is None:
+            nn.init.xavier_normal_(self.A)
+            nn.init.xavier_normal_(self.B)
+        else:
+            # Init A to the the identity in n_features and k, repeaet over the n_instance dimension
+            weight_info = torch.load(init_file)
+            self.A.data = (
+                torch.eye(config.n_features, config.k).repeat(config.n_instances, 1, 1).to(device)
+            )
+            # # # init B to be the same as W from the initial run
+            self.B.data = weight_info["A"] @ weight_info["B"]
 
         if feature_probability is None:
             feature_probability = torch.ones(())
@@ -90,14 +93,13 @@ class Model(nn.Module):
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        out = torch.einsum("...ik,ifk->...if", h_1, self.A)
+        pre_relu = torch.einsum("...ik,ifk->...if", h_1, self.A)
 
         # hidden = torch.einsum("...if,ifh->...ih", features, self.W)
         # out = torch.einsum("...ih,ifh->...if", hidden, self.W)
         # out = out + self.b_final
-        out = out
-        out = F.relu(out)
-        return out, h_0, h_1
+        out = F.relu(pre_relu)
+        return out, h_0, h_1, hidden, pre_relu
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
@@ -180,23 +182,41 @@ def optimize(
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)
             batch = model.generate_batch(n_batch)
-            out, h_0, h_1 = model(batch)
+            out, h_0, h_1, hidden, pre_relu = model(batch)
 
             # Reconstruction loss
             error = model.importance * (batch.abs() - out) ** 2
-            recon_loss = einops.reduce(error, "b i f -> i", "mean").sum()
+            recon_loss = einops.reduce(error, "b i f -> i", "mean")
 
-            # # Sparsity loss
-            # out_dotted = (model.importance * (out**2)).sum()
-            # # Get the gradient of out_dotted w.r.t h_0 and h_1
-            # grad_h_0, grad_h_1 = torch.autograd.grad(out_dotted, (h_0, h_1), create_graph=True)
-            # sparsity_inner = grad_h_0.detach() * h_0 + grad_h_1.detach() * h_1  # batch, instance, k
+            # # Sparsity loss (in the direction of the output)
+            # out_dotted = (model.importance * (out**2)).sum() / 2
+
+            # # # Get the gradient of out_dotted w.r.t h_0 and h_1
+            # # grad_h_0, grad_h_1 = torch.autograd.grad(out_dotted, (h_0, h_1), create_graph=True)
+            # grad_hidden, grad_pre_relu = torch.autograd.grad(
+            #     out_dotted, (hidden, pre_relu), create_graph=True
+            # )
+            # grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+            # grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+            # sparsity_loss = (
+            #     # (grad_h_0.detach() * h_0) ** 2 + (grad_h_1.detach() * h_1) ** 2 + 1e-16
+            #     # (grad_h_0 * h_0) ** 2 + 1e-16
+            #     # (h_0) ** 2 + 1e-16
+            #     # (grad_h_1) ** 2 + 1e-16
+            #     # (grad_h_1 * h_1) ** 2 + 1e-16
+            #     (grad_h_0 * h_0) ** 2 + 1e-16
+            #     # (grad_h_1.detach()) ** 2 + 1e-16
+            #     # (grad_h_1) ** 2 + 1e-16
+            # ).sqrt()
+
+            # sparsity_loss = h_0.abs()
 
             # The above sparsity loss calculates the gradient on a single output direction. We want the gradient on all
             # output dimensions
             # sparsity_loss = torch.zeros(
             #     out.shape[0], out.shape[1], h_0.shape[-1], device=h_0.device, requires_grad=True
             # )
+
             sparsity_loss = 0
             for feature_idx in range(out.shape[-1]):
                 # grad_h_0, grad_h_1 = torch.autograd.grad(
@@ -205,21 +225,57 @@ def optimize(
                 #     grad_outputs=torch.tensor(1.0, device=out.device),
                 #     retain_graph=True,
                 # )
-                # sparsity_inner = (
-                #     (grad_h_0.detach() * h_0) ** 2 + (grad_h_1.detach() * h_1) ** 2 + 1e-16
-                # ).sqrt()
-                sparsity_inner = h_0
+                grad_hidden, grad_pre_relu = torch.autograd.grad(
+                    out[:, :, feature_idx].sum(),
+                    (hidden, pre_relu),
+                    grad_outputs=torch.tensor(1.0, device=out.device),
+                    retain_graph=True,
+                )
+                grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                sparsity_inner = (
+                    # (grad_h_0.detach() * h_0) ** 2 + (grad_h_1.detach() * h_1) ** 2 + 1e-16
+                    # (grad_h_1.detach()) ** 2 + 1e-16
+                    # (grad_h_0.detach() * h_0) ** 2 + 1e-16
+                    # (grad_h_1.detach() * h_1) ** 2 + 1e-16
+                    ###
+                    (grad_h_0 * h_0) ** 2 + 1e-16
+                    # (grad_h_1 * h_1) ** 2 + 1e-16
+                    # (grad_h_0 * h_0) ** 2 + (grad_h_1 * h_1) ** 2 + 1e-16
+                ).sqrt()
                 sparsity_loss = sparsity_loss + sparsity_inner**2
-
             sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
+
+            # Just h_0 as the sparsity penalty
+            # sparsity_loss = h_1.abs()
+            # sparsity_loss = h_0.abs()
+
             sparsity_loss = einops.reduce(
-                sparsity_loss.norm(p=pnorm, dim=-1), "b i -> i", "mean"
-            ).sum()
+                (sparsity_loss.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
+            )
+            # Do the above pnorm but take to the power of pnorm
+            if step % print_freq == print_freq - 1 or step == 0:
+                sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
+                recon_repr = [f"{x:.4f}" for x in recon_loss]
+                tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
+                tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+            recon_loss = recon_loss.sum()
+            sparsity_loss = sparsity_loss.sum()
 
             loss = recon_loss + sparsity_coeff * sparsity_loss
+
+            # tqdm.write(f"sparsity_inner final instance: {sparsity_inner[:5, -1, :]}")
+            # tqdm.write(f"grad_h_0 times h_0: {grad_h_0[:5, -1, :] * h_0[:5, -1, :]}")
+            # tqdm.write(f"h_0 final instance: {h_0[:5, -1, :]}")
+            # loss = einops.reduce(error, "b i f -> i", "mean").sum()
+            loss.backward()
+            opt.step()
+            # Force the A matrix to have norm 1 in the second last dimension (the hidden dimension)
+            model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
+            # model.B.data = model.B.data / model.B.data.norm(p=2, dim=-1, keepdim=True)
             if step % print_freq == print_freq - 1 or step == 0:
-                tqdm.write(f"Reconstruction loss: {recon_loss.item()}")
-                tqdm.write(f"Sparsity loss: {sparsity_loss.item()}")
+                # tqdm.write(f"Reconstruction loss: {recon_loss.item()}")
+                # tqdm.write(f"Sparsity loss: {sparsity_loss.item()}")
                 tqdm.write(f"W after {step + 1} steps (before gradient update)")
                 plot_intro_diagram(
                     model,
@@ -230,19 +286,27 @@ def optimize(
                     model,
                     weight=model.B.detach(),
                 )
-            # tqdm.write(f"sparsity_inner final instance: {sparsity_inner[:5, -1, :]}")
-            # tqdm.write(f"grad_h_0 times h_0: {grad_h_0[:5, -1, :] * h_0[:5, -1, :]}")
-            # tqdm.write(f"h_0 final instance: {h_0[:5, -1, :]}")
-            # loss = einops.reduce(error, "b i f -> i", "mean").sum()
-            loss.backward()
-            opt.step()
-            # Force the A matrix to have norm 1 in the second last dimension (the hidden dimension)
-            model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
+                tqdm.write(f"W after {step + 1} steps (before gradient update) abs")
+                prev_n_instances = model.config.n_instances
+                model.config.n_instances = 4
+                plot_intro_diagram(
+                    model,
+                    # weight=model.A.detach() @ model.B.detach(),
+                    weight=torch.abs(model.A.detach() @ model.B.detach())[:4],
+                )
+                tqdm.write(f"B after {step + 1} steps (before gradient update) abs")
+                plot_intro_diagram(
+                    model,
+                    # weight=model.B.detach(),
+                    weight=torch.abs(model.B.detach())[:4],
+                )
+                model.config.n_instances = prev_n_instances
 
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # %%
+
     # Set torch seeds for reproducibility
     torch.manual_seed(0)
     np.random.seed(0)
@@ -250,15 +314,16 @@ if __name__ == "__main__":
     config = Config(
         n_features=5,
         n_hidden=2,
-        n_instances=3,
-        k=6,
+        n_instances=15,
+        k=5,
         n_batch=1024,
-        steps=20_000,
+        steps=40_000,
         print_freq=5000,
         lr=1e-3,
         lr_scale=cosine_decay_lr,
         pnorm=0.75,
-        sparsity_coeff=0.001,
+        sparsity_coeff=0.05,
+        # init_file="tms_factors_features.pt",
     )
 
     model = Model(
@@ -271,12 +336,13 @@ if __name__ == "__main__":
         # feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
         # feature_probability=torch.tensor([1 / 20])[:, None],
         feature_probability=torch.tensor([1 / 20])[:],
+        init_file=config.init_file,
     )
-    print("Plot of initial W")
-    plot_intro_diagram(
-        model,
-        weight=torch.load("tms_factors_features_W.pt"),
-    )
+    # print("Plot of initial W")
+    # plot_intro_diagram(
+    #     model,
+    #     weight=torch.load("tms_factors_features_W.pt"),
+    # )
     print("Plot of B at initialization")
     plot_intro_diagram(
         model,
@@ -300,15 +366,19 @@ if __name__ == "__main__":
 
     # %%
 
+    model.config.n_instances = 6
     print("Plot of W after training")
     plot_intro_diagram(
         model,
-        weight=model.A.detach() @ model.B.detach(),
+        # weight=(model.A.detach() @ model.B.detach())[6:9],
+        # weight=torch.abs(model.A.detach() @ model.B.detach())[9:12],
+        weight=torch.abs(model.A.detach() @ model.B.detach())[4:10],
     )
     print("Plot of B after training")
     plot_intro_diagram(
         model,
-        weight=model.B.detach(),
+        # weight=torch.abs(model.B.detach())[9:12],
+        weight=torch.abs(model.B.detach())[4:10],
     )
 
 
