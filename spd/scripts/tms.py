@@ -58,8 +58,7 @@ class Model(nn.Module):
         # W: [instance, n_features, n_hidden]
         hidden = torch.einsum("...if,ifh->...ih", features, self.W)
         out = torch.einsum("...ih,ifh->...if", hidden, self.W)
-        # out = out + self.b_final
-        out = out
+        out = out + self.b_final
         out = F.relu(out)
         return out
 
@@ -165,7 +164,7 @@ if __name__ == "__main__":
     config = Config(
         n_features=5,
         n_hidden=2,
-        n_instances=10,
+        n_instances=15,
     )
 
     model = Model(
@@ -177,6 +176,8 @@ if __name__ == "__main__":
         feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
     )
     optimize(model)
+    # Save the bias of the model to file
+    torch.save(model.b_final, "b_final.pt")
     # %%
     plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features_nobias.png")
 

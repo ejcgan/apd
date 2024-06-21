@@ -36,6 +36,8 @@ class Config:
     pnorm: float
     sparsity_coeff: float
     init_file: str | None = None
+    bias_file: str | None = None
+    bias_val: float | None = None
 
 
 class Model(nn.Module):
@@ -46,6 +48,8 @@ class Model(nn.Module):
         importance: torch.Tensor | None = None,
         device: str = "cuda",
         init_file: str | None = None,
+        bias_file: str | None = None,
+        bias_val: float | None = None,
     ):
         super().__init__()
         self.config = config
@@ -59,14 +63,15 @@ class Model(nn.Module):
             torch.empty((config.n_instances, config.k, config.n_hidden), device=device)
         )
 
-        # self.b_final = nn.Parameter(
-        #     torch.zeros((config.n_instances, config.n_features), device=device)
-        # )
+        self.b_final = torch.zeros(
+            (config.n_instances, config.n_features), device=device, requires_grad=False
+        )
         # nn.init.xavier_normal_(self.W)
         if init_file is None:
             nn.init.xavier_normal_(self.A)
             nn.init.xavier_normal_(self.B)
         else:
+            print("Initializing A to the identity matrix and B to the W from the initial run")
             # Init A to the the identity in n_features and k, repeaet over the n_instance dimension
             weight_info = torch.load(init_file)
             self.A.data = (
@@ -75,6 +80,16 @@ class Model(nn.Module):
             # # # init B to be the same as W from the initial run
             self.B.data = weight_info["A"] @ weight_info["B"]
 
+        if bias_file is not None:
+            print(f"Loading bias from {bias_file}")
+            loaded_bias = torch.load(bias_file)
+            assert loaded_bias.shape == self.b_final.shape
+            assert loaded_bias.abs().sum() > 0
+            self.b_final.data = loaded_bias
+        elif bias_val is not None:
+            print(f"Setting bias to a constant value of {bias_val}")
+            self.b_final.data = torch.ones_like(self.b_final) * bias_val
+
         if feature_probability is None:
             feature_probability = torch.ones(())
         self.feature_probability = feature_probability.to(device)
@@ -82,7 +97,9 @@ class Model(nn.Module):
             importance = torch.ones(())
         self.importance = importance.to(device)
 
-    def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, features: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return the output and intermediate hidden states."""
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
@@ -93,11 +110,11 @@ class Model(nn.Module):
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        pre_relu = torch.einsum("...ik,ifk->...if", h_1, self.A)
+        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
 
         # hidden = torch.einsum("...if,ifh->...ih", features, self.W)
         # out = torch.einsum("...ih,ifh->...if", hidden, self.W)
-        # out = out + self.b_final
+        pre_relu = hidden_2 + self.b_final
         out = F.relu(pre_relu)
         return out, h_0, h_1, hidden, pre_relu
 
@@ -128,7 +145,12 @@ def cosine_decay_lr(step: int, steps: int) -> float:
     return np.cos(0.5 * np.pi * step / (steps - 1))
 
 
-def plot_intro_diagram(model: Model, weight: torch.Tensor, filepath: Path | None = None) -> None:
+def plot_intro_diagram(
+    model: Model,
+    weight: torch.Tensor,
+    filepath: Path | None = None,
+    pos_quadrant_only: bool = False,
+) -> None:
     cfg = model.config
     N = len(weight[:, 0])
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
@@ -148,13 +170,22 @@ def plot_intro_diagram(model: Model, weight: torch.Tensor, filepath: Path | None
 
         z = 1.5
         ax.set_facecolor("#FCFBF8")
-        ax.set_xlim((-z, z))
-        ax.set_ylim((-z, z))
+
+        if pos_quadrant_only:
+            ax.set_xlim((0, z))
+            ax.set_ylim((0, z))
+            ax.spines["left"].set_position(("data", 0))
+            ax.spines["bottom"].set_position(("data", 0))
+        else:
+            ax.set_xlim((-z, z))
+            ax.set_ylim((-z, z))
+            for spine in ["bottom", "left"]:
+                ax.spines[spine].set_position("center")
+
         ax.tick_params(left=True, right=False, labelleft=False, labelbottom=False, bottom=True)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
-        for spine in ["bottom", "left"]:
-            ax.spines[spine].set_position("center")
+
     plt.show()
     if filepath is not None:
         plt.savefig(filepath)
@@ -288,17 +319,19 @@ def optimize(
                 )
                 tqdm.write(f"W after {step + 1} steps (before gradient update) abs")
                 prev_n_instances = model.config.n_instances
-                model.config.n_instances = 4
+                model.config.n_instances = 8
                 plot_intro_diagram(
                     model,
                     # weight=model.A.detach() @ model.B.detach(),
-                    weight=torch.abs(model.A.detach() @ model.B.detach())[:4],
+                    weight=torch.abs(model.A.detach() @ model.B.detach())[:8],
+                    pos_quadrant_only=True,
                 )
                 tqdm.write(f"B after {step + 1} steps (before gradient update) abs")
                 plot_intro_diagram(
                     model,
                     # weight=model.B.detach(),
-                    weight=torch.abs(model.B.detach())[:4],
+                    weight=torch.abs(model.B.detach())[:8],
+                    pos_quadrant_only=True,
                 )
                 model.config.n_instances = prev_n_instances
 
@@ -322,8 +355,10 @@ if __name__ == "__main__":
         lr=1e-3,
         lr_scale=cosine_decay_lr,
         pnorm=0.75,
-        sparsity_coeff=0.05,
+        sparsity_coeff=0.03,
         # init_file="tms_factors_features.pt",
+        # bias_file="b_final.pt",
+        bias_val=-0.5,
     )
 
     model = Model(
@@ -337,6 +372,7 @@ if __name__ == "__main__":
         # feature_probability=torch.tensor([1 / 20])[:, None],
         feature_probability=torch.tensor([1 / 20])[:],
         init_file=config.init_file,
+        bias_file=config.bias_file,
     )
     # print("Plot of initial W")
     # plot_intro_diagram(
@@ -365,7 +401,6 @@ if __name__ == "__main__":
     # torch.save(weight_info, "tms_factors_features.pt")
 
     # %%
-
     model.config.n_instances = 6
     print("Plot of W after training")
     plot_intro_diagram(
