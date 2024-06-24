@@ -200,7 +200,7 @@ def optimize(
     lr: float = 1e-3,
     lr_scale: Callable[[int, int], float] = linear_lr,
     pnorm: float = 0.75,
-    max_sparsity_coeff: float = 0.01,
+    max_sparsity_coeff: float = 0.02,
     sparsity_warmup_pct: float = 0.0,
 ) -> None:
     hooks = []
@@ -229,34 +229,34 @@ def optimize(
 
             # # Sparsity loss (in the direction of the output)
             # out_dotted = (model.importance * (out**2)).sum() / 2
+            # # Sparsity loss (in the direction of the true labels)
+            # out_dotted = model.importance * torch.einsum("b i h,b i h->b i", batch, out).sum()
 
             # # # Get the gradient of out_dotted w.r.t h_0 and h_1
-            # # grad_h_0, grad_h_1 = torch.autograd.grad(out_dotted, (h_0, h_1), create_graph=True)
+            # grad_h_0, grad_h_1 = torch.autograd.grad(out_dotted, (h_0, h_1), create_graph=True)
             # grad_hidden, grad_pre_relu = torch.autograd.grad(
             #     out_dotted, (hidden, pre_relu), create_graph=True
             # )
             # grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
             # grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
             # sparsity_loss = (
-            #     # (grad_h_0.detach() * h_0) ** 2 + (grad_h_1.detach() * h_1) ** 2 + 1e-16
-            #     # (grad_h_0 * h_0) ** 2 + 1e-16
-            #     # (h_0) ** 2 + 1e-16
-            #     # (grad_h_1) ** 2 + 1e-16
-            #     # (grad_h_1 * h_1) ** 2 + 1e-16
+            #     # ((grad_h_0.detach() * h_0) + (grad_h_1.detach() * h_1) + 1e-16).abs()
             #     (grad_h_0 * h_0) ** 2 + 1e-16
-            #     # (grad_h_1.detach()) ** 2 + 1e-16
-            #     # (grad_h_1) ** 2 + 1e-16
+            #     # (h_0) ** 2 + 1e-16
+            #     #   (grad_h_1) ** 2 + 1e-16
+            #     #   (grad_h_1 * h_1) ** 2 + 1e-16
+            #     #  (grad_h_0 * h_0) ** 2 + 1e-16
+            #     #   (grad_h_1.detach()) ** 2 + 1e-16
+            #     #   (grad_h_1) ** 2 + 1e-16
             # ).sqrt()
 
             # sparsity_loss = h_0.abs()
 
             # The above sparsity loss calculates the gradient on a single output direction. We want the gradient on all
             # output dimensions
-            # sparsity_loss = torch.zeros(
-            #     out.shape[0], out.shape[1], h_0.shape[-1], device=h_0.device, requires_grad=True
-            # )
+            sparsity_loss = torch.zeros(out.shape[1], device=out.device, requires_grad=True)
 
-            sparsity_loss = 0
+            # sparsity_loss = 0
             for feature_idx in range(out.shape[-1]):
                 # grad_h_0, grad_h_1 = torch.autograd.grad(
                 #     out[:, :, feature_idx].sum(),
@@ -278,20 +278,25 @@ def optimize(
                     # (grad_h_0.detach() * h_0) ** 2 + 1e-16
                     # (grad_h_1.detach() * h_1) ** 2 + 1e-16
                     ###
-                    (grad_h_0 * h_0) ** 2 + 1e-16
-                    # (grad_h_1 * h_1) ** 2 + 1e-16
-                    # (grad_h_0 * h_0) ** 2 + (grad_h_1 * h_1) ** 2 + 1e-16
-                ).sqrt()
-                sparsity_loss = sparsity_loss + sparsity_inner**2
-            sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
+                    # (grad_h_0 * h_0) ** 2 + 1e-16
+                    #  (grad_h_1 * h_1) ** 2 + 1e-16
+                    (grad_h_0 * h_0) + (grad_h_1 * h_1) + 1e-16
+                )
+                sparsity_inner = einops.reduce(
+                    (sparsity_inner.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
+                )
+                sparsity_loss = sparsity_loss + sparsity_inner
+                # sparsity_loss = sparsity_loss + sparsity_inner**2
+            # sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
+            # sparsity_loss = sparsity_loss / out.shape[-1] + 1e-16
 
             # Just h_0 as the sparsity penalty
             # sparsity_loss = h_1.abs()
             # sparsity_loss = h_0.abs()
 
-            sparsity_loss = einops.reduce(
-                (sparsity_loss.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
-            )
+            # sparsity_loss = einops.reduce(
+            #     (sparsity_loss.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
+            # )
             # Do the above pnorm but take to the power of pnorm
             if step % print_freq == print_freq - 1 or step == 0:
                 sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
@@ -361,10 +366,10 @@ if __name__ == "__main__":
         n_batch=1024,
         steps=40_000,
         print_freq=5000,
-        lr=1e-3,
+        lr=5e-2,
         lr_scale=cosine_decay_lr,
         pnorm=0.75,
-        max_sparsity_coeff=0.02,
+        max_sparsity_coeff=0.002,
         # sparsity_warmup_pct=0.2,
         # init_file="tms_factors_features.pt",
         # bias_file="b_final.pt",
@@ -383,7 +388,7 @@ if __name__ == "__main__":
         feature_probability=torch.tensor([1 / 20])[:],
         # init_file=config.init_file,
         # bias_file=config.bias_file,
-        # bias_val=config.bias_val,
+        bias_val=config.bias_val,
     )
     # print("Plot of initial W")
     # plot_intro_diagram(
