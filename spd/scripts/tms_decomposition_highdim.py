@@ -359,8 +359,8 @@ if __name__ == "__main__":
     np.random.seed(0)
 
     config = Config(
-        n_features=5,
-        n_hidden=2,
+        n_features=20,
+        n_hidden=10,
         n_instances=15,
         k=5,
         n_batch=1024,
