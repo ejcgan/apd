@@ -8,6 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm, trange
+from scipy.optimize import linear_sum_assignment
 
 
 # %%
@@ -254,6 +255,52 @@ def optimize(
                 tqdm.write(f"Sparsity loss: {sparsity_loss.item()}")
                 # Measure the frob norm between the A matrix and the identity matrix
                 # I.e. "how far away from the identity is the A matrix".
+                closeness = calculate_closeness_to_identity(model.A.data)
+                tqdm.write(f"Closeness to identity: {closeness:.4f}")
+
+
+def calculate_closeness_to_identity(A: torch.Tensor) -> float:
+    """
+    Calculate how close the A matrix is to an identity matrix after taking the absolute value
+    and permuting the rows to align with the leading diagonal.
+    
+    Args:
+    A (torch.Tensor): The A matrix with shape (n_instances, n_features, k)
+    
+    Returns:
+    float: A measure of closeness to identity (1.0 means identical, lower values indicate less similarity)
+    """
+    # Take absolute value
+    A_abs = torch.abs(A)
+    
+    # Calculate closeness for each instance
+    closeness_sum = 0
+    for i in range(A.shape[0]):
+        A_instance = A_abs[i].cpu().detach().numpy()
+        n, k = A_instance.shape
+        
+        # Use the Hungarian algorithm to find the optimal permutation
+        cost_matrix = -A_instance  # We want to maximize, so negate the values
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        
+        # Permute the matrix
+        A_permuted = A_instance[row_ind]
+        
+        # Calculate the Frobenius norm between A_permuted and the identity matrix
+        if n >= k:
+            identity = np.eye(n, k)
+        else:
+            identity = np.eye(n, k)[:, :n]
+        
+        diff = A_permuted - identity
+        frobenius_norm = np.linalg.norm(diff, 'fro')
+        
+        # Calculate closeness (1 / (1 + frobenius_norm) will be close to 1 if frobenius_norm is small)
+        closeness = 1 / (1 + frobenius_norm)
+        closeness_sum += closeness
+    
+    # Return average closeness across all instances
+    return closeness_sum / A.shape[0]
 
 
 if __name__ == "__main__":
