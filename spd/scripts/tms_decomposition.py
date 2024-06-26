@@ -13,6 +13,8 @@ from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm, trange
 
+from spd.utils import calculate_closeness_to_identity, permute_to_identity
+
 
 # %%
 @dataclass
@@ -348,6 +350,13 @@ def optimize(
                     pos_quadrant_only=True,
                 )
                 model.config.n_instances = prev_n_instances
+
+                closeness_vals: list[str] = []
+                for i in range(model.config.n_instances):
+                    permuted_matrix = permute_to_identity(model.A[i])
+                    closeness = calculate_closeness_to_identity(permuted_matrix)
+                    closeness_vals.append(f"{closeness:.4f}")
+                tqdm.write(f"Closeness to identity: {closeness_vals}")
 
 
 if __name__ == "__main__":
