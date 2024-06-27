@@ -8,7 +8,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm, trange
-from scipy.optimize import linear_sum_assignment
+
+from spd.utils import calculate_closeness_to_identity, permute_to_identity
 
 
 # %%
@@ -184,18 +185,11 @@ def optimize(
 
             # sparsity_loss = h_0.abs()
 
-            # The above sparsity loss calculates the gradient on a single output direction. We want the gradient on all
-            # output dimensions
-            sparsity_loss = torch.zeros(out.shape[1], device=out.device, requires_grad=True)
-
-            # sparsity_loss = 0
+            # The above sparsity loss calculates the gradient on a single output direction. We want
+            # the gradient on all output dimensions
+            assert pnorm == 1, "Currently only pnorm=1 is supported for sparsity loss."
+            sparsity_loss = torch.zeros(*h_0.shape, device=out.device, requires_grad=True)
             for feature_idx in range(out.shape[-1]):
-                # grad_h_0, grad_h_1 = torch.autograd.grad(
-                #     out[:, :, feature_idx].sum(),
-                #     (h_0, h_1),
-                #     grad_outputs=torch.tensor(1.0, device=out.device),
-                #     retain_graph=True,
-                # )
                 grad_hidden, grad_pre_relu = torch.autograd.grad(
                     out[:, :, feature_idx].sum(),
                     (hidden, pre_relu),
@@ -210,13 +204,10 @@ def optimize(
                     # (grad_h_0.detach() * h_0) ** 2 + 1e-16
                     # (grad_h_1.detach() * h_1) ** 2 + 1e-16
                     ###
-                    # (grad_h_0 * h_0) ** 2 + 1e-16
+                    (grad_h_0 * h_0) ** 2 + 1e-16
                     #  (grad_h_1 * h_1) ** 2 + 1e-16
-                    (grad_h_0 * h_0) + (grad_h_1 * h_1) + 1e-16
-                )
-                sparsity_inner = einops.reduce(
-                    (sparsity_inner.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
-                )
+                    # (grad_h_0 * h_0) + (grad_h_1 * h_1) + 1e-16
+                ).sqrt()
                 sparsity_loss = sparsity_loss + sparsity_inner
                 # sparsity_loss = sparsity_loss + sparsity_inner**2
             # sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
@@ -226,9 +217,9 @@ def optimize(
             # sparsity_loss = h_1.abs()
             # sparsity_loss = h_0.abs()
 
-            # sparsity_loss = einops.reduce(
-            #     (sparsity_loss.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
-            # )
+            sparsity_loss = einops.reduce(
+                (sparsity_loss.abs() ** pnorm).sum(dim=-1), "b i -> i", "mean"
+            )
             # Do the above pnorm but take to the power of pnorm
             if step % print_freq == print_freq - 1 or step == 0:
                 sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
@@ -253,54 +244,13 @@ def optimize(
             if step % print_freq == print_freq - 1 or step == 0:
                 tqdm.write(f"Reconstruction loss: {recon_loss.item()}")
                 tqdm.write(f"Sparsity loss: {sparsity_loss.item()}")
-                # Measure the frob norm between the A matrix and the identity matrix
-                # I.e. "how far away from the identity is the A matrix".
-                closeness = calculate_closeness_to_identity(model.A.data)
-                tqdm.write(f"Closeness to identity: {closeness:.4f}")
 
-
-def calculate_closeness_to_identity(A: torch.Tensor) -> float:
-    """
-    Calculate how close the A matrix is to an identity matrix after taking the absolute value
-    and permuting the rows to align with the leading diagonal.
-    
-    Args:
-    A (torch.Tensor): The A matrix with shape (n_instances, n_features, k)
-    
-    Returns:
-    float: A measure of closeness to identity (1.0 means identical, lower values indicate less similarity)
-    """
-    # Take absolute value
-    A_abs = torch.abs(A)
-    
-    # Calculate closeness for each instance
-    closeness_sum = 0
-    for i in range(A.shape[0]):
-        A_instance = A_abs[i].cpu().detach().numpy()
-        n, k = A_instance.shape
-        
-        # Use the Hungarian algorithm to find the optimal permutation
-        cost_matrix = -A_instance  # We want to maximize, so negate the values
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-        
-        # Permute the matrix
-        A_permuted = A_instance[row_ind]
-        
-        # Calculate the Frobenius norm between A_permuted and the identity matrix
-        if n >= k:
-            identity = np.eye(n, k)
-        else:
-            identity = np.eye(n, k)[:, :n]
-        
-        diff = A_permuted - identity
-        frobenius_norm = np.linalg.norm(diff, 'fro')
-        
-        # Calculate closeness (1 / (1 + frobenius_norm) will be close to 1 if frobenius_norm is small)
-        closeness = 1 / (1 + frobenius_norm)
-        closeness_sum += closeness
-    
-    # Return average closeness across all instances
-    return closeness_sum / A.shape[0]
+                closeness_vals: list[str] = []
+                for i in range(model.config.n_instances):
+                    permuted_matrix = permute_to_identity(model.A[i], normalize_rows=True)
+                    closeness = calculate_closeness_to_identity(permuted_matrix)
+                    closeness_vals.append(f"{closeness:.4f}")
+                tqdm.write(f"Closeness to identity: {closeness_vals}")
 
 
 if __name__ == "__main__":
@@ -314,18 +264,18 @@ if __name__ == "__main__":
     config = Config(
         n_features=20,
         n_hidden=10,
-        n_instances=15,
+        n_instances=8,
         k=5,
         n_batch=1024,
         steps=40_000,
         print_freq=1000,
         lr=1e-3,
         lr_scale=cosine_decay_lr,
-        pnorm=0.75,
-        max_sparsity_coeff=0.000,
+        pnorm=1,
+        max_sparsity_coeff=0.02,
         # sparsity_warmup_pct=0.2,
         # bias_val=-0.1,
-        train_bias=False,
+        train_bias=True,
     )
 
     model = Model(
