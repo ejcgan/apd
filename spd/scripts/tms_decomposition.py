@@ -126,6 +126,8 @@ class Model(nn.Module):
         self.b_final = nn.Parameter(bias_data) if train_bias else bias_data
 
         nn.init.xavier_normal_(self.A)
+        # Initialise one of the A instances to be an identity matrix
+        # self.A.data[0] = torch.eye(config.n_features, device=device)
         nn.init.xavier_normal_(self.B)
 
         if feature_probability is None:
@@ -144,15 +146,22 @@ class Model(nn.Module):
         # A: [instance, n_features, k]
         # B: [instance, k, n_hidden]
 
-        h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
+        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
+        normed_A.retain_grad()
+        # normed_B = self.B / self.B.norm(p=2, dim=-1, keepdim=True)
+        h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
+        # h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
+        # hidden = torch.einsum("...ik,ikh->...ih", h_0, normed_B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
+        # h_1 = torch.einsum("...ih,ikh->...ik", hidden, normed_B)
+        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, normed_A)
+        # hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
 
         pre_relu = hidden_2 + self.b_final
         out = F.relu(pre_relu)
-        return out, h_0, h_1, hidden, pre_relu
+        return out, h_0, h_1, hidden, pre_relu, normed_A
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
@@ -188,12 +197,20 @@ def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = Non
     return 1 + (pnorm_end - 1) * progress
 
 
-def plot_A_matrix(model: Model, step: int, out_dir: Path, layout: str = "row") -> None:
-    A_abs = model.A.abs().detach()
-    # A_abs = A_abs / A_abs.norm(p=2, dim=-2, keepdim=True)
-    A_abs[A_abs < 0.001] = 0
+def plot_A_matrix(
+    x: torch.Tensor,
+    model: Model,
+    step: int,
+    out_dir: Path,
+    layout: str = "row",
+    pos_only: bool = False,
+) -> None:
+    normed_A = x / x.norm(p=2, dim=-2, keepdim=True)
+    # A_abs = normed_A.abs()
+    # A_abs[A_abs < 0.001] = 0
+    # A_abs = normed_A
 
-    n_instances = A_abs.shape[0]
+    n_instances = normed_A.shape[0]
 
     if layout == "column":
         fig, axs = plt.subplots(
@@ -206,10 +223,16 @@ def plot_A_matrix(model: Model, step: int, out_dir: Path, layout: str = "row") -
     else:
         raise ValueError("Layout must be either 'column' or 'row'")
 
+    max_abs_val = normed_A.abs().max()
+    vmin = -max_abs_val if not pos_only else 0
+    vmax = max_abs_val
+    cmap = "Blues" if pos_only else "RdBu"
     for i in range(n_instances):
         if layout == "column":
             ax = axs[i, 0]
-            im = ax.matshow(A_abs[i, :, :].T.detach().cpu().numpy())
+            im = ax.matshow(
+                normed_A[i, :, :].T.detach().cpu().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
+            )
             ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
             if i == 0:
                 ax.xaxis.set_label_position("top")
@@ -218,7 +241,9 @@ def plot_A_matrix(model: Model, step: int, out_dir: Path, layout: str = "row") -
                 ax.xaxis.set_ticks_position("bottom")
         else:  # layout == 'row'
             ax = axs[0, i]
-            im = ax.matshow(A_abs[i, :, :].T.detach().cpu().numpy())
+            im = ax.matshow(
+                normed_A[i, :, :].T.detach().cpu().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
+            )
             ax.xaxis.set_ticks_position("bottom")
             if i == 0:
                 ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
@@ -227,6 +252,9 @@ def plot_A_matrix(model: Model, step: int, out_dir: Path, layout: str = "row") -
             # Put xlabel on the top
             ax.xaxis.set_label_position("top")
             ax.set_xlabel("n_features")
+
+    # Adjust the subplot layout to make room for the colorbar
+    # plt.tight_layout()
 
     if layout == "column":
         # plt.tight_layout()
@@ -238,6 +266,12 @@ def plot_A_matrix(model: Model, step: int, out_dir: Path, layout: str = "row") -
         plt.subplots_adjust(
             wspace=0.1, bottom=0.15, top=0.9
         )  # Reduce space between plots and adjust margins
+        # Add space at the bottom for the colorbar
+        fig.subplots_adjust(bottom=0.2)
+
+        # Add a narrower colorbar at the bottom
+        cbar_ax = fig.add_axes([0.3, 0.05, 0.4, 0.02])  # [left, bottom, width, height]
+        fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
 
     plt.savefig(
         out_dir
@@ -271,6 +305,7 @@ def optimize(
     assert pnorm_end is not None or pnorm is not None, "pnorm_end must be set if pnorm is not set"
 
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
+    # opt = torch.optim.SGD(list(model.parameters()), lr=lr)
 
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -301,7 +336,7 @@ def optimize(
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)
             batch = model.generate_batch(n_batch)
-            out, h_0, h_1, hidden, pre_relu = model(batch)
+            out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
 
             # Reconstruction loss
             error = model.importance * (batch.abs() - out) ** 2
@@ -324,26 +359,26 @@ def optimize(
                 # want the gradient on all output dimensions
                 # sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
                 # for feature_idx in range(out.shape[-1]):
-                #     # grad_hidden, grad_pre_relu = torch.autograd.grad(
-                #     #     out[:, :, feature_idx].sum(),
-                #     #     (hidden, pre_relu),
-                #     #     grad_outputs=torch.tensor(1.0, device=out.device),
-                #     #     retain_graph=True,
-                #     # )
-                #     # grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                #     # grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                #     grad_hidden, grad_pre_relu = torch.autograd.grad(
+                #         out[:, :, feature_idx].sum(),
+                #         (hidden, pre_relu),
+                #         grad_outputs=torch.tensor(1.0, device=out.device),
+                #         retain_graph=True,
+                #     )
+                #     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+                #     grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
 
-                #     # sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
+                #     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
                 #     # sparsity_inner = grad_h_0 * h_0
 
                 #     sparsity_loss = sparsity_loss + sparsity_inner**2
                 # sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
-                sparsity_loss = h_0.abs() + 1e-16
+                sparsity_loss = h_0
             else:
                 raise ValueError(f"Unknown sparsity loss type: {sparsity_loss_type}")
 
             sparsity_loss = einops.reduce(
-                (sparsity_loss.abs() ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
+                ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
             )
 
             if step % print_freq == print_freq - 1 or step == 0:
@@ -353,14 +388,15 @@ def optimize(
                 tqdm.write(f"Reconstruction loss: \n{recon_repr}")
                 closeness_vals: list[str] = []
                 for i in range(model.config.n_instances):
-                    permuted_matrix = permute_to_identity(model.A[i].T)
+                    permuted_matrix = permute_to_identity(model.A[i].T.abs())
                     closeness = calculate_closeness_to_identity(permuted_matrix)
                     closeness_vals.append(f"{closeness:.4f}")
 
                 tqdm.write(f"W after {step + 1} steps (before gradient update)")
+                normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
                 if model.config.n_hidden == 2:
                     plot_intro_diagram(
-                        weight=model.A.detach() @ model.B.detach(),
+                        weight=normed_A @ model.B.detach(),
                         filepath=out_dir
                         / f"W_{step}_n_feats-{model.config.n_features}_n_hid-{model.config.n_hidden}.png",
                     )
@@ -368,7 +404,15 @@ def optimize(
                         f"Saved to {out_dir / f'W_{step}_n_feats-{model.config.n_features}_n_hid-{model.config.n_hidden}.png'}"
                     )
 
-                plot_A_matrix(model, step, out_dir)
+                # Permute the normed_A matrix to look like an identity matrix
+                permuted_A_T_list = []
+                for instance_idx in range(model.config.n_instances):
+                    permuted_A_T_i = permute_to_identity(normed_A[instance_idx].T.abs())
+                    permuted_A_T_list.append(permuted_A_T_i)
+                permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
+
+                plot_A_matrix(permuted_A_T, model, step, out_dir, pos_only=True)
+                # plot_A_matrix(model.A.detach(),model, step, out_dir)
 
             recon_loss = recon_loss.sum()
             sparsity_loss = sparsity_loss.sum()
@@ -379,7 +423,7 @@ def optimize(
             loss.backward()
             opt.step()
             # Force the A matrix to have norm 1 in the second last dimension (the hidden dimension)
-            model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
+            # model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
 
             if step == steps - 1:  # Last step
                 final_sparsity_loss = sparsity_loss.item() / model.config.n_instances
@@ -475,17 +519,17 @@ if __name__ == "__main__":
     np.random.seed(0)
 
     config = Config(
-        n_features=3,
-        n_hidden=2,
+        n_features=50,
+        n_hidden=20,
         n_instances=8,
-        k=3,
+        k=50,
         n_batch=1024,
-        steps=40_000,
+        steps=150_000,
         print_freq=5000,
-        lr=1e-3,
+        lr=1e-2,
         pnorm=0.75,
         # pnorm_end=0.25,
-        max_sparsity_coeff=0.01,
+        max_sparsity_coeff=0.0001,
         # lr_scale=cosine_decay_lr,
         lr_scale=None,
         lr_warmup_pct=0.1,
@@ -524,3 +568,4 @@ if __name__ == "__main__":
     print(f"{final_sparsity_loss=} {final_recon_loss=} {final_closeness=}")
 
 # %%
+#
