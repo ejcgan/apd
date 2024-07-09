@@ -110,6 +110,15 @@ class Model(nn.Module):
         self.A = nn.Parameter(
             torch.empty((config.n_instances, config.n_features, config.k), device=device),
         )
+        # self.A = torch.zeros(
+        #     (config.n_instances, config.n_features, config.k), device=device, requires_grad=False
+        # )
+        # Make A an identity for each n_instance
+        # self.A = (
+        #     torch.eye(config.n_features, device=device, requires_grad=False)
+        #     .unsqueeze(0)
+        #     .expand(config.n_instances, config.n_features, config.k)
+        # )
 
         self.B = nn.Parameter(
             torch.empty((config.n_instances, config.k, config.n_hidden), device=device)
@@ -127,7 +136,7 @@ class Model(nn.Module):
 
         nn.init.xavier_normal_(self.A)
         # Initialise one of the A instances to be an identity matrix
-        # self.A.data[0] = torch.eye(config.n_features, device=device)
+        self.A.data[0] = torch.eye(config.n_features, device=device)
         nn.init.xavier_normal_(self.B)
 
         if feature_probability is None:
@@ -139,7 +148,7 @@ class Model(nn.Module):
 
     def forward(
         self, features: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return the output and intermediate hidden states."""
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
@@ -147,17 +156,12 @@ class Model(nn.Module):
         # B: [instance, k, n_hidden]
 
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        normed_A.retain_grad()
-        # normed_B = self.B / self.B.norm(p=2, dim=-1, keepdim=True)
+
         h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
-        # h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
-        # hidden = torch.einsum("...ik,ikh->...ih", h_0, normed_B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        # h_1 = torch.einsum("...ih,ikh->...ik", hidden, normed_B)
         hidden_2 = torch.einsum("...ik,ifk->...if", h_1, normed_A)
-        # hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
 
         pre_relu = hidden_2 + self.b_final
         out = F.relu(pre_relu)
@@ -227,6 +231,7 @@ def plot_A_matrix(
     vmin = -max_abs_val if not pos_only else 0
     vmax = max_abs_val
     cmap = "Blues" if pos_only else "RdBu"
+    im = None
     for i in range(n_instances):
         if layout == "column":
             ax = axs[i, 0]
@@ -253,8 +258,7 @@ def plot_A_matrix(
             ax.xaxis.set_label_position("top")
             ax.set_xlabel("n_features")
 
-    # Adjust the subplot layout to make room for the colorbar
-    # plt.tight_layout()
+    assert im is not None
 
     if layout == "column":
         # plt.tight_layout()
@@ -270,7 +274,7 @@ def plot_A_matrix(
         fig.subplots_adjust(bottom=0.2)
 
         # Add a narrower colorbar at the bottom
-        cbar_ax = fig.add_axes([0.3, 0.05, 0.4, 0.02])  # [left, bottom, width, height]
+        cbar_ax = fig.add_axes((0.3, 0.05, 0.4, 0.02))  # [left, bottom, width, height]
         fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
 
     plt.savefig(
@@ -357,23 +361,21 @@ def optimize(
             elif sparsity_loss_type == "jacobian":
                 # The above sparsity loss calculates the gradient on a single output direction. We
                 # want the gradient on all output dimensions
-                # sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
-                # for feature_idx in range(out.shape[-1]):
-                #     grad_hidden, grad_pre_relu = torch.autograd.grad(
-                #         out[:, :, feature_idx].sum(),
-                #         (hidden, pre_relu),
-                #         grad_outputs=torch.tensor(1.0, device=out.device),
-                #         retain_graph=True,
-                #     )
-                #     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                #     grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
+                for feature_idx in range(out.shape[-1]):
+                    grad_hidden, grad_pre_relu = torch.autograd.grad(
+                        out[:, :, feature_idx].sum(),
+                        (hidden, pre_relu),
+                        grad_outputs=torch.tensor(1.0, device=out.device),
+                        retain_graph=True,
+                    )
+                    grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
 
-                #     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
-                #     # sparsity_inner = grad_h_0 * h_0
+                    sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
 
-                #     sparsity_loss = sparsity_loss + sparsity_inner**2
-                # sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
-                sparsity_loss = h_0
+                    sparsity_loss = sparsity_loss + sparsity_inner**2
+                sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
             else:
                 raise ValueError(f"Unknown sparsity loss type: {sparsity_loss_type}")
 
@@ -384,6 +386,7 @@ def optimize(
             if step % print_freq == print_freq - 1 or step == 0:
                 sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
                 recon_repr = [f"{x:.4f}" for x in recon_loss]
+                tqdm.write(f"Current pnorm: {current_pnorm}")
                 tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
                 tqdm.write(f"Reconstruction loss: \n{recon_repr}")
                 closeness_vals: list[str] = []
@@ -412,7 +415,6 @@ def optimize(
                 permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
 
                 plot_A_matrix(permuted_A_T, model, step, out_dir, pos_only=True)
-                # plot_A_matrix(model.A.detach(),model, step, out_dir)
 
             recon_loss = recon_loss.sum()
             sparsity_loss = sparsity_loss.sum()
@@ -421,6 +423,9 @@ def optimize(
             loss = recon_loss + sparsity_coeff * sparsity_loss
 
             loss.backward()
+            assert model.A.grad is not None
+            # Don't update the gradient of the 0th dimension of A
+            model.A.grad[0] = torch.zeros_like(model.A.grad[0])
             opt.step()
             # Force the A matrix to have norm 1 in the second last dimension (the hidden dimension)
             # model.A.data = model.A.data / model.A.data.norm(p=2, dim=-2, keepdim=True)
@@ -519,17 +524,17 @@ if __name__ == "__main__":
     np.random.seed(0)
 
     config = Config(
-        n_features=50,
-        n_hidden=20,
+        n_features=10,
+        n_hidden=5,
         n_instances=8,
-        k=50,
-        n_batch=1024,
-        steps=150_000,
-        print_freq=5000,
+        k=10,
+        n_batch=2048,
+        steps=40_000,
+        print_freq=4000,
         lr=1e-2,
-        pnorm=0.75,
-        # pnorm_end=0.25,
-        max_sparsity_coeff=0.0001,
+        pnorm=0.5,
+        # pnorm_end=0.1,
+        max_sparsity_coeff=0.0005,
         # lr_scale=cosine_decay_lr,
         lr_scale=None,
         lr_warmup_pct=0.1,
