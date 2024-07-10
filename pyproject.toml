@@ -17,7 +17,7 @@ dependencies = [
     "transformer-lens",
     "matplotlib",
     "numpy",
-    "dotenv",
+    "python-dotenv",
     "wandb",
 ]
 
