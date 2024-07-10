@@ -1,0 +1,17 @@
+program: spd/scripts/tms_decomposition.py
+method: grid
+metric:
+  name: final_closeness
+  goal: minimize
+parameters:
+  n_features:
+    values: [10, 20]
+  k:
+    values: [null] # Defaults to n_features
+  n_hidden:
+    values: [5]
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/scripts/tms_config.yaml
