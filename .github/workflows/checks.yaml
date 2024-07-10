@@ -42,7 +42,7 @@ jobs:
         run: |
           python -m venv venv
           source ./venv/bin/activate
-          pip install .[dev]
+          pip install ".[dev]"
           echo PATH=$PATH >> $GITHUB_ENV
           echo "./venv/bin" >> $GITHUB_PATH
 
@@ -57,7 +57,7 @@ jobs:
         run: pip freeze
 
       - name: Run pyright type check
-        run: pyright .
+        run: pyright
 
       - name: Run ruff lint
         run: ruff check --fix-only .
