@@ -139,6 +139,7 @@ def plot_intro_diagram(model: Model, filepath: Path) -> None:
     )
     plt.rcParams["figure.dpi"] = 200
     fig, axs = plt.subplots(1, len(sel), figsize=(2 * len(sel), 2))
+    axs = np.array(axs)
     for i, ax in zip(sel, axs, strict=False):
         W = WA[i].cpu().detach().numpy()
         colors = [mcolors.to_rgba(c) for c in plt.rcParams["axes.prop_cycle"].by_key()["color"]]

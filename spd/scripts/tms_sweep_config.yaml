@@ -4,12 +4,14 @@ metric:
   name: final_closeness
   goal: minimize
 parameters:
-  n_features:
-    values: [10, 20]
-  k:
-    values: [null] # Defaults to n_features
-  n_hidden:
-    values: [5]
+  batch_size:
+    values: [512, 2048, 8192]
+  lr:
+    values: [1e-1, 1e-2, 1e-3, 1e-4]
+  pnorm:
+    values: [0.1, 0.3, 0.5, 0.7]
+  max_sparsity_coefficient:
+    values: [1e-2, 1e-3, 1e-4]
 command:
 - ${env}
 - ${interpreter}
