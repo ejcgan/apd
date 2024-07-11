@@ -23,12 +23,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # pyright needs node
-      - name: Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Cache Python Dependencies
         uses: actions/cache@v3
         id: cache-env
@@ -52,6 +46,13 @@ jobs:
           source ./venv/bin/activate
           echo PATH=$PATH >> $GITHUB_ENV
           echo "./venv/bin" >> $GITHUB_PATH
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
+
+      - name: Run pyright
+        run: pyright
 
       - name: Print dependencies
         run: pip freeze
