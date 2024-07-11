@@ -5,12 +5,12 @@ seed: 0
 n_features: 5
 n_hidden: 2
 n_instances: 6
-batch_size: 8192
+batch_size: 2048
 steps: 50_000
 print_freq: 5000
 lr: 1e-2
-max_sparsity_coeff: 5e-4
-pnorm: 0.5
+max_sparsity_coeff: 1e-3
+pnorm: 0.3
 pnorm_end: null
 lr_scale: constant
 lr_warmup_pct: 0.1

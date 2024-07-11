@@ -10,7 +10,7 @@ parameters:
     values: [1e-1, 1e-2, 1e-3, 1e-4]
   pnorm:
     values: [0.1, 0.3, 0.5, 0.7]
-  max_sparsity_coefficient:
+  max_sparsity_coeff:
     values: [1e-2, 1e-3, 1e-4]
 command:
 - ${env}

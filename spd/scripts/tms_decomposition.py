@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import wandb
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -29,6 +29,7 @@ wandb.require("core")
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
     wandb_project: str | None = None
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
@@ -144,7 +145,9 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
     im = None
     for i in range(n_instances):
         ax = axs[0, i]
-        im = ax.matshow(normed_A[i, :, :].T.detach().cpu().numpy(), vmin=vmin, vmax=vmax, cmap=cmap)
+        im = ax.matshow(
+            normed_A[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
+        )
         ax.xaxis.set_ticks_position("bottom")
         if i == 0:
             ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
@@ -181,7 +184,7 @@ def get_lr_with_warmup(
     return lr * lr_scale_fn(step - warmup_steps, steps - warmup_steps)
 
 
-def optimize(model: Model, config: Config, run_name: str) -> None:
+def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
     assert (config.pnorm is None and config.pnorm_end is not None) or (
         config.pnorm is not None and config.pnorm_end is None
     ), "Exactly one of pnorm and pnorm_end must be set"
@@ -227,84 +230,6 @@ def optimize(model: Model, config: Config, run_name: str) -> None:
         batch = model.generate_batch(config.batch_size)
 
         total_samples += batch.shape[0]  # don't include the number of instances
-        out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
-
-        # Reconstruction loss
-        error = model.importance * (batch.abs() - out) ** 2
-        recon_loss = einops.reduce(error, "b i f -> i", "mean")
-
-        if config.sparsity_loss_type == "dotted":
-            out_dotted = model.importance * torch.einsum("bih,bih->bi", batch, out).sum()
-            grad_hidden, grad_pre_relu = torch.autograd.grad(
-                out_dotted, (hidden, pre_relu), create_graph=True
-            )
-            grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-            grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
-            sparsity_loss = h_0 * grad_h_0 + h_1 * grad_h_1
-        elif config.sparsity_loss_type == "jacobian":
-            sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
-            for feature_idx in range(out.shape[-1]):
-                grad_hidden, grad_pre_relu = torch.autograd.grad(
-                    out[:, :, feature_idx].sum(),
-                    (hidden, pre_relu),
-                    grad_outputs=torch.tensor(1.0, device=out.device),
-                    retain_graph=True,
-                )
-                grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
-
-                sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
-
-                sparsity_loss = sparsity_loss + sparsity_inner**2
-            sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
-        else:
-            raise ValueError(f"Unknown sparsity loss type: {config.sparsity_loss_type}")
-
-        sparsity_loss = einops.reduce(
-            ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
-        )
-
-        if step % config.print_freq == config.print_freq - 1 or step == 0:
-            sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
-            recon_repr = [f"{x:.4f}" for x in recon_loss]
-            tqdm.write(f"Step {step}")
-            tqdm.write(f"Current pnorm: {current_pnorm}")
-            tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
-            tqdm.write(f"Reconstruction loss: \n{recon_repr}")
-            closeness_vals: list[float] = []
-            for i in range(model.config.n_instances):
-                permuted_matrix = permute_to_identity(model.A[i].T.abs())
-                closeness = calculate_closeness_to_identity(permuted_matrix)
-                closeness_vals.append(closeness)
-
-            # Permute the normed_A matrix to look like an identity matrix
-            permuted_A_T_list = []
-            for instance_idx in range(model.config.n_instances):
-                permuted_A_T_i = permute_to_identity(normed_A[instance_idx].T.abs())
-                permuted_A_T_list.append(permuted_A_T_i)
-            permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
-
-            fig = plot_A_matrix(permuted_A_T, pos_only=True)
-
-            if config.wandb_project:
-                wandb.log(
-                    {
-                        "step": step,
-                        "current_pnorm": current_pnorm,
-                        "sparsity_loss": sparsity_loss[1:].mean().item(),
-                        "recon_loss": recon_loss[1:].mean().item(),
-                        "closeness": sum(closeness_vals[1:]) / (model.config.n_instances - 1),
-                        "A_matrix": wandb.Image(fig),
-                    },
-                    step=step,
-                )
-            else:
-                fig.savefig(out_dir / "A.png")
-                tqdm.write(f"Saved A matrix to {out_dir / 'A.png'}")
-            plt.close(fig)
-
-        recon_loss = recon_loss.sum()
-        sparsity_loss = sparsity_loss.sum()
 
         sparsity_coeff = get_sparsity_coeff_linear_warmup(
             step=step,
@@ -312,7 +237,89 @@ def optimize(model: Model, config: Config, run_name: str) -> None:
             max_sparsity_coeff=config.max_sparsity_coeff,
             sparsity_warmup_pct=config.sparsity_warmup_pct,
         )
-        loss = recon_loss + sparsity_coeff * sparsity_loss
+
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
+
+            # Reconstruction loss
+            error = model.importance * (batch.abs() - out) ** 2
+            recon_loss = einops.reduce(error, "b i f -> i", "mean")
+
+            if config.sparsity_loss_type == "dotted":
+                out_dotted = model.importance * torch.einsum("bih,bih->bi", batch, out).sum()
+                grad_hidden, grad_pre_relu = torch.autograd.grad(
+                    out_dotted, (hidden, pre_relu), create_graph=True
+                )
+                grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                sparsity_loss = h_0 * grad_h_0 + h_1 * grad_h_1
+            elif config.sparsity_loss_type == "jacobian":
+                sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
+                for feature_idx in range(out.shape[-1]):
+                    grad_hidden, grad_pre_relu = torch.autograd.grad(
+                        out[:, :, feature_idx].sum(),
+                        (hidden, pre_relu),
+                        grad_outputs=torch.tensor(1.0, device=out.device),
+                        retain_graph=True,
+                        allow_unused=True,
+                    )
+                    grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
+                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+
+                    sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
+
+                    sparsity_loss = sparsity_loss + sparsity_inner**2
+                sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
+            else:
+                raise ValueError(f"Unknown sparsity loss type: {config.sparsity_loss_type}")
+
+            sparsity_loss = einops.reduce(
+                ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
+            )
+
+            if step % config.print_freq == config.print_freq - 1 or step == 0:
+                sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
+                recon_repr = [f"{x:.4f}" for x in recon_loss]
+                tqdm.write(f"Step {step}")
+                tqdm.write(f"Current pnorm: {current_pnorm}")
+                tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
+                tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+                closeness_vals: list[float] = []
+                for i in range(model.config.n_instances):
+                    permuted_matrix = permute_to_identity(model.A[i].T.abs())
+                    closeness = calculate_closeness_to_identity(permuted_matrix)
+                    closeness_vals.append(closeness)
+
+                # Permute the normed_A matrix to look like an identity matrix
+                permuted_A_T_list = []
+                for instance_idx in range(model.config.n_instances):
+                    permuted_A_T_i = permute_to_identity(normed_A[instance_idx].T.abs())
+                    permuted_A_T_list.append(permuted_A_T_i)
+                permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
+
+                fig = plot_A_matrix(permuted_A_T, pos_only=True)
+
+                if config.wandb_project:
+                    wandb.log(
+                        {
+                            "step": step,
+                            "current_pnorm": current_pnorm,
+                            "sparsity_loss": sparsity_loss[1:].mean().item(),
+                            "recon_loss": recon_loss[1:].mean().item(),
+                            "closeness": sum(closeness_vals[1:]) / (model.config.n_instances - 1),
+                            "A_matrix": wandb.Image(fig),
+                        },
+                        step=step,
+                    )
+                else:
+                    fig.savefig(out_dir / "A.png")
+                    tqdm.write(f"Saved A matrix to {out_dir / 'A.png'}")
+                plt.close(fig)
+
+            recon_loss = recon_loss.sum()
+            sparsity_loss = sparsity_loss.sum()
+
+            loss = recon_loss + sparsity_coeff * sparsity_loss
 
         loss.backward()
         assert model.A.grad is not None
@@ -370,7 +377,7 @@ def main(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = Model(config=config, device=device)
 
-    optimize(model, config, run_name)
+    optimize(model, config, run_name, device)
 
     if config.wandb_project:
         wandb.finish()
