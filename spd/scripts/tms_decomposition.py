@@ -312,8 +312,8 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
                         step=step,
                     )
                 else:
-                    fig.savefig(out_dir / "A.png")
-                    tqdm.write(f"Saved A matrix to {out_dir / 'A.png'}")
+                    fig.savefig(out_dir / f"A_{step}.png")
+                    tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
                 plt.close(fig)
 
             recon_loss = recon_loss.sum()
