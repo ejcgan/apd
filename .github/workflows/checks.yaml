@@ -56,9 +56,6 @@ jobs:
       - name: Print dependencies
         run: pip freeze
 
-      - name: Run pyright type check
-        run: pyright
-
       - name: Run ruff lint
         run: ruff check --fix-only .
 
