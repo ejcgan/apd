@@ -17,6 +17,7 @@ from torch.nn import functional as F
 from tqdm import tqdm
 
 from spd.log import logger
+from spd.types import RootPath
 from spd.utils import (
     calculate_closeness_to_identity,
     init_wandb,
@@ -52,6 +53,7 @@ class Config(BaseModel):
     bias_val: float = 0.0
     train_bias: bool = False
     feature_probability: float = 0.05
+    pretrained_model_path: RootPath | None = None
 
 
 class Model(nn.Module):
@@ -184,7 +186,13 @@ def get_lr_with_warmup(
     return lr * lr_scale_fn(step - warmup_steps, steps - warmup_steps)
 
 
-def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
+def optimize(
+    model: Model,
+    config: Config,
+    out_dir: Path,
+    device: str,
+    pretrained_model_path: RootPath | None = None,
+) -> None:
     assert (config.pnorm is None and config.pnorm_end is not None) or (
         config.pnorm is not None and config.pnorm_end is None
     ), "Exactly one of pnorm and pnorm_end must be set"
@@ -192,9 +200,9 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
         config.pnorm_end is not None or config.pnorm is not None
     ), "pnorm_end must be set if pnorm is not set"
 
-    out_dir = Path(__file__).parent / "out" / run_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    pretrained_W = None
+    if pretrained_model_path:
+        pretrained_W = torch.load(pretrained_model_path)["W"].to(device)
     opt = torch.optim.AdamW(list(model.parameters()), lr=config.lr)
 
     lr_scale_fn: Callable[[int, int], float]
@@ -241,7 +249,17 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
 
-            # Reconstruction loss
+            param_match_loss = torch.zeros(model.config.n_instances, device=device)
+            if pretrained_model_path:
+                # If the user passed a pretrained model, then calculate the param_match_loss
+                # Get the Frobenius norm between the pretrained weight and the current model's W
+                assert pretrained_W is not None
+                param_match_loss = (
+                    ((pretrained_W[: model.config.n_instances] - normed_A @ model.B).abs() ** 2)
+                    .sum(dim=(-2, -1))
+                    .sqrt()
+                )
+
             error = model.importance * (batch.abs() - out) ** 2
             recon_loss = einops.reduce(error, "b i f -> i", "mean")
 
@@ -284,6 +302,10 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
                 tqdm.write(f"Current pnorm: {current_pnorm}")
                 tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
                 tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+                if pretrained_model_path:
+                    param_match_repr = [f"{x:.4f}" for x in param_match_loss]
+                    tqdm.write(f"Param match loss: \n{param_match_repr}")
+
                 closeness_vals: list[float] = []
                 for i in range(model.config.n_instances):
                     permuted_matrix = permute_to_identity(model.A[i].T.abs())
@@ -306,6 +328,7 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
                             "current_pnorm": current_pnorm,
                             "sparsity_loss": sparsity_loss[1:].mean().item(),
                             "recon_loss": recon_loss[1:].mean().item(),
+                            "param_match_loss": param_match_loss[1:].mean().item(),
                             "closeness": sum(closeness_vals[1:]) / (model.config.n_instances - 1),
                             "A_matrix": wandb.Image(fig),
                         },
@@ -314,12 +337,17 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
                 else:
                     fig.savefig(out_dir / f"A_{step}.png")
                     tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
+                    # Also save the W matrix
                 plt.close(fig)
 
             recon_loss = recon_loss.sum()
             sparsity_loss = sparsity_loss.sum()
+            param_match_loss = param_match_loss.sum()
 
-            loss = recon_loss + sparsity_coeff * sparsity_loss
+            if pretrained_model_path:
+                loss = param_match_loss + sparsity_coeff * sparsity_loss
+            else:
+                loss = recon_loss + sparsity_coeff * sparsity_loss
 
         loss.backward()
         assert model.A.grad is not None
@@ -373,11 +401,19 @@ def main(
     if config.wandb_project:
         assert wandb.run, "wandb.run must be initialized before training"
         wandb.run.name = run_name
+    out_dir = Path(__file__).parent / "out" / run_name
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = Model(config=config, device=device)
 
-    optimize(model, config, run_name, device)
+    optimize(
+        model=model,
+        config=config,
+        out_dir=out_dir,
+        device=device,
+        pretrained_model_path=config.pretrained_model_path,
+    )
 
     if config.wandb_project:
         wandb.finish()

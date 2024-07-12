@@ -94,7 +94,7 @@ def optimize(
     n_batch: int = 1024,
     steps: int = 10_000,
     print_freq: int = 100,
-    lr: float = 1e-3,
+    lr: float = 5e-3,
     lr_scale: Callable[[int, int], float] = linear_lr,
 ) -> None:
     hooks = []
@@ -165,21 +165,32 @@ if __name__ == "__main__":
     config = Config(
         n_features=5,
         n_hidden=2,
-        n_instances=15,
+        n_instances=12,
     )
 
     model = Model(
         config=config,
         device=device,
         # Exponential feature importance curve from 1 to 1/100
-        importance=(0.9 ** torch.arange(config.n_features))[None, :],
+        # importance=(0.9 ** torch.arange(config.n_features))[None, :],
+        importance=(1.0 ** torch.arange(config.n_features))[None, :],
         # Sweep feature frequency across the instances from 1 (fully dense) to 1/20
-        feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
+        # feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
+        # Make all features appear with probability 1/20
+        feature_probability=torch.ones((config.n_instances, config.n_features), device=device) / 20,
     )
     optimize(model)
-    # Save the bias of the model to file
-    torch.save(model.b_final, "b_final.pt")
+
+    out_dir = Path(__file__).parent / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_name = (
+        f"tms_n-features{config.n_features}_n-hidden{config.n_hidden}_"
+        f"n-instances{config.n_instances}.pth"
+    )
+    torch.save(model.state_dict(), out_dir / run_name)
+    print(f"Saved model to {out_dir / run_name}")
     # %%
-    plot_intro_diagram(model, filepath=Path(__file__).parent / "out" / "tms_features_nobias.png")
+    plot_intro_diagram(model, filepath=out_dir / run_name.replace(".pth", ".png"))
+    print(f"Saved diagram to {out_dir / run_name.replace('.pth', '.png')}")
 
 # %%

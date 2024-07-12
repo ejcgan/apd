@@ -13,7 +13,14 @@ from pydantic import BaseModel
 from pydantic.v1.utils import deep_update
 from torch import Tensor
 
+from spd.settings import REPO_ROOT
+
 T = TypeVar("T", bound=BaseModel)
+
+
+def to_root_path(path: str | Path):
+    """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
+    return Path(path) if Path(path).is_absolute() else Path(REPO_ROOT / path)
 
 
 def permute_to_identity(x: torch.Tensor, normalize_rows: bool = False) -> torch.Tensor:
