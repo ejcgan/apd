@@ -1,3 +1,9 @@
+"""TMS decomposition script.
+
+Note that the first instance index is fixed to the identity matrix. This is done so we can compare
+the losses of the "correct" solution during training.
+"""
+
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -78,7 +84,6 @@ class Model(nn.Module):
         self.A.data[0] = torch.eye(config.n_features, device=device)
         nn.init.xavier_normal_(self.B)
 
-        # self.feature_probability = torch.tensor([config.feature_probability], device=device)
         self.feature_probability = config.feature_probability
         self.importance = torch.ones((), device=device)
 
