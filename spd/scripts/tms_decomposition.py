@@ -55,13 +55,10 @@ class Config(BaseModel):
 
 
 class Model(nn.Module):
-    def __init__(
-        self,
-        config: Config,
-        device: str = "cuda",
-    ):
+    def __init__(self, config: Config, device: str = "cuda"):
         super().__init__()
         self.config = config
+
         k = config.k if config.k is not None else config.n_features
 
         self.A = nn.Parameter(
@@ -75,10 +72,12 @@ class Model(nn.Module):
         self.b_final = nn.Parameter(bias_data) if config.train_bias else bias_data
 
         nn.init.xavier_normal_(self.A)
+        # Fix the first instance to the identity to compare losses
         self.A.data[0] = torch.eye(config.n_features, device=device)
         nn.init.xavier_normal_(self.B)
 
-        self.feature_probability = torch.tensor([config.feature_probability], device=device)
+        # self.feature_probability = torch.tensor([config.feature_probability], device=device)
+        self.feature_probability = config.feature_probability
         self.importance = torch.ones((), device=device)
 
     def forward(
@@ -100,6 +99,7 @@ class Model(nn.Module):
         feat = torch.rand(
             (n_batch, self.config.n_instances, self.config.n_features), device=self.A.device
         )
+
         batch = torch.where(
             torch.rand(
                 (n_batch, self.config.n_instances, self.config.n_features), device=self.A.device
@@ -246,7 +246,7 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
             recon_loss = einops.reduce(error, "b i f -> i", "mean")
 
             if config.sparsity_loss_type == "dotted":
-                out_dotted = model.importance * torch.einsum("bih,bih->bi", batch, out).sum()
+                out_dotted = model.importance * torch.einsum("bih,bih->bi", out, out).sum()
                 grad_hidden, grad_pre_relu = torch.autograd.grad(
                     out_dotted, (hidden, pre_relu), create_graph=True
                 )
@@ -323,7 +323,7 @@ def optimize(model: Model, config: Config, run_name: str, device: str) -> None:
 
         loss.backward()
         assert model.A.grad is not None
-        # Don't update the gradient of the 0th dimension of A
+        # Don't update the gradient of the 0th instance (which we fixed to be the identity)
         model.A.grad[0] = torch.zeros_like(model.A.grad[0])
         opt.step()
 
