@@ -8,8 +8,8 @@
             "name": "tms",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/spd/scripts/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/scripts/tms_config.yaml",
+            "program": "${workspaceFolder}/spd/scripts/tms/tms_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/tms/tms_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

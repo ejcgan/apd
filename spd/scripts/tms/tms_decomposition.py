@@ -268,6 +268,9 @@ def optimize(
             error = model.importance * (batch.abs() - out) ** 2
             recon_loss = einops.reduce(error, "b i f -> i", "mean")
 
+            # Note that we want the weights of A and B to update based on the gradient of the loss
+            # w.r.t h_0 and h_1. So we can't just calculate the gradient w.r.t these terms directly
+            # and then detach.
             if config.sparsity_loss_type == "dotted":
                 out_dotted = model.importance * torch.einsum("bih,bih->bi", out, out).sum()
                 grad_hidden, grad_pre_relu = torch.autograd.grad(

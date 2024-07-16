@@ -1,0 +1,17 @@
+program: spd/scripts/tms/tms_decomposition.py
+method: grid
+metric:
+  name: final_closeness
+  goal: minimize
+parameters:
+  lr:
+    values: [3e-4]
+  pnorm:
+    values: [0.9]
+  max_sparsity_coeff:
+    values: [1e-2]
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/scripts/tms/tms_config.yaml
