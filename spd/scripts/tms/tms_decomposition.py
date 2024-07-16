@@ -277,7 +277,7 @@ def optimize(
                     out_dotted, (hidden, pre_relu), create_graph=True
                 )
                 grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
                 sparsity_loss = h_0 * grad_h_0 + h_1 * grad_h_1
             elif config.sparsity_loss_type == "jacobian":
                 sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
@@ -290,7 +290,7 @@ def optimize(
                         allow_unused=True,
                     )
                     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
 
                     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
 
