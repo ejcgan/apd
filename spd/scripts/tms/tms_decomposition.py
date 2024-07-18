@@ -138,7 +138,7 @@ def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = Non
 
 
 def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
-    normed_x = x / x.norm(p=2, dim=-2, keepdim=True)
+    normed_x = x / x.norm(p=2, dim=-1, keepdim=True)
     n_instances = normed_x.shape[0]
 
     fig, axs = plt.subplots(
