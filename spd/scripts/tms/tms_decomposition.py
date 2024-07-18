@@ -348,9 +348,9 @@ def optimize(
                     # Also save the W matrix
                 plt.close(fig)
 
-            recon_loss = recon_loss.sum()
-            sparsity_loss = sparsity_loss.sum()
-            param_match_loss = param_match_loss.sum()
+            recon_loss = recon_loss.mean()
+            sparsity_loss = sparsity_loss.mean()
+            param_match_loss = param_match_loss.mean()
 
             if pretrained_model_path:
                 loss = param_match_loss + sparsity_coeff * sparsity_loss

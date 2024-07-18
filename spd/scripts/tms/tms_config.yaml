@@ -9,7 +9,7 @@ batch_size: 2048
 steps: 100_000
 print_freq: 5000
 lr: 8e-4
-max_sparsity_coeff: 1e-2
+max_sparsity_coeff: 5e-3
 pnorm: 0.9
 pnorm_end: null
 lr_scale: constant
