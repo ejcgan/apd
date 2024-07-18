@@ -90,7 +90,7 @@ class Model(nn.Module):
     def forward(
         self, features: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
+        normed_A = self.A / (self.A.norm(p=2, dim=-2, keepdim=True) + 1e-10)
 
         h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
@@ -138,14 +138,14 @@ def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = Non
 
 
 def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
-    normed_A = x / x.norm(p=2, dim=-2, keepdim=True)
-    n_instances = normed_A.shape[0]
+    normed_x = x / x.norm(p=2, dim=-2, keepdim=True)
+    n_instances = normed_x.shape[0]
 
     fig, axs = plt.subplots(
         1, n_instances, figsize=(2.5 * n_instances, 2), squeeze=False, sharey=True
     )
 
-    max_abs_val = normed_A.abs().max()
+    max_abs_val = normed_x.abs().max()
     vmin = -max_abs_val if not pos_only else 0
     vmax = max_abs_val
     cmap = "Blues" if pos_only else "RdBu"
@@ -153,7 +153,7 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
     for i in range(n_instances):
         ax = axs[0, i]
         im = ax.matshow(
-            normed_A[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
+            normed_x[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
         )
         ax.xaxis.set_ticks_position("bottom")
         if i == 0:
@@ -260,12 +260,12 @@ def optimize(
                 # Get the Frobenius norm between the pretrained weight and the current model's W
                 assert pretrained_W is not None
                 param_match_loss = (
-                    ((pretrained_W[: model.config.n_instances] - normed_A @ model.B).abs() ** 2)
+                    ((pretrained_W[: model.config.n_instances] - normed_A @ model.B) ** 2)
                     .sum(dim=(-2, -1))
                     .sqrt()
                 )
 
-            error = model.importance * (batch.abs() - out) ** 2
+            error = model.importance * (batch - out) ** 2
             recon_loss = einops.reduce(error, "b i f -> i", "mean")
 
             # Note that we want the weights of A and B to update based on the gradient of the loss
@@ -329,10 +329,14 @@ def optimize(
 
                 fig = plot_A_matrix(permuted_A_T, pos_only=True)
 
+                fig.savefig(out_dir / f"A_{step}.png")
+                plt.close(fig)
+                tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
                 if config.wandb_project:
                     wandb.log(
                         {
                             "step": step,
+                            "lr": step_lr,
                             "current_pnorm": current_pnorm,
                             "sparsity_loss": sparsity_loss[1:].mean().item(),
                             "recon_loss": recon_loss[1:].mean().item(),
@@ -342,11 +346,6 @@ def optimize(
                         },
                         step=step,
                     )
-                else:
-                    fig.savefig(out_dir / f"A_{step}.png")
-                    tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
-                    # Also save the W matrix
-                plt.close(fig)
 
             recon_loss = recon_loss.mean()
             sparsity_loss = sparsity_loss.mean()
