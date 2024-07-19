@@ -111,7 +111,7 @@ def optimize(
         for weight in pretrained_weights:
             weight.requires_grad = False
 
-    opt = torch.optim.Adam(dlc_model.parameters(), lr=config.lr)
+    opt = torch.optim.AdamW(dlc_model.parameters(), lr=config.lr)
 
     lr_scale_fn: Callable[[int, int], float]
     if config.lr_scale == "linear":
@@ -166,9 +166,8 @@ def optimize(
                 # Get the Frobenius norm between the pretrained weight and the current model's W
                 for i in range(dlc_model.n_layers):
                     AB = torch.einsum("ifk,ikg->ifg", dlc_model.layers[i].A, dlc_model.layers[i].B)
-                    param_match_loss = (
-                        param_match_loss
-                        + ((AB - pretrained_weights[i]) ** 2).sum(dim=(-2, -1)).sqrt()
+                    param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
+                        dim=(-2, -1)
                     )
 
             output_error = (dlc_out - batch) ** 2
@@ -181,9 +180,7 @@ def optimize(
                 grad_layer_acts = torch.autograd.grad(
                     dlc_out[:, :, feature_idx].sum(),
                     layer_acts,
-                    grad_outputs=torch.tensor(1.0, device=dlc_out.device),
                     retain_graph=True,
-                    allow_unused=True,
                 )
                 sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
                 for layer_idx in range(dlc_model.n_layers):
@@ -204,37 +201,37 @@ def optimize(
                 ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
             )
 
-            # sparsity_loss = torch.tensor([0.0 for _ in range(dlc_model.n_instances)], device=device)
-            if step % config.print_freq == config.print_freq - 1 or step == 0:
-                # sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
-                # recon_repr = [f"{x:.4f}" for x in recon_loss]
-                sparsity_repr = [f"{x}" for x in sparsity_loss]
-                recon_repr = [f"{x}" for x in out_recon_loss]
-                tqdm.write(f"Step {step}")
-                tqdm.write(f"Current pnorm: {current_pnorm}")
-                tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
-                tqdm.write(f"Reconstruction loss: \n{recon_repr}")
-                if pretrained_model_path:
-                    # param_match_repr = [f"{x:.4f}" for x in param_match_loss]
-                    param_match_repr = [f"{x}" for x in param_match_loss]
-                    tqdm.write(f"Param match loss: \n{param_match_repr}")
+            with torch.inference_mode():
+                if step % config.print_freq == config.print_freq - 1 or step == 0:
+                    # sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
+                    # recon_repr = [f"{x:.4f}" for x in recon_loss]
+                    sparsity_repr = [f"{x}" for x in sparsity_loss]
+                    recon_repr = [f"{x}" for x in out_recon_loss]
+                    tqdm.write(f"Step {step}")
+                    tqdm.write(f"Current pnorm: {current_pnorm}")
+                    tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
+                    tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+                    if pretrained_model_path:
+                        # param_match_repr = [f"{x:.4f}" for x in param_match_loss]
+                        param_match_repr = [f"{x}" for x in param_match_loss]
+                        tqdm.write(f"Param match loss: \n{param_match_repr}")
 
-                if config.wandb_project:
-                    wandb.log(
-                        {
-                            "step": step,
-                            "current_pnorm": current_pnorm,
-                            "current_lr": step_lr,
-                            "sparsity_loss": sparsity_loss.mean().item(),
-                            "recon_loss": out_recon_loss.mean().item(),
-                            "param_match_loss": param_match_loss.mean().item(),
-                        },
-                        step=step,
-                    )
+                    if config.wandb_project:
+                        wandb.log(
+                            {
+                                "step": step,
+                                "current_pnorm": current_pnorm,
+                                "current_lr": step_lr,
+                                "sparsity_loss": sparsity_loss.mean().item(),
+                                "recon_loss": out_recon_loss.mean().item(),
+                                "param_match_loss": param_match_loss.mean().item(),
+                            },
+                            step=step,
+                        )
 
-            if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
-                torch.save(dlc_model.state_dict(), out_dir / f"model_{step}.pth")
-                tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
+                if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
+                    torch.save(dlc_model.state_dict(), out_dir / f"model_{step}.pth")
+                    tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
 
             out_recon_loss = out_recon_loss.mean()
             sparsity_loss = sparsity_loss.mean()
