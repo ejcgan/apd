@@ -81,6 +81,9 @@ class Model(nn.Module):
 
         nn.init.xavier_normal_(self.A)
         # Fix the first instance to the identity to compare losses
+        assert (
+            config.n_features == k
+        ), "Currently only supports n_features == k if fixing first instance to identity"
         self.A.data[0] = torch.eye(config.n_features, device=device)
         nn.init.xavier_normal_(self.B)
 
