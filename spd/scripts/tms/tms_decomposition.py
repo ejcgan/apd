@@ -288,7 +288,6 @@ def optimize(
                         out[:, :, feature_idx].sum(),
                         (hidden, pre_relu),
                         retain_graph=True,
-                        allow_unused=True,
                     )
                     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
                     grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
@@ -296,12 +295,13 @@ def optimize(
                     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
 
                     sparsity_loss = sparsity_loss + sparsity_inner**2
-                sparsity_loss = (sparsity_loss / out.shape[-1] + 1e-16).sqrt()
+                sparsity_loss = sparsity_loss / out.shape[-1] + 1e-16
             else:
                 raise ValueError(f"Unknown sparsity loss type: {config.sparsity_loss_type}")
 
+            # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner above
             sparsity_loss = einops.reduce(
-                ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
+                ((sparsity_loss) ** (current_pnorm * 0.5)).sum(dim=-1), "b i -> i", "mean"
             )
 
             with torch.inference_mode():
