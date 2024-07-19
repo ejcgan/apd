@@ -152,9 +152,7 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
     im = None
     for i in range(n_instances):
         ax = axs[0, i]
-        im = ax.matshow(
-            x[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
-        )
+        im = ax.matshow(x[i, :, :].detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap)
         ax.xaxis.set_ticks_position("bottom")
         if i == 0:
             ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
@@ -259,10 +257,9 @@ def optimize(
                 # If the user passed a pretrained model, then calculate the param_match_loss
                 # Get the Frobenius norm between the pretrained weight and the current model's W
                 assert pretrained_W is not None
-                param_match_loss = (
-                    ((pretrained_W[: model.config.n_instances] - model.A @ model.B) ** 2)
-                    .sum(dim=(-2, -1))
-                    .sqrt()
+                W = torch.einsum("ifk,ikh->ifh", model.A, model.B)
+                param_match_loss = ((pretrained_W[: model.config.n_instances] - W) ** 2).sum(
+                    dim=(-2, -1)
                 )
 
             error = model.importance * (batch - out) ** 2
@@ -272,9 +269,9 @@ def optimize(
             # w.r.t h_0 and h_1. So we can't just calculate the gradient w.r.t these terms directly
             # and then detach.
             if config.sparsity_loss_type == "dotted":
-                out_dotted = model.importance * torch.einsum("bih,bih->bi", out, out).sum()
+                out_dotted = model.importance * torch.einsum("bif,bif->bi", out, out).sum()
                 grad_hidden, grad_pre_relu = torch.autograd.grad(
-                    out_dotted, (hidden, pre_relu), create_graph=True
+                    out_dotted, (hidden, pre_relu), retain_graph=True
                 )
                 grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
                 grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
