@@ -1,4 +1,4 @@
-wandb_project: spd-tms
+# wandb_project: spd-tms
 wandb_run_name: null
 wandb_run_name_prefix: "match_loss_"
 seed: 0
@@ -6,10 +6,10 @@ n_features: 5
 n_hidden: 2
 n_instances: 12
 batch_size: 2048
-steps: 20_000
+steps: 30_000
 print_freq: 4000
-lr: 5e-3
-max_sparsity_coeff: 3
+lr: 1e-3
+max_sparsity_coeff: 9
 pnorm: 0.9
 pnorm_end: null
 lr_scale: constant
@@ -21,3 +21,4 @@ train_bias: true
 feature_probability: 0.05
 # Will use param_match_loss instead of recon_loss. File obtained by running spd/scripts/tms/train_tms.py
 pretrained_model_path: spd/scripts/tms/out/tms_n-features5_n-hidden2_n-instances12.pth
+# pretrained_model_path: spd/scripts/tms/out/tms_n-features5_n-hidden2_n-instances4.pth

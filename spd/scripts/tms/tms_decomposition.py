@@ -89,18 +89,16 @@ class Model(nn.Module):
 
     def forward(
         self, features: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        normed_A = self.A / (self.A.norm(p=2, dim=-2, keepdim=True) + 1e-10)
-
-        h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, normed_A)
+        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
 
         pre_relu = hidden_2 + self.b_final
         out = F.relu(pre_relu)
-        return out, h_0, h_1, hidden, pre_relu, normed_A
+        return out, h_0, h_1, hidden, pre_relu
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
@@ -138,14 +136,13 @@ def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = Non
 
 
 def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
-    normed_x = x / x.norm(p=2, dim=-1, keepdim=True)
-    n_instances = normed_x.shape[0]
+    n_instances = x.shape[0]
 
     fig, axs = plt.subplots(
         1, n_instances, figsize=(2.5 * n_instances, 2), squeeze=False, sharey=True
     )
 
-    max_abs_val = normed_x.abs().max()
+    max_abs_val = x.abs().max()
     vmin = -max_abs_val if not pos_only else 0
     vmax = max_abs_val
     cmap = "Blues" if pos_only else "RdBu"
@@ -153,7 +150,7 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
     for i in range(n_instances):
         ax = axs[0, i]
         im = ax.matshow(
-            normed_x[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
+            x[i, :, :].T.detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap
         )
         ax.xaxis.set_ticks_position("bottom")
         if i == 0:
@@ -252,7 +249,7 @@ def optimize(
         )
 
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
+            out, h_0, h_1, hidden, pre_relu = model(batch)
 
             param_match_loss = torch.zeros(model.config.n_instances, device=device)
             if pretrained_model_path:
@@ -260,7 +257,7 @@ def optimize(
                 # Get the Frobenius norm between the pretrained weight and the current model's W
                 assert pretrained_W is not None
                 param_match_loss = (
-                    ((pretrained_W[: model.config.n_instances] - normed_A @ model.B) ** 2)
+                    ((pretrained_W[: model.config.n_instances] - model.A @ model.B) ** 2)
                     .sum(dim=(-2, -1))
                     .sqrt()
                 )
@@ -277,7 +274,7 @@ def optimize(
                     out_dotted, (hidden, pre_relu), create_graph=True
                 )
                 grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
+                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
                 sparsity_loss = h_0 * grad_h_0 + h_1 * grad_h_1
             elif config.sparsity_loss_type == "jacobian":
                 sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
@@ -290,7 +287,7 @@ def optimize(
                         allow_unused=True,
                     )
                     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
+                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
 
                     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
 
@@ -303,49 +300,47 @@ def optimize(
                 ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
             )
 
-            if step % config.print_freq == config.print_freq - 1 or step == 0:
-                sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
-                recon_repr = [f"{x:.4f}" for x in recon_loss]
-                tqdm.write(f"Step {step}")
-                tqdm.write(f"Current pnorm: {current_pnorm}")
-                tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
-                tqdm.write(f"Reconstruction loss: \n{recon_repr}")
-                if pretrained_model_path:
-                    param_match_repr = [f"{x:.4f}" for x in param_match_loss]
-                    tqdm.write(f"Param match loss: \n{param_match_repr}")
+            with torch.inference_mode():
+                if step % config.print_freq == config.print_freq - 1 or step == 0:
+                    sparsity_repr = [f"{x:.4f}" for x in sparsity_loss]
+                    recon_repr = [f"{x:.4f}" for x in recon_loss]
+                    tqdm.write(f"Step {step}")
+                    tqdm.write(f"Current pnorm: {current_pnorm}")
+                    tqdm.write(f"Sparsity loss: \n{sparsity_repr}")
+                    tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+                    if pretrained_model_path:
+                        param_match_repr = [f"{x:.4f}" for x in param_match_loss]
+                        tqdm.write(f"Param match loss: \n{param_match_repr}")
 
-                closeness_vals: list[float] = []
-                for i in range(model.config.n_instances):
-                    permuted_matrix = permute_to_identity(model.A[i].T.abs())
-                    closeness = calculate_closeness_to_identity(permuted_matrix)
-                    closeness_vals.append(closeness)
+                    closeness_vals: list[float] = []
+                    permuted_A_T_list: list[torch.Tensor] = []
+                    for i in range(model.config.n_instances):
+                        permuted_matrix = permute_to_identity(model.A[i].T.abs())
+                        closeness = calculate_closeness_to_identity(permuted_matrix)
+                        closeness_vals.append(closeness)
+                        permuted_A_T_list.append(permuted_matrix)
+                    permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
 
-                # Permute the normed_A matrix to look like an identity matrix
-                permuted_A_T_list = []
-                for instance_idx in range(model.config.n_instances):
-                    permuted_A_T_i = permute_to_identity(normed_A[instance_idx].T.abs())
-                    permuted_A_T_list.append(permuted_A_T_i)
-                permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
+                    fig = plot_A_matrix(permuted_A_T, pos_only=True)
 
-                fig = plot_A_matrix(permuted_A_T, pos_only=True)
-
-                fig.savefig(out_dir / f"A_{step}.png")
-                plt.close(fig)
-                tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
-                if config.wandb_project:
-                    wandb.log(
-                        {
-                            "step": step,
-                            "lr": step_lr,
-                            "current_pnorm": current_pnorm,
-                            "sparsity_loss": sparsity_loss[1:].mean().item(),
-                            "recon_loss": recon_loss[1:].mean().item(),
-                            "param_match_loss": param_match_loss[1:].mean().item(),
-                            "closeness": sum(closeness_vals[1:]) / (model.config.n_instances - 1),
-                            "A_matrix": wandb.Image(fig),
-                        },
-                        step=step,
-                    )
+                    fig.savefig(out_dir / f"A_{step}.png")
+                    plt.close(fig)
+                    tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
+                    if config.wandb_project:
+                        wandb.log(
+                            {
+                                "step": step,
+                                "lr": step_lr,
+                                "current_pnorm": current_pnorm,
+                                "sparsity_loss": sparsity_loss[1:].mean().item(),
+                                "recon_loss": recon_loss[1:].mean().item(),
+                                "param_match_loss": param_match_loss[1:].mean().item(),
+                                "closeness": sum(closeness_vals[1:])
+                                / (model.config.n_instances - 1),
+                                "A_matrix": wandb.Image(fig),
+                            },
+                            step=step,
+                        )
 
             recon_loss = recon_loss.mean()
             sparsity_loss = sparsity_loss.mean()
