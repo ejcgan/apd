@@ -39,6 +39,18 @@
             "env": {
                 "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
+        },
+        {
+            "name": "linear_match_param",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/scripts/linear/linear_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/linear/linear_match_param_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
         }
     ]
 }

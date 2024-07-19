@@ -52,7 +52,8 @@ class ParamComponent(nn.Module):
         self.B = nn.Parameter(torch.empty(n_instances, k, n_features))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        inner_acts = torch.einsum("bif,ifk->bik", x, self.A)
+        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
+        inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         out = torch.einsum("bik,ikg->big", inner_acts, self.B)
         return out, inner_acts
 

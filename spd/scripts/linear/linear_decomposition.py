@@ -8,11 +8,14 @@ from typing import Literal
 
 import einops
 import fire
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
 import yaml
+from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict
+from torch import Tensor
 from tqdm import tqdm
 
 from spd.log import logger
@@ -21,6 +24,7 @@ from spd.types import RootPath
 from spd.utils import (
     init_wandb,
     load_config,
+    permute_to_identity,
     set_seed,
 )
 
@@ -87,6 +91,107 @@ def get_lr_with_warmup(
     if step < warmup_steps:
         return lr * (step / warmup_steps)
     return lr * lr_scale_fn(step - warmup_steps, steps - warmup_steps)
+
+
+def plot_inner_acts(
+    batch: Float[Tensor, "batch n_instances n_features"],
+    inner_acts: list[Float[Tensor, "batch n_instances k"]],
+) -> plt.Figure:
+    """Plot the inner acts for the first batch_elements in the batch.
+
+    The first row is the raw batch information, the following rows are the inner acts per layer.
+    """
+    n_layers = len(inner_acts)
+    n_instances = batch.shape[1]
+
+    fig, axs = plt.subplots(
+        n_layers + 1,
+        n_instances,
+        figsize=(2.5 * n_instances, 2.5 * (n_layers + 1)),
+        squeeze=False,
+        sharey=True,
+    )
+
+    cmap = "Blues"
+    # Add the batch data
+    for i in range(n_instances):
+        ax = axs[0, i]
+        data = batch[:, i, :].detach().cpu().float().numpy()
+        ax.matshow(data, vmin=0, vmax=np.max(data), cmap=cmap)
+
+        ax.set_title(f"Instance {i}")
+        if i == 0:
+            ax.set_ylabel("Inputs")
+        elif i == n_instances - 1:
+            ax.set_ylabel("batch_idx", rotation=-90, va="bottom", labelpad=15)
+            ax.yaxis.set_label_position("right")
+
+        # Set an xlabel for each plot
+        ax.set_xlabel("n_features")
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Add the inner acts
+    for layer in range(n_layers):
+        for i in range(n_instances):
+            ax = axs[layer + 1, i]
+            instance_data = inner_acts[layer][:, i, :].abs().detach().cpu().float().numpy()
+            ax.matshow(instance_data, vmin=0, vmax=np.max(instance_data), cmap=cmap)
+
+            if i == 0:
+                ax.set_ylabel(f"h_{layer}")
+            elif i == n_instances - 1:
+                ax.set_ylabel("batch_idx", rotation=-90, va="bottom", labelpad=15)
+                ax.yaxis.set_label_position("right")
+
+            if layer == n_layers - 1:
+                ax.set_xlabel("k")
+
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+    plt.tight_layout()
+    return fig
+
+
+def collect_inner_act_data(
+    model: DeepLinearComponentModel, device: str
+) -> tuple[
+    Float[Tensor, "batch n_instances n_features"], list[Float[Tensor, "batch n_instances k"]]
+]:
+    """
+    Collect inner activation data for visualization.
+
+    This function creates a test batch using an identity matrix, passes it through the model,
+    and collects the inner activations. It then permutes the activations to align with the identity.
+
+    Args:
+        model (DeepLinearComponentModel): The model to collect data from.
+        device (str): The device to run computations on.
+
+    Returns:
+        - The input test batch (identity matrix expanded over instance dimension).
+        - A list of permuted inner activations for each layer.
+
+    """
+    test_batch = einops.repeat(
+        torch.eye(model.n_features, device=device),
+        "b f -> b i f",
+        i=model.n_instances,
+    )
+    _, _, test_inner_acts = model(test_batch)
+
+    test_inner_acts_permuted = []
+    for layer in range(model.n_layers):
+        test_inner_acts_layer_permuted = []
+        for i in range(model.n_instances):
+            test_inner_acts_layer_permuted.append(
+                permute_to_identity(test_inner_acts[layer][:, i, :].abs())
+            )
+        test_inner_acts_permuted.append(torch.stack(test_inner_acts_layer_permuted, dim=1))
+
+    return test_batch, test_inner_acts_permuted
 
 
 def optimize(
@@ -161,11 +266,13 @@ def optimize(
 
             param_match_loss = torch.zeros(dlc_model.n_instances, device=device)
             if pretrained_model_path:
-                assert pretrained_weights is not None
                 # If the user passed a pretrained model, then calculate the param_match_loss
-                # Get the Frobenius norm between the pretrained weight and the current model's W
+                assert pretrained_weights is not None
                 for i in range(dlc_model.n_layers):
-                    AB = torch.einsum("ifk,ikg->ifg", dlc_model.layers[i].A, dlc_model.layers[i].B)
+                    normed_A = dlc_model.layers[i].A / dlc_model.layers[i].A.norm(
+                        p=2, dim=-2, keepdim=True
+                    )
+                    AB = torch.einsum("ifk,ikg->ifg", normed_A, dlc_model.layers[i].B)
                     param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
                         dim=(-2, -1)
                     )
@@ -195,10 +302,13 @@ def optimize(
                     )
 
                 sparsity_loss = sparsity_loss + sparsity_inner**2
-            sparsity_loss = (sparsity_loss / dlc_out.shape[-1] + 1e-16).sqrt()
+            sparsity_loss = sparsity_loss / dlc_out.shape[-1] + 1e-16
 
+            # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner above
             sparsity_loss = einops.reduce(
-                ((sparsity_loss.abs() + 1e-16) ** current_pnorm).sum(dim=-1), "b i -> i", "mean"
+                ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1),
+                "b i -> i",
+                "mean",
             )
 
             with torch.inference_mode():
@@ -216,6 +326,13 @@ def optimize(
                         param_match_repr = [f"{x}" for x in param_match_loss]
                         tqdm.write(f"Param match loss: \n{param_match_repr}")
 
+                    test_batch, test_inner_acts = collect_inner_act_data(dlc_model, device)
+
+                    fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
+                    fig.savefig(out_dir / f"inner_acts_{step}.png")
+                    plt.close(fig)
+                    tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
+
                     if config.wandb_project:
                         wandb.log(
                             {
@@ -225,6 +342,7 @@ def optimize(
                                 "sparsity_loss": sparsity_loss.mean().item(),
                                 "recon_loss": out_recon_loss.mean().item(),
                                 "param_match_loss": param_match_loss.mean().item(),
+                                "inner_acts": wandb.Image(fig),
                             },
                             step=step,
                         )
