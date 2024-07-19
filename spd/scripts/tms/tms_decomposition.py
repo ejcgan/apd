@@ -70,7 +70,7 @@ class Model(nn.Module):
         k = config.k if config.k is not None else config.n_features
 
         self.A = nn.Parameter(
-            torch.empty((config.n_instances, config.n_features, k), device=device),
+            torch.empty((config.n_instances, config.n_features, k), device=device)
         )
         self.B = nn.Parameter(torch.empty((config.n_instances, k, config.n_hidden), device=device))
 
@@ -92,16 +92,17 @@ class Model(nn.Module):
 
     def forward(
         self, features: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        h_0 = torch.einsum("...if,ifk->...ik", features, self.A)
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
+        h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
         hidden = torch.einsum("...ik,ikh->...ih", h_0, self.B)
 
         h_1 = torch.einsum("...ih,ikh->...ik", hidden, self.B)
-        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, self.A)
+        hidden_2 = torch.einsum("...ik,ifk->...if", h_1, normed_A)
 
         pre_relu = hidden_2 + self.b_final
         out = F.relu(pre_relu)
-        return out, h_0, h_1, hidden, pre_relu
+        return out, h_0, h_1, hidden, pre_relu, normed_A
 
     def generate_batch(self, n_batch: int) -> torch.Tensor:
         feat = torch.rand(
@@ -145,14 +146,16 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
         1, n_instances, figsize=(2.5 * n_instances, 2), squeeze=False, sharey=True
     )
 
-    max_abs_val = x.abs().max()
-    vmin = -max_abs_val if not pos_only else 0
-    vmax = max_abs_val
     cmap = "Blues" if pos_only else "RdBu"
-    im = None
+    ims = []
     for i in range(n_instances):
         ax = axs[0, i]
-        im = ax.matshow(x[i, :, :].detach().cpu().float().numpy(), vmin=vmin, vmax=vmax, cmap=cmap)
+        instance_data = x[i, :, :].detach().cpu().float().numpy()
+        max_abs_val = np.abs(instance_data).max()
+        vmin = 0 if pos_only else -max_abs_val
+        vmax = max_abs_val
+        im = ax.matshow(instance_data, vmin=vmin, vmax=vmax, cmap=cmap)
+        ims.append(im)
         ax.xaxis.set_ticks_position("bottom")
         if i == 0:
             ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
@@ -161,12 +164,13 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
         ax.xaxis.set_label_position("top")
         ax.set_xlabel("n_features")
 
-    assert im is not None
-
     plt.subplots_adjust(wspace=0.1, bottom=0.15, top=0.9)
     fig.subplots_adjust(bottom=0.2)
-    cbar_ax = fig.add_axes((0.3, 0.05, 0.4, 0.02))
-    fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
+
+    # # Add a colorbar for each subplot
+    # for i, im in enumerate(ims):
+    #     cbar_ax = fig.add_axes((0.1 + i * 0.8 / n_instances, 0.05, 0.8 / n_instances - 0.02, 0.02))
+    #     fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
 
     return fig
 
@@ -206,6 +210,8 @@ def optimize(
     pretrained_W = None
     if pretrained_model_path:
         pretrained_W = torch.load(pretrained_model_path)["W"].to(device)
+        # Set requires_grad to False for the pretrained W
+        pretrained_W.requires_grad = False
     opt = torch.optim.AdamW(list(model.parameters()), lr=config.lr)
 
     lr_scale_fn: Callable[[int, int], float]
@@ -250,14 +256,13 @@ def optimize(
         )
 
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            out, h_0, h_1, hidden, pre_relu = model(batch)
+            out, h_0, h_1, hidden, pre_relu, normed_A = model(batch)
 
             param_match_loss = torch.zeros(model.config.n_instances, device=device)
             if pretrained_model_path:
                 # If the user passed a pretrained model, then calculate the param_match_loss
-                # Get the Frobenius norm between the pretrained weight and the current model's W
                 assert pretrained_W is not None
-                W = torch.einsum("ifk,ikh->ifh", model.A, model.B)
+                W = torch.einsum("ifk,ikh->ifh", normed_A, model.B)
                 param_match_loss = ((pretrained_W[: model.config.n_instances] - W) ** 2).sum(
                     dim=(-2, -1)
                 )
@@ -274,7 +279,7 @@ def optimize(
                     out_dotted, (hidden, pre_relu), retain_graph=True
                 )
                 grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
                 sparsity_loss = h_0 * grad_h_0 + h_1 * grad_h_1
             elif config.sparsity_loss_type == "jacobian":
                 sparsity_loss = torch.zeros_like(h_0, requires_grad=True)
@@ -282,12 +287,11 @@ def optimize(
                     grad_hidden, grad_pre_relu = torch.autograd.grad(
                         out[:, :, feature_idx].sum(),
                         (hidden, pre_relu),
-                        grad_outputs=torch.tensor(1.0, device=out.device),
                         retain_graph=True,
                         allow_unused=True,
                     )
                     grad_h_0 = torch.einsum("...ih,ikh->...ik", grad_hidden.detach(), model.B)
-                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), model.A)
+                    grad_h_1 = torch.einsum("...if,ifk->...ik", grad_pre_relu.detach(), normed_A)
 
                     sparsity_inner = grad_h_0 * h_0 + grad_h_1 * h_1
 
@@ -315,7 +319,7 @@ def optimize(
                     closeness_vals: list[float] = []
                     permuted_A_T_list: list[torch.Tensor] = []
                     for i in range(model.config.n_instances):
-                        permuted_matrix = permute_to_identity(model.A[i].T.abs())
+                        permuted_matrix = permute_to_identity(normed_A[i].T.abs())
                         closeness = calculate_closeness_to_identity(permuted_matrix)
                         closeness_vals.append(closeness)
                         permuted_A_T_list.append(permuted_matrix)
