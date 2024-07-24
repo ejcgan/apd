@@ -1,0 +1,16 @@
+wandb_project: spd-linear
+wandb_run_name: null
+wandb_run_name_prefix: ""
+seed: 0
+topk: 1
+# n_features: 5
+# n_layers: 3
+# n_instances: 2
+batch_size: 1024
+steps: 20_000
+print_freq: 4000
+save_freq: 10_000
+lr: 1e-1
+lr_scale: constant
+lr_warmup_pct: 0.1
+pretrained_model_path: spd/scripts/linear/out/linear.pt

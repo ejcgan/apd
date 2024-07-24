@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import torch
-from torch import nn
+from jaxtyping import Float
+from torch import Tensor, nn
 
 
 class DeepLinearModel(nn.Module):
@@ -46,34 +47,70 @@ class DeepLinearModel(nn.Module):
 
 
 class ParamComponent(nn.Module):
-    def __init__(self, n_instances: int, n_features: int, k: int):
+    def __init__(self, n_instances: int, n_features: int, k: int, topk: int | None = None):
         super().__init__()
         self.A = nn.Parameter(torch.empty(n_instances, n_features, k))
         self.B = nn.Parameter(torch.empty(n_instances, k, n_features))
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: Float[Tensor, "... n_instances n_features"],
+    ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         out = torch.einsum("bik,ikg->big", inner_acts, self.B)
         return out, inner_acts
 
+    def forward_topk(
+        self,
+        x: Float[Tensor, "... n_instances n_features"],
+        topk: int,
+        grads: Float[Tensor, "... n_instances k"] | None = None,
+    ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
+        """If grads are passed, do a forward pass with topk. Otherwise, do a regular forward pass."""
+        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
+        inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
+        if grads is not None:
+            grads = grads * inner_acts
+            topk_indices = grads.abs().topk(topk, dim=-1).indices
+        else:
+            topk_indices = inner_acts.abs().topk(topk, dim=-1).indices
+
+        # Get values in inner_acts corresponding to topk_indices
+        topk_values = inner_acts.gather(dim=-1, index=topk_indices)
+        inner_acts_topk = torch.zeros_like(inner_acts)
+        inner_acts_topk.scatter_(dim=-1, index=topk_indices, src=topk_values)
+        out = torch.einsum("bik,ikg->big", inner_acts_topk, self.B)
+        return out, inner_acts_topk
+
 
 class DeepLinearComponentModel(nn.Module):
-    def __init__(self, n_features: int, n_layers: int, n_instances: int, k: int | None):
+    def __init__(
+        self,
+        n_features: int,
+        n_layers: int,
+        n_instances: int,
+        k: int | None,
+        topk: int | None = None,
+    ):
         super().__init__()
         self.n_features = n_features
         self.n_layers = n_layers
         self.n_instances = n_instances
         self.k = k if k is not None else n_features
         self.layers = nn.ModuleList(
-            [ParamComponent(n_instances, n_features, self.k) for _ in range(n_layers)]
+            [
+                ParamComponent(n_instances=n_instances, n_features=n_features, k=self.k, topk=topk)
+                for _ in range(n_layers)
+            ]
         )
 
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
     def forward(
-        self, x: torch.Tensor
+        self,
+        x: Float[Tensor, "... n_instances n_features"],
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
         layer_acts = []
         inner_acts = []
@@ -82,6 +119,21 @@ class DeepLinearComponentModel(nn.Module):
             layer_acts.append(x)
             inner_acts.append(inner_act)
         return x, layer_acts, inner_acts
+
+    def forward_topk(
+        self,
+        x: Float[Tensor, "... n_instances n_features"],
+        topk: int,
+        all_grads: list[Float[Tensor, "... n_instances k"]] | None = None,
+    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+        layer_acts = []
+        inner_acts_topk = []
+        for i, layer in enumerate(self.layers):
+            grads = all_grads[i] if all_grads is not None else None
+            x, inner_act_topk = layer.forward_topk(x, topk, grads)
+            layer_acts.append(x)
+            inner_acts_topk.append(inner_act_topk)
+        return x, layer_acts, inner_acts_topk
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentModel":
