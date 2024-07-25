@@ -276,8 +276,10 @@ def optimize(
             with torch.inference_mode():
                 if step % config.print_freq == config.print_freq - 1 or step == 0:
                     recon_repr = [f"{x}" for x in out_recon_loss]
+                    recon_repr_topk = [f"{x}" for x in out_recon_loss_topk]
                     tqdm.write(f"Step {step}")
                     tqdm.write(f"Reconstruction loss: \n{recon_repr}")
+                    tqdm.write(f"Reconstruction loss (topk): \n{recon_repr_topk}")
                     if pretrained_model_path:
                         # param_match_repr = [f"{x:.4f}" for x in param_match_loss]
                         param_match_repr = [f"{x}" for x in param_match_loss]
@@ -298,6 +300,7 @@ def optimize(
                                 "step": step,
                                 "current_lr": step_lr,
                                 "recon_loss": out_recon_loss.mean().item(),
+                                "recon_loss_topk": out_recon_loss_topk.mean().item(),
                                 "param_match_loss": param_match_loss.mean().item(),
                                 "inner_acts": wandb.Image(fig),
                             },
@@ -384,7 +387,6 @@ def main(
         n_layers=n_layers,
         n_instances=n_instances,
         k=config.k,
-        topk=config.topk,
     ).to(device)
 
     optimize(

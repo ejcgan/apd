@@ -47,7 +47,7 @@ class DeepLinearModel(nn.Module):
 
 
 class ParamComponent(nn.Module):
-    def __init__(self, n_instances: int, n_features: int, k: int, topk: int | None = None):
+    def __init__(self, n_instances: int, n_features: int, k: int):
         super().__init__()
         self.A = nn.Parameter(torch.empty(n_instances, n_features, k))
         self.B = nn.Parameter(torch.empty(n_instances, k, n_features))
@@ -71,8 +71,7 @@ class ParamComponent(nn.Module):
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         if grads is not None:
-            grads = grads * inner_acts
-            topk_indices = grads.abs().topk(topk, dim=-1).indices
+            topk_indices = (grads * inner_acts).abs().topk(topk, dim=-1).indices
         else:
             topk_indices = inner_acts.abs().topk(topk, dim=-1).indices
 
@@ -91,7 +90,6 @@ class DeepLinearComponentModel(nn.Module):
         n_layers: int,
         n_instances: int,
         k: int | None,
-        topk: int | None = None,
     ):
         super().__init__()
         self.n_features = n_features
@@ -100,7 +98,7 @@ class DeepLinearComponentModel(nn.Module):
         self.k = k if k is not None else n_features
         self.layers = nn.ModuleList(
             [
-                ParamComponent(n_instances=n_instances, n_features=n_features, k=self.k, topk=topk)
+                ParamComponent(n_instances=n_instances, n_features=n_features, k=self.k)
                 for _ in range(n_layers)
             ]
         )
