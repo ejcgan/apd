@@ -29,6 +29,18 @@
             }
         },
         {
+            "name": "tms_topk_match_param",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/scripts/tms/tms_decomposition_topk.py",
+            "args": "${workspaceFolder}/spd/scripts/tms/tms_topk_match_param_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
+        },
+        {
             "name": "linear",
             "type": "debugpy",
             "request": "launch",

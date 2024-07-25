@@ -1,0 +1,17 @@
+program: spd/scripts/tms/tms_decomposition_topk.py
+method: grid
+metric:
+  name: final_closeness
+  goal: minimize
+parameters:
+  lr:
+    values: [1e-2, 1e-3]
+  topk:
+    values: [1, 2, 4, 8]
+  topk_coeff:
+    values: [1, 10]
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/scripts/tms/tms_topk_match_param_config.yaml
