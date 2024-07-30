@@ -9,7 +9,7 @@ TwoArgOperation = tuple[Literal["AND", "OR"], int, int]
 DetailedTwoArgOperation = tuple[Literal["AND", "OR"], int, int, int, int]
 Operation = NotOperation | TwoArgOperation
 DetailedOperation = DetailedNotOperation | DetailedTwoArgOperation
-IncompleteOperation = tuple[Literal["AND", "OR", "NOT"], int, int | None, int, int | None]
+IncompleteOperation = list[Literal["AND", "OR", "NOT"], int, int | None, int, int | None]
 Circuit = list[Operation]
 DetailedCircuit = list[DetailedOperation]
 
@@ -40,7 +40,7 @@ def make_detailed_circuit(base_circuit: Circuit, n_inputs: int) -> DetailedCircu
 
     # Assign an output index to each gate
     for i, (gate, arg1, arg2) in enumerate(base_circuit):
-        op: IncompleteOperation = (gate, arg1, arg2, n_inputs + i, None)
+        op: IncompleteOperation = [gate, arg1, arg2, n_inputs + i, None]
         circuit.append(op)
 
     # Find the minimum layer needed for each gate
@@ -62,7 +62,7 @@ def make_detailed_circuit(base_circuit: Circuit, n_inputs: int) -> DetailedCircu
         # Check if the algorithm has convered
         fully_specificed = all([x[4] is not None for x in circuit])
 
-    circuit: DetailedCircuit = circuit
+    circuit: DetailedCircuit = [tuple(x) for x in circuit]
     return circuit
 
 
