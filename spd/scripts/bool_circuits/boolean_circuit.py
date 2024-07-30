@@ -5,7 +5,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 # %%
-from spd.scripts.bool_circuits.circuit_utils import make_detailled_circuit
+from spd.scripts.bool_circuits.circuit_utils import Circuit, DetailedCircuit, make_detailed_circuit
 
 
 class MLP(nn.Module):
@@ -44,10 +44,10 @@ class BoolCircuitModel(Transformer):
             n_inputs=n_inputs, d_embed=d_hidden, d_mlp=d_hidden, n_layers=n_layers, n_outputs=1
         )
 
-    def hand_coded_implementation(self, circuit):
-        detailled_circuit = make_detailled_circuit(circuit, self.n_inputs)
+    def hand_coded_implementation(self, circuit: Circuit):
+        detailed_circuit: DetailedCircuit = make_detailed_circuit(circuit, self.n_inputs)
 
-        assert len(detailled_circuit) + self.n_inputs <= self.d_embed, "d_hidden is too low"
+        assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_hidden is too low"
 
         print(f"{self.W_E.weight.shape=}")
         self.W_E.weight.data[: self.n_inputs, :] = torch.eye(self.n_inputs)
@@ -56,11 +56,11 @@ class BoolCircuitModel(Transformer):
         )
 
         assert self.n_outputs == 1, "Only one output supported"
-        out_idx = detailled_circuit[-1][3]
+        out_idx = detailed_circuit[-1][3]
         self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
         self.W_U.weight.data[0, out_idx] = 1.0
 
-        assert max(x[4] for x in detailled_circuit) < self.n_layers, "Not enough layers"
+        assert max(x[4] for x in detailed_circuit) < self.n_layers, "Not enough layers"
         for i in range(self.n_layers):
             # torch.nn shapes are (d_output, d_input)
             # linear1.shape = (d_mlp, d_embed)
@@ -70,7 +70,7 @@ class BoolCircuitModel(Transformer):
             self.layers[i].linear2.weight.data = torch.zeros(self.d_embed, self.d_mlp)
 
         used_neurons = [0 for _ in range(self.n_layers)]
-        for i, (gate, arg1, arg2, out_idx, min_layer) in enumerate(detailled_circuit):
+        for gate, arg1, arg2, out_idx, min_layer in detailed_circuit:
             if gate == "AND":
                 neuron_index = used_neurons[min_layer]
                 used_neurons[min_layer] += 1

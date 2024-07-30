@@ -5,7 +5,7 @@ from spd.scripts.bool_circuits.boolean_circuit import BoolCircuitModel
 from spd.scripts.bool_circuits.circuit_utils import (
     evaluate_circuit,
     list_circuit_to_sympy,
-    make_detailled_circuit,
+    make_detailed_circuit,
     sympy_to_list_circuit,
 )
 
@@ -44,9 +44,9 @@ print("Simplified circuit:")
 for i, (gate, arg1, arg2) in enumerate(simplified_circuit):
     print(f"{i}: {gate} {arg1} {arg2}")
 
-detailled_circuit = make_detailled_circuit(circuit, num_inputs)
-print("Detailled circuit:")
-for i, (gate, arg1, arg2, out_idx, min_layer_needed) in enumerate(detailled_circuit):
+detailed_circuit = make_detailed_circuit(circuit, num_inputs)
+print("Detailed circuit:")
+for i, (gate, arg1, arg2, out_idx, min_layer_needed) in enumerate(detailed_circuit):
     print(f"{i}: {gate} {arg1} {arg2} -> {out_idx} @ layer {min_layer_needed}")
 
 
@@ -62,7 +62,4 @@ for _ in range(1000):
     net = network(random_bools.float()).item()
     label = evaluate_circuit(list(random_bools[0]), circuit)
     assert net == label, f"{net=}, {label=}"
-# %%
-
-
 # %%
