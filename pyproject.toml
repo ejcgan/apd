@@ -19,6 +19,7 @@ dependencies = [
     "numpy",
     "python-dotenv",
     "wandb",
+    "sympy",
 ]
 
 [project.optional-dependencies]

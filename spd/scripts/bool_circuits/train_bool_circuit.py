@@ -3,33 +3,38 @@
 import json
 import random
 from pathlib import Path
-from typing import Literal
 
 import torch
 import wandb
 from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict
-from torch import Tensor, nn
+from torch import Tensor
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from spd.log import logger
+from spd.scripts.bool_circuits.boolean_circuit import Transformer
+from spd.scripts.bool_circuits.circuit_utils import (
+    NotOperation,
+    TwoArgOperation,
+    create_circuit_str,
+    create_truth_table,
+    generate_circuit,
+)
 from spd.types import RootPath
 from spd.utils import set_seed
 
 wandb.require("core")
-DEFAULT_TORCH_DTYPE = torch.float32
-torch.set_default_dtype(DEFAULT_TORCH_DTYPE)
 
 
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     global_seed: int = 0
-    circuit_seed: int = 0
+    circuit_seed: int | None = None
     n_inputs: int
-    n_operations: int
-    hidden_size: int
+    n_operations: int | None = None
+    d_embed: int
     n_layers: int
     batch_size: int
     steps: int
@@ -39,148 +44,29 @@ class Config(BaseModel):
     truth_range: tuple[float, float]  # [min_percent_1s, max_percent_1s]
     eval_pct: float = 0.3
     eval_every_n_samples: int = 1000
-
-
-OPERATIONS = ["AND", "OR", "NOT"]
-
-NotOperation = tuple[Literal["NOT"], int, None]
-TwoArgOperation = tuple[Literal["AND", "OR"], int, int]
-
-
-class BooleanCircuit:
-    def __init__(
-        self,
-        n_inputs: int,
-        n_operations: int,
-        circuit_seed: int,
-        truth_range: tuple[float, float],
-    ):
-        self.n_inputs = n_inputs
-        self.n_operations = n_operations
-        self.circuit_seed = circuit_seed
-        self.truth_range = truth_range
-
-        self.circuit = self.generate_circuit()
-        self.data_table = self.truth_table(self.n_inputs, self.circuit)
-
-    def generate_circuit(self, max_tries: int = 100) -> list[TwoArgOperation | NotOperation]:
-        rng = random.Random(self.circuit_seed)
-
-        for n_attempts in range(max_tries):
-            circuit: list[NotOperation | TwoArgOperation] = []
-
-            for i in range(self.n_operations):
-                op = rng.choice(OPERATIONS)
-                if op == "NOT":
-                    input1 = rng.randint(0, self.n_inputs + i - 1)
-                    not_tup: NotOperation = ("NOT", input1, None)
-                    circuit.append(not_tup)
-                elif op in ["AND", "OR"]:
-                    input1 = rng.randint(0, self.n_inputs + i - 1)
-                    input2 = rng.randint(0, self.n_inputs + i - 1)
-                    while input2 == input1:
-                        input2 = rng.randint(0, self.n_inputs + i - 1)
-                    circuit.append((op, input1, input2))  # pyright: ignore [reportArgumentType]
-                else:
-                    raise ValueError(f"Unknown operation: {op}")
-
-            truth_table = BooleanCircuit.truth_table(self.n_inputs, circuit)
-            truth_percentage = truth_table[:, -1].type(torch.get_default_dtype()).mean().item()
-
-            if self.truth_range[0] <= truth_percentage <= self.truth_range[1]:
-                logger.info(f"Generated circuit in {n_attempts + 1} attempts")
-                return circuit
-
-        raise ValueError(
-            f"Failed to generate a circuit within the specified truth range after {max_tries + 1} "
-            f"attempts."
-        )
-
-    @staticmethod
-    def evaluate_circuit(inputs: list[int], circuit: list[TwoArgOperation | NotOperation]) -> int:
-        values = inputs.copy()
-
-        for op, input1, input2 in circuit:
-            if op == "AND":
-                assert input2 is not None
-                result = values[input1] & values[input2]
-            elif op == "OR":
-                assert input2 is not None
-                result = values[input1] | values[input2]
-            elif op == "NOT":
-                result = 1 - values[input1]
-            else:
-                raise ValueError(f"Unknown operation: {op}")
-            values.append(result)
-
-        return values[-1]
-
-    @staticmethod
-    def truth_table(
-        n_inputs: int, circuit: list[TwoArgOperation | NotOperation]
-    ) -> Float[Tensor, "all_possible_inputs inputs+1"]:
-        """Get the truth table for the circuit.
-
-        Returns a tensor of shape (2**n_inputs, n_inputs + 1) where the final
-        column is the output of the circuit.
-        """
-        # Get all combinations of boolean inputs
-        n_input_combinations = 2**n_inputs
-        all_possible_inputs = torch.tensor(
-            [list(map(int, bin(i)[2:].zfill(n_inputs))) for i in range(n_input_combinations)],
-        )
-        outputs = torch.tensor(
-            [
-                BooleanCircuit.evaluate_circuit(inputs.tolist(), circuit)
-                for inputs in all_possible_inputs
-            ],
-        ).unsqueeze(1)
-        return torch.cat([all_possible_inputs, outputs], dim=-1).type(torch.get_default_dtype())
-
-    def __str__(self) -> str:
-        return f"Circuit: n_inputs={self.n_inputs} - {self.circuit}"
+    circuit: list[TwoArgOperation | NotOperation] | None = None
+    circuit_min_variables: int | None = None  # Min number of variables in the final circuit
 
 
 class BooleanCircuitDataset(Dataset[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]]):
     def __init__(
         self,
-        bool_circuit: BooleanCircuit,
+        circuit: list[TwoArgOperation | NotOperation],
+        n_inputs: int,
         valid_idxs: list[int],
     ):
-        self.bool_circuit = bool_circuit
+        self.circuit = circuit
+        self.n_inputs = n_inputs
         self.valid_idxs = valid_idxs
+        self.data_table = create_truth_table(n_inputs, circuit)
 
     def __len__(self) -> int:
         return len(self.valid_idxs)
 
     def __getitem__(self, idx: int) -> tuple[Float[Tensor, ""], Float[Tensor, ""]]:
         data_idx = self.valid_idxs[idx]
-        data = self.bool_circuit.data_table[data_idx].detach().clone()
+        data = self.data_table[data_idx].detach().clone()
         return data[:-1], data[-1:]
-
-
-class MLP(nn.Module):
-    def __init__(self, d_embed: int, d_mlp: int):
-        super().__init__()
-        self.linear1 = nn.Linear(d_embed, d_mlp)
-        self.linear2 = nn.Linear(d_mlp, d_embed)
-
-    def forward(self, x: Float[Tensor, "... d_embed"]) -> Float[Tensor, "... d_embed"]:
-        return self.linear2(F.relu(self.linear1(x)))
-
-
-class Transformer(nn.Module):
-    def __init__(self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, n_outputs: int = 1):
-        super().__init__()
-        self.W_E = nn.Linear(n_inputs, d_embed)
-        self.W_U = nn.Linear(d_embed, n_outputs)
-        self.layers = nn.ModuleList([MLP(d_embed, d_mlp) for _ in range(n_layers)])
-
-    def forward(self, x: Float[Tensor, "batch inputs"]) -> Float[Tensor, "batch outputs"]:
-        residual = self.W_E(x)
-        for layer in self.layers:
-            residual = residual + layer(residual)
-        return self.W_U(residual)
 
 
 def evaluate(
@@ -246,7 +132,7 @@ def train(
     if config.out_dir is not None:
         # Save config and model
         exp_info = (
-            f"inp{config.n_inputs}-op{config.n_operations}-hid{config.hidden_size}-"
+            f"inp{config.n_inputs}-op{config.n_operations}-hid{config.d_embed}-"
             f"lay{config.n_layers}-circseed{config.circuit_seed}-seed{config.global_seed}"
         )
         experiment_dir = config.out_dir / exp_info
@@ -262,13 +148,14 @@ if __name__ == "__main__":
 
     config = Config(
         global_seed=0,
-        circuit_seed=0,
+        circuit_seed=1,
         n_inputs=10,
         n_operations=20,
-        hidden_size=8,
-        n_layers=2,
+        circuit_min_variables=6,
+        d_embed=8,
+        n_layers=1,
         batch_size=16,
-        steps=5000,
+        steps=10000,
         print_freq=500,
         lr=0.001,
         truth_range=(0.4, 0.6),
@@ -276,29 +163,34 @@ if __name__ == "__main__":
         eval_every_n_samples=500,
     )
     logger.info(f"Config: {config}")
-    bool_circuit = BooleanCircuit(
+    circuit = generate_circuit(
         n_inputs=config.n_inputs,
         n_operations=config.n_operations,
         circuit_seed=config.circuit_seed,
         truth_range=config.truth_range,
+        circuit_min_variables=config.circuit_min_variables,
     )
-    logger.info(bool_circuit)
-    logger.info(f"Truth table:\n{bool_circuit.truth_table(config.n_inputs, bool_circuit.circuit)}")
+    truth_table = create_truth_table(config.n_inputs, circuit)
+
+    logger.info(f"Circuit: n_inputs={config.n_inputs} - {circuit}")
+    logger.info(f"Circuit string: {create_circuit_str(circuit, config.n_inputs)}")
+    logger.info(f"Truth table:\n{truth_table}")
+
     # Randomly select eval_pct idxs from range(len(bool_circuit.data_table))
     n_input_combinations = 2**config.n_inputs
-    assert n_input_combinations == len(bool_circuit.data_table)
+    assert n_input_combinations == len(truth_table)
     eval_idxs = random.sample(
         range(n_input_combinations), int(config.eval_pct * n_input_combinations)
     )
     train_idxs = [i for i in range(n_input_combinations) if i not in eval_idxs]
-    train_dataset = BooleanCircuitDataset(bool_circuit, valid_idxs=train_idxs)
-    eval_dataset = BooleanCircuitDataset(bool_circuit, valid_idxs=eval_idxs)
+    train_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=train_idxs)
+    eval_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=eval_idxs)
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=config.batch_size, shuffle=False)
     model = Transformer(
         n_inputs=config.n_inputs,
-        d_embed=config.hidden_size,
-        d_mlp=config.hidden_size,
+        d_embed=config.d_embed,
+        d_mlp=config.d_embed,
         n_layers=config.n_layers,
     ).to(device)
 

@@ -1,12 +1,12 @@
 """Function to hand-code a boolean circuit as a neural network"""
+
 import torch
 
 from spd.scripts.bool_circuits.boolean_circuit import BoolCircuitModel
 from spd.scripts.bool_circuits.circuit_utils import (
+    create_circuit_str,
     evaluate_circuit,
-    list_circuit_to_sympy,
     make_detailed_circuit,
-    sympy_to_list_circuit,
 )
 
 # %% Use sympy to simplify the circuit
@@ -35,14 +35,8 @@ print("Original circuit:")
 for i, (gate, arg1, arg2) in enumerate(circuit):
     print(f"{i}: {gate} {arg1} {arg2}")
 
-final_output, simplified = list_circuit_to_sympy(circuit, num_inputs)
-print("Original expression:", final_output)
-print("Simplified expression:", simplified)
-
-simplified_circuit = sympy_to_list_circuit(simplified)
-print("Simplified circuit:")
-for i, (gate, arg1, arg2) in enumerate(simplified_circuit):
-    print(f"{i}: {gate} {arg1} {arg2}")
+final_output = create_circuit_str(circuit, num_inputs)
+print("expression:", final_output)
 
 detailed_circuit = make_detailed_circuit(circuit, num_inputs)
 print("Detailed circuit:")

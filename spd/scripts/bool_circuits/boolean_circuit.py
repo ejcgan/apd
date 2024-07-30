@@ -4,15 +4,14 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-# %%
 from spd.scripts.bool_circuits.circuit_utils import Circuit, DetailedCircuit, make_detailed_circuit
 
 
 class MLP(nn.Module):
     def __init__(self, d_embed: int, d_mlp: int):
         super().__init__()
-        self.linear1 = nn.Linear(d_embed, d_mlp)  # W.shape = (d_mlp, d_embed)
-        self.linear2 = nn.Linear(d_mlp, d_embed, bias=False)  # W.shape = (d_embed, d_mlp)
+        self.linear1 = nn.Linear(d_embed, d_mlp)
+        self.linear2 = nn.Linear(d_mlp, d_embed, bias=False)  # No bias in down-projection
 
     def forward(self, x: Float[Tensor, "... d_embed"]) -> Float[Tensor, "... d_embed"]:
         return self.linear2(F.relu(self.linear1(x)))
@@ -24,11 +23,11 @@ class Transformer(nn.Module):
         self.n_inputs = n_inputs
         self.d_embed = d_embed
         self.d_mlp = d_mlp
-        self.n_outputs = n_outputs
         self.n_layers = n_layers
+        self.n_outputs = n_outputs
 
-        self.W_E = nn.Linear(n_inputs, d_embed, bias=False)  # W_E.shape = (d_embed, n_inputs)
-        self.W_U = nn.Linear(d_embed, n_outputs, bias=False)  # W_U.shape = (n_outputs, d_embed)
+        self.W_E = nn.Linear(n_inputs, d_embed, bias=False)
+        self.W_U = nn.Linear(d_embed, n_outputs, bias=False)
         self.layers = nn.ModuleList([MLP(d_embed, d_mlp) for _ in range(n_layers)])
 
     def forward(self, x: Float[Tensor, "batch inputs"]) -> Float[Tensor, "batch outputs"]:
