@@ -3,9 +3,9 @@
 import json
 import random
 from pathlib import Path
+from typing import Literal
 
 import torch
-import wandb
 from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict
 from torch import Tensor
@@ -24,8 +24,6 @@ from spd.scripts.bool_circuits.circuit_utils import (
 from spd.types import RootPath
 from spd.utils import set_seed
 
-wandb.require("core")
-
 
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -43,7 +41,7 @@ class Config(BaseModel):
     truth_range: tuple[float, float]  # [min_percent_1s, max_percent_1s]
     eval_pct: float = 0.3
     eval_every_n_samples: int = 1000
-    circuit: list[BooleanOperation] | None = None
+    circuit_repr: list[tuple[Literal["AND", "OR", "NOT"], int, int | None]] | None = None
     circuit_min_variables: int  # Min number of variables in the final circuit
 
 
@@ -162,13 +160,19 @@ if __name__ == "__main__":
         eval_every_n_samples=500,
     )
     logger.info(f"Config: {config}")
-    circuit = generate_circuit(
-        n_inputs=config.n_inputs,
-        n_operations=config.n_operations,
-        circuit_seed=config.circuit_seed,
-        truth_range=config.truth_range,
-        circuit_min_variables=config.circuit_min_variables,
-    )
+    if config.circuit_repr is None:
+        circuit = generate_circuit(
+            n_inputs=config.n_inputs,
+            n_operations=config.n_operations,
+            circuit_seed=config.circuit_seed,
+            truth_range=config.truth_range,
+            circuit_min_variables=config.circuit_min_variables,
+        )
+    else:
+        circuit = [
+            BooleanOperation(op=args[0], arg1=args[1], arg2=args[2]) for args in config.circuit_repr
+        ]
+
     truth_table = create_truth_table(config.n_inputs, circuit)
 
     logger.info(f"Circuit: n_inputs={config.n_inputs} - {circuit}")

@@ -43,6 +43,9 @@ class BooleanOperation:
         else:
             raise ValueError(f"Unknown operation: {self.op_name}")
 
+    def __repr__(self) -> str:
+        return f"{self.op_name}({self.arg1}, {self.arg2})"
+
 
 def create_circuit_str(circuit: list[BooleanOperation], n_inputs: int) -> str:
     """Create string repr of circuit using sympy"""
