@@ -183,12 +183,15 @@ def plot_circuit(circuit: list[BooleanOperation], num_inputs: int, filename: str
 
     # Add input nodes
     for i in range(num_inputs):
-        dot.node(f"x{i}", f"x{i}")
+        dot.node(f"x{i}", f"x{i}\nout_idx: {i}")
 
     # Add operation nodes
     for i, op in enumerate(circuit):
         op_id = f"op{i}"
-        dot.node(op_id, op.op_name)
+        label = f"[{i}] {op.op_name}"
+        if op.out_idx is not None:
+            label += f"\nout_idx: {op.out_idx}"
+        dot.node(op_id, label)
 
         # Connect inputs to this operation
         dot.edge(f"x{op.arg1}" if op.arg1 < num_inputs else f"op{op.arg1 - num_inputs}", op_id)
