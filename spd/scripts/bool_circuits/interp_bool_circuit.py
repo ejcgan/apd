@@ -1,11 +1,12 @@
 # %%
+import json
 from pathlib import Path
 
 import torch
 
 from spd.log import logger
-from spd.scripts.bool_circuits.boolean_circuit import Transformer
-from spd.scripts.bool_circuits.circuit_utils import (
+from spd.scripts.bool_circuits.bool_circuit_model import BoolCircuitTransformer
+from spd.scripts.bool_circuits.bool_circuit_utils import (
     create_circuit_str,
     create_truth_table,
     make_detailed_circuit,
@@ -26,10 +27,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 out_dir: RootPath = Path(__file__).parent / "out/inp10-op20-hid8-lay1-circseed1-seed0/"
 
 with open(out_dir / "config.json") as f:
-    config = Config.parse_raw(f.read())
+    config = Config(**json.load(f))
 logger.info(f"Config loaded from {out_dir / 'config.json'}")
 
-trained_model = Transformer(
+trained_model = BoolCircuitTransformer(
     n_inputs=config.n_inputs,
     d_embed=config.d_embed,
     d_mlp=config.d_embed,
@@ -44,7 +45,7 @@ plot_circuit(circuit, config.n_inputs, show_out_idx=True)
 logger.info(f"Circuit: n_inputs={config.n_inputs} - {circuit}")
 logger.info(f"Circuit string: {create_circuit_str(circuit, config.n_inputs)}")
 
-handcoded_model = Transformer(
+handcoded_model = BoolCircuitTransformer(
     n_inputs=config.n_inputs,
     d_embed=30,  # exact minimum for my handcode of that circuit
     d_mlp=7,  # exact minimum for my handcode of that circuit
