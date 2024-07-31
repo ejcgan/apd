@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv",
     "wandb",
     "sympy",
+    "graphviz",
 ]
 
 [project.optional-dependencies]

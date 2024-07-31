@@ -14,8 +14,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.scripts.bool_circuits.boolean_circuit import Transformer
-from spd.scripts.bool_circuits.circuit_utils import (
+from spd.scripts.bool_circuits.bool_circuit_model import BoolCircuitTransformer
+from spd.scripts.bool_circuits.bool_circuit_utils import (
     BooleanOperation,
     create_circuit_str,
     create_truth_table,
@@ -67,7 +67,7 @@ class BooleanCircuitDataset(Dataset[tuple[Float[Tensor, " inputs"], Float[Tensor
 
 
 def evaluate_model(
-    model: Transformer,
+    model: BoolCircuitTransformer,
     dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     device: str,
     output_is_logit: bool = True,
@@ -90,7 +90,7 @@ def evaluate_model(
 
 def train(
     config: Config,
-    model: Transformer,
+    model: BoolCircuitTransformer,
     train_dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     eval_dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     device: str,
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     # assert len(train_dataloader.dataset) + len(eval_dataloader.dataset) == 2**config.n_inputs
     assert len(truth_table) == 2**config.n_inputs
 
-    model = Transformer(
+    model = BoolCircuitTransformer(
         n_inputs=config.n_inputs,
         d_embed=config.d_embed,
         d_mlp=config.d_embed,

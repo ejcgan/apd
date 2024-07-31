@@ -5,7 +5,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from spd.log import logger
-from spd.scripts.bool_circuits.circuit_utils import BooleanOperation, make_detailed_circuit
+from spd.scripts.bool_circuits.bool_circuit_utils import BooleanOperation, make_detailed_circuit
 
 
 class MLP(nn.Module):
@@ -18,7 +18,7 @@ class MLP(nn.Module):
         return self.linear2(F.relu(self.linear1(x)))
 
 
-class Transformer(nn.Module):
+class BoolCircuitTransformer(nn.Module):
     def __init__(self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, n_outputs: int = 1):
         super().__init__()
         self.n_inputs = n_inputs
@@ -40,7 +40,7 @@ class Transformer(nn.Module):
     def init_handcoded(self, circuit: list[BooleanOperation]) -> None:
         detailed_circuit: list[BooleanOperation] = make_detailed_circuit(circuit, self.n_inputs)
 
-        assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_hidden is too low"
+        assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_embed is too low"
 
         self.W_E.weight.data[: self.n_inputs, :] = torch.eye(self.n_inputs)
         self.W_E.weight.data[self.n_inputs :, :] = torch.zeros(
@@ -86,7 +86,7 @@ class Transformer(nn.Module):
                 self.layers[min_layer].linear1.bias.data[neuron_index] = 1.0
                 self.layers[min_layer].linear2.weight.data[out_idx, neuron_index] = 1.0
             elif gate == "OR":
-                assert arg2 is not None, "AND gate requires two arguments"
+                assert arg2 is not None, "OR gate requires two arguments"
                 neuron_index_ANDOR = used_neurons[min_layer]
                 used_neurons[min_layer] += 1
                 neuron_index_AND = used_neurons[min_layer]
