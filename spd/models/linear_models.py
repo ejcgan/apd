@@ -1,8 +1,24 @@
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 import torch
 from jaxtyping import Float
 from torch import Tensor, nn
+
+
+class SPDModel(ABC, nn.Module):
+    @abstractmethod
+    def forward_topk(
+        self,
+        x: Float[Tensor, "... n_features"],
+        topk: int,
+        all_grads: list[Float[Tensor, "... k"]] | None = None,
+    ) -> tuple[
+        Float[Tensor, "... n_features"],
+        list[Float[Tensor, "... n_features"]],
+        list[Float[Tensor, "... k"]],
+    ]:
+        pass
 
 
 class DeepLinearModel(nn.Module):
@@ -83,7 +99,7 @@ class ParamComponent(nn.Module):
         return out, inner_acts_topk
 
 
-class DeepLinearComponentModel(nn.Module):
+class DeepLinearComponentModel(SPDModel):
     def __init__(
         self,
         n_features: int,
@@ -123,7 +139,11 @@ class DeepLinearComponentModel(nn.Module):
         x: Float[Tensor, "... n_instances n_features"],
         topk: int,
         all_grads: list[Float[Tensor, "... n_instances k"]] | None = None,
-    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[
+        Float[Tensor, "... n_instances n_features"],
+        list[Float[Tensor, "... n_instances n_features"]],
+        list[Float[Tensor, "... n_instances k"]],
+    ]:
         layer_acts = []
         inner_acts_topk = []
         for i, layer in enumerate(self.layers):
