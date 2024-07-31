@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.scripts.bool_circuits.circuit_utils import Circuit, DetailedCircuit, make_detailed_circuit
+from spd.scripts.bool_circuits.circuit_utils import BooleanOperation, make_detailed_circuit
 
 
 class MLP(nn.Module):
@@ -43,8 +43,8 @@ class BoolCircuitModel(Transformer):
             n_inputs=n_inputs, d_embed=d_hidden, d_mlp=d_hidden, n_layers=n_layers, n_outputs=1
         )
 
-    def hand_coded_implementation(self, circuit: Circuit):
-        detailed_circuit: DetailedCircuit = make_detailed_circuit(circuit, self.n_inputs)
+    def hand_coded_implementation(self, circuit: list[BooleanOperation]) -> None:
+        detailed_circuit: list[BooleanOperation] = make_detailed_circuit(circuit, self.n_inputs)
 
         assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_hidden is too low"
 
@@ -55,11 +55,14 @@ class BoolCircuitModel(Transformer):
         )
 
         assert self.n_outputs == 1, "Only one output supported"
-        out_idx = detailed_circuit[-1][3]
+        out_idx = detailed_circuit[-1].out_idx
         self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
         self.W_U.weight.data[0, out_idx] = 1.0
 
-        assert max(x[4] for x in detailed_circuit) < self.n_layers, "Not enough layers"
+        for op in detailed_circuit:
+            if op.min_layer_needed is None:
+                raise ValueError("min_layer_needed not set")
+            assert op.min_layer_needed < self.n_layers, "Not enough layers"
         for i in range(self.n_layers):
             # torch.nn shapes are (d_output, d_input)
             # linear1.shape = (d_mlp, d_embed)
@@ -69,8 +72,15 @@ class BoolCircuitModel(Transformer):
             self.layers[i].linear2.weight.data = torch.zeros(self.d_embed, self.d_mlp)
 
         used_neurons = [0 for _ in range(self.n_layers)]
-        for gate, arg1, arg2, out_idx, min_layer in detailed_circuit:
+        for op in detailed_circuit:
+            gate = op.op_name
+            arg1 = op.arg1
+            arg2 = op.arg2
+            out_idx = op.out_idx
+            min_layer = op.min_layer_needed
+            assert min_layer is not None, "min_layer_needed not set"
             if gate == "AND":
+                assert arg2 is not None, "AND gate requires two arguments"
                 neuron_index = used_neurons[min_layer]
                 used_neurons[min_layer] += 1
                 self.layers[min_layer].linear1.weight.data[neuron_index, [arg1, arg2]] = 1.0
@@ -83,6 +93,7 @@ class BoolCircuitModel(Transformer):
                 self.layers[min_layer].linear1.bias.data[neuron_index] = 1.0
                 self.layers[min_layer].linear2.weight.data[out_idx, neuron_index] = 1.0
             elif gate == "OR":
+                assert arg2 is not None, "AND gate requires two arguments"
                 neuron_index_ANDOR = used_neurons[min_layer]
                 used_neurons[min_layer] += 1
                 neuron_index_AND = used_neurons[min_layer]

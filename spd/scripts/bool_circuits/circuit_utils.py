@@ -1,5 +1,5 @@
 import random
-from typing import Any, Literal
+from typing import Literal
 
 import sympy
 import torch
@@ -9,14 +9,50 @@ from torch import Tensor
 from spd.log import logger
 
 OPERATIONS = ["AND", "OR", "NOT"]
-NotOperation = tuple[Literal["NOT"], int, None]
-DetailedNotOperation = tuple[Literal["NOT"], int, None, int, int]
-TwoArgOperation = tuple[Literal["AND", "OR"], int, int]
-DetailedTwoArgOperation = tuple[Literal["AND", "OR"], int, int, int, int]
-Operation = NotOperation | TwoArgOperation
-DetailedOperation = DetailedNotOperation | DetailedTwoArgOperation
-Circuit = list[Operation]
-DetailedCircuit = list[DetailedOperation]
+
+
+class BooleanOperation:
+    def __init__(self, op: Literal["AND", "OR", "NOT"], arg1: int, arg2: int | None) -> None:
+        self.op_name: Literal["AND", "OR", "NOT"] = op
+        self.arg1: int = arg1
+        self.arg2: int | None = arg2
+        self.out_idx: int | None = None
+        self.min_layer_needed: int | None = None
+
+    def __call__(self, values: list[int]) -> int:
+        if self.op_name == "NOT":
+            return 1 - values[self.arg1]
+        elif self.op_name == "AND":
+            assert self.arg2 is not None
+            return values[self.arg1] & values[self.arg2]
+        elif self.op_name == "OR":
+            assert self.arg2 is not None
+            return values[self.arg1] | values[self.arg2]
+        else:
+            raise ValueError(f"Unknown operation: {self.op_name}")
+
+    def to_sympy(self, variables: list[sympy.Symbol]) -> sympy.logic.boolalg.BooleanFunction:
+        if self.op_name == "NOT":
+            return sympy.Not(variables[self.arg1])
+        elif self.op_name == "AND":
+            assert self.arg2 is not None
+            return sympy.And(variables[self.arg1], variables[self.arg2])
+        elif self.op_name == "OR":
+            assert self.arg2 is not None
+            return sympy.Or(variables[self.arg1], variables[self.arg2])
+        else:
+            raise ValueError(f"Unknown operation: {self.op_name}")
+
+
+def create_circuit_str(circuit: list[BooleanOperation], n_inputs: int) -> str:
+    """Create string repr of circuit using sympy"""
+    inputs = sympy.symbols(f"x:{n_inputs}")
+
+    outputs = list(inputs)
+    for operation in circuit:
+        outputs.append(operation.to_sympy(outputs))
+
+    return str(outputs[-1])
 
 
 def generate_circuit(
@@ -26,17 +62,20 @@ def generate_circuit(
     truth_range: tuple[float, float],
     circuit_min_variables: int,
     max_tries: int = 100,
-) -> list[TwoArgOperation | NotOperation]:
+) -> list[BooleanOperation]:
     rng = random.Random(circuit_seed)
 
     for n_attempts in range(max_tries):
-        circuit: list[NotOperation | TwoArgOperation] = []
-
+        circuit: list[BooleanOperation] = []
         for i in range(n_operations):
             if i == n_operations - 1:
-                op = rng.choice([o for o in OPERATIONS if o != "NOT"])
+                rng_out = rng.choice([o for o in OPERATIONS if o != "NOT"])
+                assert rng_out == "AND" or rng_out == "OR"
+                op: Literal["AND", "OR", "NOT"] = rng_out
             else:
-                op = rng.choice(OPERATIONS)
+                rng_out = rng.choice(OPERATIONS)
+                assert rng_out == "AND" or rng_out == "OR" or rng_out == "NOT"
+                op: Literal["AND", "OR", "NOT"] = rng_out
             # Always use a non-original input for the last half of the operations
             if i >= n_operations / 2:
                 idx_range = (n_inputs, n_inputs + i - 1)
@@ -44,14 +83,13 @@ def generate_circuit(
                 idx_range = (0, n_inputs + i - 1)
             if op == "NOT":
                 input1 = rng.randint(idx_range[0], idx_range[1])
-                not_tup: NotOperation = ("NOT", input1, None)
-                circuit.append(not_tup)
+                circuit.append(BooleanOperation(op, input1, None))
             elif op in ["AND", "OR"]:
                 input1 = rng.randint(idx_range[0], idx_range[1])
                 input2 = rng.randint(idx_range[0], idx_range[1])
                 while input2 == input1:
                     input2 = rng.randint(idx_range[0], idx_range[1])
-                circuit.append((op, input1, input2))  # pyright: ignore [reportArgumentType]
+                circuit.append(BooleanOperation(op, input1, input2))
             else:
                 raise ValueError(f"Unknown operation: {op}")
 
@@ -72,27 +110,18 @@ def generate_circuit(
     )
 
 
-def evaluate_circuit(inputs: list[int], circuit: list[TwoArgOperation | NotOperation]) -> int:
+def evaluate_circuit(inputs: list[int], circuit: list[BooleanOperation]) -> int:
     values = inputs.copy()
 
-    for op, input1, input2 in circuit:
-        if op == "AND":
-            assert input2 is not None
-            result = values[input1] & values[input2]
-        elif op == "OR":
-            assert input2 is not None
-            result = values[input1] | values[input2]
-        elif op == "NOT":
-            result = 1 - values[input1]
-        else:
-            raise ValueError(f"Unknown operation: {op}")
+    for operation in circuit:
+        result = operation(values)
         values.append(result)
 
     return values[-1]
 
 
 def create_truth_table(
-    n_inputs: int, circuit: list[TwoArgOperation | NotOperation]
+    n_inputs: int, circuit: list[BooleanOperation]
 ) -> Float[Tensor, "all_possible_inputs inputs+1"]:
     """Get the truth table for the circuit.
 
@@ -110,66 +139,35 @@ def create_truth_table(
     return torch.cat([all_possible_inputs, outputs], dim=-1).type(torch.get_default_dtype())
 
 
-def create_circuit_str(circuit: list[TwoArgOperation | NotOperation], n_inputs: int) -> str:
-    """Create string repr of circuit using sympy"""
-    inputs = sympy.symbols(f"x:{n_inputs}")
-
-    def apply_gate(
-        gate_type: Literal["NOT", "AND", "OR"], *args: tuple[sympy.Expr]
-    ) -> sympy.logic.boolalg.BooleanFunction:
-        if gate_type == "NOT":
-            return sympy.Not(args[0])
-        elif gate_type == "AND":
-            return sympy.And(*args)
-        elif gate_type == "OR":
-            return sympy.Or(*args)
-        else:
-            raise ValueError(f"Unknown gate type: {gate_type}")
-
-    outputs = list(inputs)
-    for gate_type, *connections in circuit:
-        gate_inputs = [outputs[conn] for conn in connections if conn is not None]
-        gate_output = apply_gate(gate_type, *gate_inputs)
-        outputs.append(gate_output)
-
-    return str(outputs[-1])
-
-
-def make_detailed_circuit(base_circuit: Circuit, n_inputs: int) -> DetailedCircuit:
+def make_detailed_circuit(circuit: list[BooleanOperation], n_inputs: int) -> list[BooleanOperation]:
     """Adds (i) the output index and (ii) the minimum layer to implement the gate, to the circuit"""
     # New format for the circuit: (gate, arg1, arg2, out_idx, min_layer_needed)
-    circuit: list[Any] = []
 
     # Assign an output index to each gate
-    for i, (gate, arg1, arg2) in enumerate(base_circuit):
-        op = [gate, arg1, arg2, n_inputs + i, None]
-        circuit.append(op)
+    for i in range(len(circuit)):
+        circuit[i].out_idx = n_inputs + i
 
     # Find the minimum layer needed for each gate
     fully_specificed = False
     while not fully_specificed:
-        for i, (_, arg1, arg2, _, min_layer_needed) in enumerate(circuit):
+        for i, op in enumerate(circuit):
             # Continue if we have already determined the layer for this gate
-            if min_layer_needed is not None:
+            if op.min_layer_needed is not None:
                 continue
             # Determine the layer at which the inputs are available.
             # Note that circuit[...][4] can be None
-            layer1 = 0 if arg1 < n_inputs else circuit[arg1 - n_inputs][4]
-            layer2 = 0 if arg2 is None or arg2 < n_inputs else circuit[arg2 - n_inputs][4]
+            layer1 = 0 if op.arg1 < n_inputs else circuit[op.arg1 - n_inputs].min_layer_needed
+            layer2 = (
+                0
+                if op.arg2 is None or op.arg2 < n_inputs
+                else circuit[op.arg2 - n_inputs].min_layer_needed
+            )
             # Continue if we haven't determined the layer for one of the inputs *yet*
             if layer1 is None or layer2 is None:
                 continue
             # Set the layer at which this gate's output is available
-            circuit[i][4] = max(layer1, layer2) + 1
+            circuit[i].min_layer_needed = max(layer1, layer2) + 1
         # Check if the algorithm has convered
-        fully_specificed = all([x[4] is not None for x in circuit])
+        fully_specificed = all([op.min_layer_needed is not None for op in circuit])
 
-    out_circuit: DetailedCircuit = []
-    for gate, arg1, arg2, out_idx, min_layer_needed in circuit:
-        if arg2 is None:
-            not_tup: DetailedNotOperation = (gate, arg1, arg2, out_idx, min_layer_needed)
-            out_circuit.append(not_tup)
-        else:
-            two_arg_tup: DetailedTwoArgOperation = (gate, arg1, arg2, out_idx, min_layer_needed)
-            out_circuit.append(two_arg_tup)
-    return out_circuit
+    return circuit
