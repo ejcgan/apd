@@ -66,7 +66,7 @@ class BooleanCircuitDataset(Dataset[tuple[Float[Tensor, " inputs"], Float[Tensor
         return data[:-1], data[-1:]
 
 
-def evaluate(
+def evaluate_model(
     model: Transformer,
     dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     device: str,
@@ -121,7 +121,7 @@ def train(
         optimizer.step()
 
         if step % config.eval_every_n_samples == 0 or step == 0 or step == config.steps - 1:
-            eval_loss = evaluate(model, eval_dataloader, device)
+            eval_loss = evaluate_model(model, eval_dataloader, device)
             tqdm.write(f"Step {step}: loss={loss.item():.4f}, eval_loss={eval_loss:.4f}")
         elif step % config.print_freq == 0:
             tqdm.write(f"Step {step}: loss={loss.item():.4f}")
