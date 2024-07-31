@@ -16,8 +16,7 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.scripts.bool_circuits.boolean_circuit import Transformer
 from spd.scripts.bool_circuits.circuit_utils import (
-    NotOperation,
-    TwoArgOperation,
+    BooleanOperation,
     create_circuit_str,
     create_truth_table,
     generate_circuit,
@@ -31,9 +30,9 @@ wandb.require("core")
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     global_seed: int = 0
-    circuit_seed: int | None = None
+    circuit_seed: int
     n_inputs: int
-    n_operations: int | None = None
+    n_operations: int
     d_embed: int
     n_layers: int
     batch_size: int
@@ -44,14 +43,14 @@ class Config(BaseModel):
     truth_range: tuple[float, float]  # [min_percent_1s, max_percent_1s]
     eval_pct: float = 0.3
     eval_every_n_samples: int = 1000
-    circuit: list[TwoArgOperation | NotOperation] | None = None
-    circuit_min_variables: int | None = None  # Min number of variables in the final circuit
+    circuit: list[BooleanOperation] | None = None
+    circuit_min_variables: int  # Min number of variables in the final circuit
 
 
 class BooleanCircuitDataset(Dataset[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]]):
     def __init__(
         self,
-        circuit: list[TwoArgOperation | NotOperation],
+        circuit: list[BooleanOperation],
         n_inputs: int,
         valid_idxs: list[int],
     ):
