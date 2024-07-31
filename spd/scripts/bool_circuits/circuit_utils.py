@@ -3,6 +3,7 @@ from typing import Literal
 
 import sympy
 import torch
+from graphviz import Digraph
 from jaxtyping import Float
 from torch import Tensor
 
@@ -174,3 +175,36 @@ def make_detailed_circuit(circuit: list[BooleanOperation], n_inputs: int) -> lis
         fully_specificed = all([op.min_layer_needed is not None for op in circuit])
 
     return circuit
+
+
+def plot_circuit(circuit: list[BooleanOperation], num_inputs: int, filename: str | None = None):
+    dot = Digraph(comment="Boolean Circuit")
+    dot.attr(rankdir="TB")
+
+    # Add input nodes
+    for i in range(num_inputs):
+        dot.node(f"x{i}", f"x{i}")
+
+    # Add operation nodes
+    for i, op in enumerate(circuit):
+        op_id = f"op{i}"
+        dot.node(op_id, op.op_name)
+
+        # Connect inputs to this operation
+        dot.edge(f"x{op.arg1}" if op.arg1 < num_inputs else f"op{op.arg1 - num_inputs}", op_id)
+        if op.arg2 is not None:
+            dot.edge(f"x{op.arg2}" if op.arg2 < num_inputs else f"op{op.arg2 - num_inputs}", op_id)
+
+    # Connect the last operation to the output
+    dot.node("output", "Output")
+    dot.edge(f"op{len(circuit) - 1}", "output")
+
+    if filename is None:
+        # Render the graph in the notebook
+        from IPython.display import Image, display
+
+        png_data = dot.pipe(format="png")
+        display(Image(png_data))
+    else:
+        dot.render(filename, format="png", cleanup=True)
+        logger.info(f"Saved circuit plot as {filename}")
