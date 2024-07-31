@@ -7,7 +7,7 @@ import wandb
 from pydantic import BaseModel, ConfigDict
 from torch.nn import functional as F
 
-from spd.models.linear_models import DeepLinearModel
+from spd.models.spd_models import DeepLinearModel
 from spd.types import RootPath
 from spd.utils import set_seed
 

@@ -15,13 +15,11 @@ from torch import Tensor
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models import DeepLinearComponentModel, DeepLinearModel
+from spd.models import DeepLinearComponentModel, Model, SPDModel
 from spd.types import RootPath
 from spd.utils import (
     permute_to_identity,
 )
-
-wandb.require("core")
 
 
 class Config(BaseModel):
@@ -195,11 +193,12 @@ def collect_inner_act_data(
 
 
 def optimize(
-    dlc_model: DeepLinearComponentModel,
+    model: SPDModel,
     config: Config,
     out_dir: Path,
     device: str,
     pretrained_model_path: RootPath | None = None,
+    pretrained_model_class: type[Model] | None = None,
 ) -> None:
     assert (
         (config.pnorm is None and config.pnorm_end is not None)
@@ -209,13 +208,18 @@ def optimize(
 
     pretrained_weights: list[torch.Tensor] | None = None
     if pretrained_model_path:
-        pretrained_model = DeepLinearModel.from_pretrained(pretrained_model_path).to(device)
+        assert pretrained_model_class is not None
+        # call from_pretrained on the class of `model`
+        # Get the class of model
+        pretrained_model = pretrained_model_class.from_pretrained(pretrained_model_path).to(device)
+
+        # TODO: Enforce that pretrained_model has the required properties
         pretrained_weights = [weight for weight in pretrained_model.layers]
-        assert len(pretrained_weights) == dlc_model.n_layers
+        assert len(pretrained_weights) == model.n_layers
         for weight in pretrained_weights:
             weight.requires_grad = False
 
-    opt = torch.optim.AdamW(dlc_model.parameters(), lr=config.lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=config.lr)
 
     lr_scale_fn: Callable[[int, int], float]
     if config.lr_scale == "linear":
@@ -247,7 +251,7 @@ def optimize(
         for group in opt.param_groups:
             group["lr"] = step_lr
         opt.zero_grad(set_to_none=True)
-        batch = dlc_model.generate_batch(config.batch_size).to(dtype=torch.float32, device=device)
+        batch = model.generate_batch(config.batch_size).to(dtype=torch.float32, device=device)
 
         total_samples += batch.shape[0]  # don't include the number of instances
 
@@ -263,34 +267,32 @@ def optimize(
             if config.topk is not None:
                 # First do a full forward pass and get the gradients w.r.t. inner_acts
                 # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
-                dlc_out, _, inner_acts = dlc_model(batch)
-                all_grads = [torch.zeros_like(inner_acts[i]) for i in range(dlc_model.n_layers)]
+                dlc_out, _, inner_acts = model(batch)
+                all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_layers)]
                 for feature_idx in range(dlc_out.shape[-1]):
                     grads = torch.autograd.grad(
                         dlc_out[:, :, feature_idx].sum(), inner_acts, retain_graph=True
                     )
-                    for layer_idx in range(dlc_model.n_layers):
+                    for layer_idx in range(model.n_layers):
                         all_grads[layer_idx] += grads[layer_idx]
 
                 # Now do a full forward pass with topk
-                dlc_out_topk, layer_acts, inner_acts_topk = dlc_model.forward_topk(
+                dlc_out_topk, layer_acts, inner_acts_topk = model.forward_topk(
                     batch, config.topk, all_grads
                 )
-                assert len(inner_acts_topk) == dlc_model.n_layers
+                assert len(inner_acts_topk) == model.n_layers
             else:
-                dlc_out, layer_acts, inner_acts = dlc_model(batch)
+                dlc_out, layer_acts, inner_acts = model(batch)
 
-            assert len(inner_acts) == dlc_model.n_layers
+            assert len(inner_acts) == model.n_layers
 
-            param_match_loss = torch.zeros(dlc_model.n_instances, device=device)
+            param_match_loss = torch.zeros(model.n_instances, device=device)
             if pretrained_model_path:
                 # If the user passed a pretrained model, then calculate the param_match_loss
                 assert pretrained_weights is not None
-                for i in range(dlc_model.n_layers):
-                    normed_A = dlc_model.layers[i].A / dlc_model.layers[i].A.norm(
-                        p=2, dim=-2, keepdim=True
-                    )
-                    AB = torch.einsum("ifk,ikg->ifg", normed_A, dlc_model.layers[i].B)
+                for i in range(model.n_layers):
+                    normed_A = model.layers[i].A / model.layers[i].A.norm(p=2, dim=-2, keepdim=True)
+                    AB = torch.einsum("ifk,ikg->ifg", normed_A, model.layers[i].B)
                     param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
                         dim=(-2, -1)
                     )
@@ -299,7 +301,7 @@ def optimize(
             out_recon_loss = einops.reduce(output_error, "b i f -> i", "mean")
 
             if config.topk is None:
-                all_Bs = [dlc_model.layers[i].B for i in range(dlc_model.n_layers)]
+                all_Bs = [model.layers[i].B for i in range(model.n_layers)]
 
                 sparsity_loss = torch.zeros_like(layer_acts[0], requires_grad=True)
                 for feature_idx in range(dlc_out.shape[-1]):
@@ -309,7 +311,7 @@ def optimize(
                         retain_graph=True,
                     )
                     sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
-                    for layer_idx in range(dlc_model.n_layers):
+                    for layer_idx in range(model.n_layers):
                         # h_i * grad_h_i
                         sparsity_inner = sparsity_inner + (
                             inner_acts[layer_idx]
@@ -343,17 +345,18 @@ def optimize(
                     tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
                     tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
                     if pretrained_model_path:
-                        # param_match_repr = [f"{x:.4f}" for x in param_match_loss]
                         param_match_repr = [f"{x}" for x in param_match_loss]
                         tqdm.write(f"Param match loss: \n{param_match_repr}")
 
-                    test_batch, test_inner_acts = collect_inner_act_data(
-                        dlc_model, device, config.topk
-                    )
+                    fig = None
+                    if isinstance(model, DeepLinearComponentModel):
+                        test_batch, test_inner_acts = collect_inner_act_data(
+                            model, device, config.topk
+                        )
 
-                    fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
-                    fig.savefig(out_dir / f"inner_acts_{step}.png")
-                    plt.close(fig)
+                        fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
+                        fig.savefig(out_dir / f"inner_acts_{step}.png")
+                        plt.close(fig)
                     tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
 
                     if config.wandb_project:
@@ -365,13 +368,13 @@ def optimize(
                                 "sparsity_loss": sparsity_loss.mean().item(),
                                 "recon_loss": out_recon_loss.mean().item(),
                                 "param_match_loss": param_match_loss.mean().item(),
-                                "inner_acts": wandb.Image(fig),
+                                "inner_acts": wandb.Image(fig) if fig else None,
                             },
                             step=step,
                         )
 
                 if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
-                    torch.save(dlc_model.state_dict(), out_dir / f"model_{step}.pth")
+                    torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
                     tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
 
             out_recon_loss = out_recon_loss.mean()
@@ -386,7 +389,7 @@ def optimize(
         loss.backward()
         opt.step()
 
-    torch.save(dlc_model.state_dict(), out_dir / f"model_{config.steps}.pth")
+    torch.save(model.state_dict(), out_dir / f"model_{config.steps}.pth")
     logger.info(f"Saved model to {out_dir / f'model_{config.steps}.pth'}")
     if config.wandb_project:
         wandb.save(str(out_dir / f"model_{config.steps}.pth"))

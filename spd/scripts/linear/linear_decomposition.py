@@ -84,11 +84,12 @@ def main(
     ).to(device)
 
     optimize(
-        dlc_model=dlc_model,
+        model=dlc_model,
         config=config,
         out_dir=out_dir,
         device=device,
         pretrained_model_path=config.pretrained_model_path,
+        pretrained_model_class=DeepLinearModel,
     )
 
     if config.wandb_project:

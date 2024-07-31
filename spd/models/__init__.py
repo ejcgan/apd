@@ -1,1 +1,1 @@
-from .linear_models import DeepLinearComponentModel, DeepLinearModel
+from .spd_models import DeepLinearComponentModel, DeepLinearModel, Model, SPDModel

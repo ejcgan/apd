@@ -20,8 +20,20 @@ class SPDModel(ABC, nn.Module):
     ]:
         pass
 
+    @classmethod
+    @abstractmethod
+    def from_pretrained(cls, path: str | Path) -> "SPDModel":
+        pass
 
-class DeepLinearModel(nn.Module):
+
+class Model(ABC, nn.Module):
+    @classmethod
+    @abstractmethod
+    def from_pretrained(cls, path: str | Path) -> "Model":
+        pass
+
+
+class DeepLinearModel(Model):
     def __init__(self, n_features: int, n_layers: int, n_instances: int):
         super().__init__()
         self.n_features = n_features
