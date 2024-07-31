@@ -7,6 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+# %%
+
 
 class PiecewiseLinear(nn.Module):
     """
@@ -25,10 +27,7 @@ class PiecewiseLinear(nn.Module):
         self.interval = (end - start) / (num_neurons - 1)
         self.input_layer = nn.Linear(1, num_neurons, bias=True)
 
-        biases = -np.arange(start - self.interval, end, self.interval)
-        print(biases)
-        print
-        raise ValueError
+        biases = -np.linspace(start, end, num_neurons) + self.interval
         assert (
             len(biases) == num_neurons
         ), f"len(biases) = {len(biases)}, num_neurons = {num_neurons}, biases = {biases}"
@@ -113,6 +112,7 @@ class ControlledPiecewiseLinear(nn.Module):
         end: float,
         num_neurons: int,
         control_W_E: torch.Tensor | None = None,
+        negative_suppression: int = 100,
     ):
         super().__init__()
         self.functions = functions
@@ -143,14 +143,8 @@ class ControlledPiecewiseLinear(nn.Module):
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 0] = (
                 piecewise_linear.input_layer.weight.data.squeeze()
             )
-            # print(self.input_layer.weight.data.shape, self.control_W_E.shape)
-            print(
-                self.input_layer.weight.data[
-                    i * self.num_neurons : (i + 1) * self.num_neurons, :-1
-                ].shape
-            )
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 1:] += (
-                -100 * self.control_W_E[i]
+                -negative_suppression * self.control_W_E[i]
             )
 
         self.relu = nn.ReLU()
@@ -170,7 +164,14 @@ class ControlledPiecewiseLinear(nn.Module):
 
     def forward(self, x: torch.Tensor, control_bits: torch.Tensor) -> torch.Tensor:
         control_vectors = control_bits @ self.control_W_E
+        if control_vectors.dim() == 1:
+            control_vectors = control_vectors.unsqueeze(0).repeat(len(x), 1)
+        control_vectors = control_vectors.to(torch.float32)
+
+        print(control_vectors.shape)
+        print(x.shape)
         x = torch.cat([x, control_vectors], dim=1)
+        print(x.shape)
         x = self.input_layer(x)
         x = self.relu(x)
         x = self.output_layer(x)
@@ -184,6 +185,10 @@ class ControlledPiecewiseLinear(nn.Module):
         x = np.linspace(start, end, num_points)
         if control_bits is None:
             control_bits = torch.zeros(len(x), self.num_functions)
+        if control_bits.dim() == 1:
+            control_bits = control_bits.unsqueeze(0).repeat(len(x), 1)
+        assert control_bits.shape[1] == self.num_functions
+        assert control_bits.shape[0] == len(x)
         outputs = (
             self.forward(
                 torch.tensor(x, dtype=torch.float32).unsqueeze(1), control_bits=control_bits
@@ -215,20 +220,38 @@ def generate_cubics(num_cubics: int):
     cubics = []
     for _ in range(num_cubics):
         a = np.random.uniform(-1, 1)
-        b = np.random.uniform(-1, 1)
-        c = np.random.uniform(-1, 1)
-        d = np.random.uniform(-1, 1)
+        b = np.random.uniform(-2, 2)
+        c = np.random.uniform(-4, 4)
+        d = np.random.uniform(-8, 8)
         cubics.append(create_cubic(a, b, c, d))
     return cubics
 
 
-cubics = generate_cubics(5)
-control_W_E = torch.eye(5)
+def generate_trig_functions(num_trig_functions: int):
+    def create_trig_function(a, b, c, d, e, f, g):
+        return lambda x: a * np.sin(b * x + c) + d * np.cos(e * x + f) + g
+
+    trig_functions = []
+    for _ in range(num_trig_functions):
+        a = np.random.uniform(-1, 1)
+        b = np.exp(np.random.uniform(-1, 3))
+        c = np.random.uniform(-np.pi, np.pi)
+        d = np.random.uniform(-1, 1)
+        e = np.exp(np.random.uniform(-1, 3))
+        f = np.random.uniform(-np.pi, np.pi)
+        g = np.random.uniform(-1, 1)
+        trig_functions.append(create_trig_function(a, b, c, d, e, f, g))
+    return trig_functions
+
+
+cubics = generate_trig_functions(5)
+control_W_E = torch.randn(5, 3)
 control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
 
-test = ControlledPiecewiseLinear(cubics, 0, 5, 22, control_W_E)
+test = ControlledPiecewiseLinear(cubics, 0, 5, 22, control_W_E, negative_suppression=2)
 
-test.plot(-0.1, 5.1, 1000)
+control_bits = torch.tensor([0.0, 1, 0, 0, 0])
+test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
 
 
 # %%
