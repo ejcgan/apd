@@ -140,6 +140,41 @@ def train(
         logger.info(f"Saved model to {experiment_dir / 'model.pt'}")
 
 
+def get_circuit(config: Config) -> list[BooleanOperation]:
+    if config.circuit_repr is None:
+        circuit = generate_circuit(
+            n_inputs=config.n_inputs,
+            n_operations=config.n_operations,
+            circuit_seed=config.circuit_seed,
+            truth_range=config.truth_range,
+            circuit_min_variables=config.circuit_min_variables,
+        )
+    else:
+        circuit = [
+            BooleanOperation(op=args[0], arg1=args[1], arg2=args[2]) for args in config.circuit_repr
+        ]
+    return circuit
+
+
+def get_train_test_dataloaders(
+    config: Config, circuit: list[BooleanOperation]
+) -> tuple[DataLoader[tuple[Tensor, Tensor]], DataLoader[tuple[Tensor, Tensor]]]:
+    # Randomly select eval_pct idxs from range(len(bool_circuit.data_table))
+    n_input_combinations = 2**config.n_inputs
+
+    eval_idxs = random.sample(
+        range(n_input_combinations), int(config.eval_pct * n_input_combinations)
+    )
+    train_idxs = [i for i in range(n_input_combinations) if i not in eval_idxs]
+
+    train_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=train_idxs)
+    eval_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=eval_idxs)
+    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=config.batch_size, shuffle=False)
+
+    return train_dataloader, eval_dataloader
+
+
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -160,36 +195,18 @@ if __name__ == "__main__":
         eval_every_n_samples=500,
     )
     logger.info(f"Config: {config}")
-    if config.circuit_repr is None:
-        circuit = generate_circuit(
-            n_inputs=config.n_inputs,
-            n_operations=config.n_operations,
-            circuit_seed=config.circuit_seed,
-            truth_range=config.truth_range,
-            circuit_min_variables=config.circuit_min_variables,
-        )
-    else:
-        circuit = [
-            BooleanOperation(op=args[0], arg1=args[1], arg2=args[2]) for args in config.circuit_repr
-        ]
 
-    truth_table = create_truth_table(config.n_inputs, circuit)
-
+    circuit = get_circuit(config)
     logger.info(f"Circuit: n_inputs={config.n_inputs} - {circuit}")
     logger.info(f"Circuit string: {create_circuit_str(circuit, config.n_inputs)}")
+
+    truth_table = create_truth_table(config.n_inputs, circuit)
     logger.info(f"Truth table:\n{truth_table}")
 
-    # Randomly select eval_pct idxs from range(len(bool_circuit.data_table))
-    n_input_combinations = 2**config.n_inputs
-    assert n_input_combinations == len(truth_table)
-    eval_idxs = random.sample(
-        range(n_input_combinations), int(config.eval_pct * n_input_combinations)
-    )
-    train_idxs = [i for i in range(n_input_combinations) if i not in eval_idxs]
-    train_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=train_idxs)
-    eval_dataset = BooleanCircuitDataset(circuit, config.n_inputs, valid_idxs=eval_idxs)
-    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=config.batch_size, shuffle=False)
+    train_dataloader, eval_dataloader = get_train_test_dataloaders(config, circuit)
+    # assert len(train_dataloader.dataset) + len(eval_dataloader.dataset) == 2**config.n_inputs
+    assert len(truth_table) == 2**config.n_inputs
+
     model = Transformer(
         n_inputs=config.n_inputs,
         d_embed=config.d_embed,
