@@ -2,7 +2,7 @@
 
 import torch
 
-from spd.scripts.bool_circuits.boolean_circuit import BoolCircuitModel
+from spd.scripts.bool_circuits.boolean_circuit import Transformer
 from spd.scripts.bool_circuits.circuit_utils import (
     BooleanOperation,
     create_circuit_str,
@@ -47,8 +47,10 @@ for i, op in enumerate(detailed_circuit):
 
 d_hidden = 40
 n_layers = 6
-network = BoolCircuitModel(n_inputs=num_inputs, d_hidden=d_hidden, n_layers=n_layers)
-network.hand_coded_implementation(circuit)
+network = Transformer(
+    n_inputs=num_inputs, d_embed=d_hidden, d_mlp=d_hidden, n_layers=n_layers, n_outputs=1
+)
+network.init_handcoded(circuit)
 
 
 # %%

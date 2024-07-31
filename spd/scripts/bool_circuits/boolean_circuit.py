@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
+from spd.log import logger
 from spd.scripts.bool_circuits.circuit_utils import BooleanOperation, make_detailed_circuit
 
 
@@ -36,19 +37,11 @@ class Transformer(nn.Module):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-
-class BoolCircuitModel(Transformer):
-    def __init__(self, n_inputs: int, d_hidden: int, n_layers: int):
-        super().__init__(
-            n_inputs=n_inputs, d_embed=d_hidden, d_mlp=d_hidden, n_layers=n_layers, n_outputs=1
-        )
-
-    def hand_coded_implementation(self, circuit: list[BooleanOperation]) -> None:
+    def init_handcoded(self, circuit: list[BooleanOperation]) -> None:
         detailed_circuit: list[BooleanOperation] = make_detailed_circuit(circuit, self.n_inputs)
 
         assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_hidden is too low"
 
-        print(f"{self.W_E.weight.shape=}")
         self.W_E.weight.data[: self.n_inputs, :] = torch.eye(self.n_inputs)
         self.W_E.weight.data[self.n_inputs :, :] = torch.zeros(
             self.d_embed - self.n_inputs, self.n_inputs
@@ -106,4 +99,4 @@ class BoolCircuitModel(Transformer):
                 self.layers[min_layer].linear2.weight.data[out_idx, neuron_index_AND] = -1.0
             else:
                 raise ValueError(f"Unknown gate {gate}")
-        print("Used neurons per layer:", used_neurons)
+        logger.info(f"Used neurons per layer: {used_neurons}")

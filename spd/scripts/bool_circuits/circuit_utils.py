@@ -177,20 +177,37 @@ def make_detailed_circuit(circuit: list[BooleanOperation], n_inputs: int) -> lis
     return circuit
 
 
-def plot_circuit(circuit: list[BooleanOperation], num_inputs: int, filename: str | None = None):
+def plot_circuit(
+    circuit: list[BooleanOperation],
+    num_inputs: int,
+    filename: str | None = None,
+    show_out_idx: bool = False,
+) -> None:
+    """Plot the boolean circuit using graphviz.
+
+    Args:
+        circuit: The boolean circuit to plot.
+        num_inputs: The number of input nodes.
+        filename: The filename to save the plot to. If None, the plot is rendered in the notebook.
+        show_out_idx: [Only relevant for hand-coded circuits!] Show the residual stream index
+            assigned to the output of each operation.
+    """
     dot = Digraph(comment="Boolean Circuit")
     dot.attr(rankdir="TB")
 
     # Add input nodes
     for i in range(num_inputs):
-        dot.node(f"x{i}", f"x{i}")
+        label = f"[{i}] x{i}"
+        if show_out_idx:
+            label += f"\nout_idx: {i}"
+        dot.node(f"x{i}", label)
 
     # Add operation nodes
     for i, op in enumerate(circuit):
         op_id = f"op{i}"
         label = f"[{i}] {op.op_name}"
-        if op.out_idx is not None:
-            label += f"\nout_idx: {op.out_idx}"
+        if show_out_idx:
+            label += f"\nout_idx: {op.out_idx if op.out_idx is not None else '?'}"
         dot.node(op_id, label)
 
         # Connect inputs to this operation

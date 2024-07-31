@@ -70,6 +70,7 @@ def evaluate_model(
     model: Transformer,
     dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     device: str,
+    output_is_logit: bool = True,
 ) -> float:
     model.eval()
     total_loss = 0.0
@@ -77,9 +78,12 @@ def evaluate_model(
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             predictions = model(inputs)
-            loss = F.binary_cross_entropy_with_logits(
-                predictions, labels.type(torch.get_default_dtype())
-            )
+            if output_is_logit:
+                loss = F.binary_cross_entropy_with_logits(
+                    predictions, labels.type(torch.get_default_dtype())
+                )
+            else:
+                loss = F.binary_cross_entropy(predictions, labels.type(torch.get_default_dtype()))
             total_loss += loss.item()
     return total_loss / len(dataloader)
 
