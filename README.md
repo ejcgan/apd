@@ -9,10 +9,7 @@ make install-dev  # To install the package, dev requirements and pre-commit hook
 make install  # To just install the package (runs `pip install -e .`)
 ```
 
-To use the graph viz, install it on the login node
-```bash
-nix-install graphviz
-```
+To use the graph viz, install it with your package manager. E.g. `apt install graphviz`
 
 ## Development
 

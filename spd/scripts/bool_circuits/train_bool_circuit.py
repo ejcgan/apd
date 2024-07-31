@@ -16,7 +16,10 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.scripts.bool_circuits.bool_circuit_model import BoolCircuitTransformer
 from spd.scripts.bool_circuits.bool_circuit_utils import (
+    AndOperation,
     BooleanOperation,
+    NotOperation,
+    OrOperation,
     create_circuit_str,
     create_truth_table,
     generate_circuit,
@@ -154,9 +157,14 @@ def get_circuit(config: Config) -> list[BooleanOperation]:
             circuit_min_variables=config.circuit_min_variables,
         )
     else:
-        circuit = [
-            BooleanOperation(op=args[0], arg1=args[1], arg2=args[2]) for args in config.circuit_repr
-        ]
+        circuit: list[BooleanOperation] = []
+        for op_name, input_idx1, input_idx2 in config.circuit_repr:
+            if op_name == "AND":
+                circuit.append(AndOperation(input_idx1, input_idx2))
+            elif op_name == "OR":
+                circuit.append(OrOperation(input_idx1, input_idx2))
+            elif op_name == "NOT":
+                circuit.append(NotOperation(input_idx1, None))
     return circuit
 
 

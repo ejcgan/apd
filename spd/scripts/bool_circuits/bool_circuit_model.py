@@ -40,16 +40,18 @@ class BoolCircuitTransformer(nn.Module):
     def init_handcoded(self, circuit: list[BooleanOperation]) -> None:
         detailed_circuit: list[BooleanOperation] = make_detailed_circuit(circuit, self.n_inputs)
 
+        device = self.W_E.weight.device
+
         assert len(detailed_circuit) + self.n_inputs <= self.d_embed, "d_embed is too low"
 
-        self.W_E.weight.data[: self.n_inputs, :] = torch.eye(self.n_inputs)
+        self.W_E.weight.data[: self.n_inputs, :] = torch.eye(self.n_inputs, device=device)
         self.W_E.weight.data[self.n_inputs :, :] = torch.zeros(
-            self.d_embed - self.n_inputs, self.n_inputs
+            self.d_embed - self.n_inputs, self.n_inputs, device=device
         )
 
         assert self.n_outputs == 1, "Only one output supported"
         out_idx = detailed_circuit[-1].out_idx
-        self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
+        self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed, device=device)
         self.W_U.weight.data[0, out_idx] = 1.0
 
         for op in detailed_circuit:
@@ -60,15 +62,19 @@ class BoolCircuitTransformer(nn.Module):
             # torch.nn shapes are (d_output, d_input)
             # linear1.shape = (d_mlp, d_embed)
             # linear2.shape = (d_embed, d_mlp)
-            self.layers[i].linear1.weight.data = torch.zeros(self.d_mlp, self.d_embed)
-            self.layers[i].linear1.bias.data = torch.zeros(self.d_mlp)
-            self.layers[i].linear2.weight.data = torch.zeros(self.d_embed, self.d_mlp)
+            self.layers[i].linear1.weight.data = torch.zeros(
+                self.d_mlp, self.d_embed, device=device
+            )
+            self.layers[i].linear1.bias.data = torch.zeros(self.d_mlp, device=device)
+            self.layers[i].linear2.weight.data = torch.zeros(
+                self.d_embed, self.d_mlp, device=device
+            )
 
         used_neurons = [0 for _ in range(self.n_layers)]
         for op in detailed_circuit:
-            gate = op.op_name
-            arg1 = op.arg1
-            arg2 = op.arg2
+            gate = op.name
+            arg1 = op.input_idx1
+            arg2 = op.input_idx2
             out_idx = op.out_idx
             min_layer = op.min_layer_needed
             assert min_layer is not None, "min_layer_needed not set"

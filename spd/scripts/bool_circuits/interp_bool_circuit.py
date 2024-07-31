@@ -24,7 +24,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # %% Load model, config, circuit, truth table, dataloaders, and evaluate model
 
-out_dir: RootPath = Path(__file__).parent / "out/inp10-op20-hid8-lay1-circseed1-seed0/"
+out_dir: RootPath = Path(__file__).parent / "out/inp10-op20-hid8-lay1-circseed1-seed0"
 
 with open(out_dir / "config.json") as f:
     config = Config(**json.load(f))
@@ -72,6 +72,8 @@ logger.info(f"Handcoded model evaluation loss: {eval_loss_handcoded}")
 # %%
 
 for inputs, labels in train_dataloader:
+    inputs = inputs.to(device)
+    labels = labels.to(device)
     print(f"{inputs.shape=}, {inputs}")
     preds = trained_model(inputs)
     probabilities = torch.sigmoid(preds)

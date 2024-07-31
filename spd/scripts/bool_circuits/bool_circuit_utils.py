@@ -1,10 +1,12 @@
 import random
-from typing import Literal
+from abc import ABC, abstractmethod
+from typing import Any, Literal
 
 import sympy
 import torch
 from graphviz import Digraph
 from jaxtyping import Float
+from sympy.core.symbol import Symbol
 from torch import Tensor
 
 from spd.log import logger
@@ -12,40 +14,66 @@ from spd.log import logger
 OPERATIONS = ["AND", "OR", "NOT"]
 
 
-class BooleanOperation:
-    def __init__(self, op: Literal["AND", "OR", "NOT"], arg1: int, arg2: int | None) -> None:
-        self.op_name: Literal["AND", "OR", "NOT"] = op
-        self.arg1: int = arg1
-        self.arg2: int | None = arg2
-        self.out_idx: int | None = None
-        self.min_layer_needed: int | None = None
+class BooleanOperation(ABC):
+    name: str
 
-    def __call__(self, values: list[int]) -> int:
-        if self.op_name == "NOT":
-            return 1 - values[self.arg1]
-        elif self.op_name == "AND":
-            assert self.arg2 is not None
-            return values[self.arg1] & values[self.arg2]
-        elif self.op_name == "OR":
-            assert self.arg2 is not None
-            return values[self.arg1] | values[self.arg2]
-        else:
-            raise ValueError(f"Unknown operation: {self.op_name}")
+    def __init__(
+        self,
+        input_idx1: int,
+        input_idx2: int | None = None,
+        out_idx: int | None = None,
+        min_layer_needed: int | None = None,
+    ) -> None:
+        self.input_idx1: int = input_idx1
+        self.input_idx2: int | None = input_idx2
+        self.out_idx: int | None = out_idx
+        self.min_layer_needed: int | None = min_layer_needed
 
-    def to_sympy(self, variables: list[sympy.Symbol]) -> sympy.logic.boolalg.BooleanFunction:
-        if self.op_name == "NOT":
-            return sympy.Not(variables[self.arg1])
-        elif self.op_name == "AND":
-            assert self.arg2 is not None
-            return sympy.And(variables[self.arg1], variables[self.arg2])
-        elif self.op_name == "OR":
-            assert self.arg2 is not None
-            return sympy.Or(variables[self.arg1], variables[self.arg2])
-        else:
-            raise ValueError(f"Unknown operation: {self.op_name}")
+    @abstractmethod
+    def __call__(self, inputs: list[bool]) -> bool:
+        pass
+
+    @abstractmethod
+    def call_sympy(self, inputs: list[Symbol]) -> Any:
+        pass
 
     def __repr__(self) -> str:
-        return f"{self.op_name}({self.arg1}, {self.arg2})"
+        return f"{self.name}({self.input_idx1}, {self.input_idx2})"
+
+
+class AndOperation(BooleanOperation):
+    name = "AND"
+
+    def __call__(self, inputs: list[bool]) -> bool:
+        assert self.input_idx2 is not None
+        return inputs[self.input_idx1] & inputs[self.input_idx2]
+
+    def call_sympy(self, inputs: list[Symbol]) -> Any:
+        assert self.input_idx2 is not None
+        return sympy.And(inputs[self.input_idx1], inputs[self.input_idx2])
+
+
+class OrOperation(BooleanOperation):
+    name = "OR"
+
+    def __call__(self, inputs: list[bool]) -> bool:
+        assert self.input_idx2 is not None
+        return inputs[self.input_idx1] | inputs[self.input_idx2]
+
+    def call_sympy(self, inputs: list[Symbol]) -> Any:
+        assert self.input_idx2 is not None
+        return sympy.Or(inputs[self.input_idx1], inputs[self.input_idx2])
+
+
+class NotOperation(BooleanOperation):
+    name = "NOT"
+
+    def __call__(self, inputs: list[bool]) -> bool:
+        assert self.input_idx2 is None
+        return not inputs[self.input_idx1]
+
+    def call_sympy(self, inputs: list[Symbol]) -> Any:
+        return sympy.Not(inputs[self.input_idx1])
 
 
 def create_circuit_str(circuit: list[BooleanOperation], n_inputs: int) -> str:
@@ -54,7 +82,7 @@ def create_circuit_str(circuit: list[BooleanOperation], n_inputs: int) -> str:
 
     outputs = list(inputs)
     for operation in circuit:
-        outputs.append(operation.to_sympy(outputs))
+        outputs.append(operation.call_sympy(outputs))
 
     return str(outputs[-1])
 
@@ -86,14 +114,17 @@ def generate_circuit(
             else:
                 idx_range = (0, n_inputs + i - 1)
             if op == "NOT":
-                input1 = rng.randint(idx_range[0], idx_range[1])
-                circuit.append(BooleanOperation(op, input1, None))
+                input_idx1 = rng.randint(idx_range[0], idx_range[1])
+                circuit.append(NotOperation(input_idx1=input_idx1, input_idx2=None))
             elif op in ["AND", "OR"]:
-                input1 = rng.randint(idx_range[0], idx_range[1])
-                input2 = rng.randint(idx_range[0], idx_range[1])
-                while input2 == input1:
-                    input2 = rng.randint(idx_range[0], idx_range[1])
-                circuit.append(BooleanOperation(op, input1, input2))
+                input_idx1 = rng.randint(idx_range[0], idx_range[1])
+                input_idx2 = rng.randint(idx_range[0], idx_range[1])
+                while input_idx2 == input_idx1:
+                    input_idx2 = rng.randint(idx_range[0], idx_range[1])
+                if op == "AND":
+                    circuit.append(AndOperation(input_idx1, input_idx2))
+                elif op == "OR":
+                    circuit.append(OrOperation(input_idx1, input_idx2))
             else:
                 raise ValueError(f"Unknown operation: {op}")
 
@@ -114,7 +145,7 @@ def generate_circuit(
     )
 
 
-def evaluate_circuit(inputs: list[int], circuit: list[BooleanOperation]) -> int:
+def evaluate_circuit(inputs: list[bool], circuit: list[BooleanOperation]) -> bool:
     values = inputs.copy()
 
     for operation in circuit:
@@ -160,11 +191,15 @@ def make_detailed_circuit(circuit: list[BooleanOperation], n_inputs: int) -> lis
                 continue
             # Determine the layer at which the inputs are available.
             # Note that circuit[...][4] can be None
-            layer1 = 0 if op.arg1 < n_inputs else circuit[op.arg1 - n_inputs].min_layer_needed
+            layer1 = (
+                0
+                if op.input_idx1 < n_inputs
+                else circuit[op.input_idx1 - n_inputs].min_layer_needed
+            )
             layer2 = (
                 0
-                if op.arg2 is None or op.arg2 < n_inputs
-                else circuit[op.arg2 - n_inputs].min_layer_needed
+                if op.input_idx2 is None or op.input_idx2 < n_inputs
+                else circuit[op.input_idx2 - n_inputs].min_layer_needed
             )
             # Continue if we haven't determined the layer for one of the inputs *yet*
             if layer1 is None or layer2 is None:
@@ -205,15 +240,25 @@ def plot_circuit(
     # Add operation nodes
     for i, op in enumerate(circuit):
         op_id = f"op{i}"
-        label = f"[{i}] {op.op_name}"
+        label = f"[{i}] {op.name}"
         if show_out_idx:
             label += f"\nout_idx: {op.out_idx if op.out_idx is not None else '?'}"
         dot.node(op_id, label)
 
         # Connect inputs to this operation
-        dot.edge(f"x{op.arg1}" if op.arg1 < num_inputs else f"op{op.arg1 - num_inputs}", op_id)
-        if op.arg2 is not None:
-            dot.edge(f"x{op.arg2}" if op.arg2 < num_inputs else f"op{op.arg2 - num_inputs}", op_id)
+        dot.edge(
+            f"x{op.input_idx1}"
+            if op.input_idx1 < num_inputs
+            else f"op{op.input_idx1 - num_inputs}",
+            op_id,
+        )
+        if op.input_idx2 is not None:
+            dot.edge(
+                f"x{op.input_idx2}"
+                if op.input_idx2 < num_inputs
+                else f"op{op.input_idx2 - num_inputs}",
+                op_id,
+            )
 
     # Connect the last operation to the output
     dot.node("output", "Output")
