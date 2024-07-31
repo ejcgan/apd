@@ -26,9 +26,12 @@ class PiecewiseLinear(nn.Module):
         self.input_layer = nn.Linear(1, num_neurons, bias=True)
 
         biases = -np.arange(start - self.interval, end, self.interval)
+        print(biases)
+        print
+        raise ValueError
         assert (
             len(biases) == num_neurons
-        ), f"len(biases) = {len(biases)}, num_neurons = {num_neurons}"
+        ), f"len(biases) = {len(biases)}, num_neurons = {num_neurons}, biases = {biases}"
 
         self.input_layer.bias.data = torch.tensor(biases, dtype=torch.float32)
         # -torch.tensor(
@@ -89,8 +92,8 @@ class PiecewiseLinear(nn.Module):
 test = PiecewiseLinear(lambda x: np.sin(2 * x) + 1, 0, 5, 40)
 # plot the function and the neural network
 
-fig, ax = plt.subplots()
-test.plot(ax, -2, 6, 10000)
+# fig, ax = plt.subplots()
+# test.plot(ax, -2, 6, 10000)
 
 
 # %%
@@ -104,7 +107,12 @@ class ControlledPiecewiseLinear(nn.Module):
     """
 
     def __init__(
-        self, functions: list[Callable[[float], float]], start: float, end: float, num_neurons: int
+        self,
+        functions: list[Callable[[float], float]],
+        start: float,
+        end: float,
+        num_neurons: int,
+        control_W_E: torch.Tensor | None = None,
     ):
         super().__init__()
         self.functions = functions
@@ -112,15 +120,20 @@ class ControlledPiecewiseLinear(nn.Module):
         self.start = start
         self.end = end
         self.num_neurons = num_neurons
+
+        self.control_W_E = torch.eye(self.num_functions) if control_W_E is None else control_W_E
+        assert (
+            self.control_W_E.shape[0] <= self.num_functions
+        ), "control_W_E should have at most num_functions rows"
+        self.d_control = self.control_W_E.shape[1]
         self.piecewise_linears = [PiecewiseLinear(f, start, end, num_neurons) for f in functions]
         self.input_layer = nn.Linear(
-            self.num_functions + 1, self.num_functions * self.num_neurons, bias=True
+            self.d_control + 1, self.num_functions * self.num_neurons, bias=True
         )
         # initialise all weights and biases to 0
         self.input_layer.weight.data = torch.zeros(
-            self.num_functions * self.num_neurons, self.num_functions + 1
+            self.num_functions * self.num_neurons, self.d_control + 1
         )
-
         for i in range(self.num_functions):
             piecewise_linear = self.piecewise_linears[i]
             self.input_layer.bias.data[i * self.num_neurons : (i + 1) * self.num_neurons] = (
@@ -130,9 +143,15 @@ class ControlledPiecewiseLinear(nn.Module):
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 0] = (
                 piecewise_linear.input_layer.weight.data.squeeze()
             )
-            self.input_layer.weight.data[
-                i * self.num_neurons : (i + 1) * self.num_neurons, i + 1
-            ] = -100
+            # print(self.input_layer.weight.data.shape, self.control_W_E.shape)
+            print(
+                self.input_layer.weight.data[
+                    i * self.num_neurons : (i + 1) * self.num_neurons, :-1
+                ].shape
+            )
+            self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 1:] += (
+                -100 * self.control_W_E[i]
+            )
 
         self.relu = nn.ReLU()
 
@@ -150,7 +169,8 @@ class ControlledPiecewiseLinear(nn.Module):
             )
 
     def forward(self, x: torch.Tensor, control_bits: torch.Tensor) -> torch.Tensor:
-        x = torch.cat([x, control_bits], dim=1)
+        control_vectors = control_bits @ self.control_W_E
+        x = torch.cat([x, control_vectors], dim=1)
         x = self.input_layer(x)
         x = self.relu(x)
         x = self.output_layer(x)
@@ -160,7 +180,7 @@ class ControlledPiecewiseLinear(nn.Module):
         self, start: float, end: float, num_points: int, control_bits: torch.Tensor | None = None
     ):
         # make a figure with self.num_functions subplots
-        fig, axs = plt.subplots(self.num_functions, 1, figsize=(10, 10))
+        fig, axs = plt.subplots(self.num_functions, 1, figsize=(10, 5 * self.num_functions))
         x = np.linspace(start, end, num_points)
         if control_bits is None:
             control_bits = torch.zeros(len(x), self.num_functions)
@@ -187,9 +207,28 @@ class ControlledPiecewiseLinear(nn.Module):
 
 
 # test
-test = ControlledPiecewiseLinear([lambda x: x**2, lambda x: np.sin(x)], 0, 5, 10)
+# make a list of 50 different cubic functions
+def generate_cubics(num_cubics: int):
+    def create_cubic(a, b, c, d):
+        return lambda x: a * x**3 + b * x**2 + c * x + d
 
-test.plot(-2, 6, 1000)
+    cubics = []
+    for _ in range(num_cubics):
+        a = np.random.uniform(-1, 1)
+        b = np.random.uniform(-1, 1)
+        c = np.random.uniform(-1, 1)
+        d = np.random.uniform(-1, 1)
+        cubics.append(create_cubic(a, b, c, d))
+    return cubics
+
+
+cubics = generate_cubics(5)
+control_W_E = torch.eye(5)
+control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+
+test = ControlledPiecewiseLinear(cubics, 0, 5, 22, control_W_E)
+
+test.plot(-0.1, 5.1, 1000)
 
 
 # %%
@@ -232,9 +271,11 @@ class ControlledResNet(nn.Module):
         end: float,
         num_neurons: int,
         num_layers: int,
+        d_control: int,
     ):
         super().__init__()
         self.functions = functions
+        self.d_control = d_control
         self.num_functions = len(functions)
         self.start = start
         self.end = end
@@ -245,10 +286,16 @@ class ControlledResNet(nn.Module):
         self.d_mlp = self.total_neurons // num_layers
         # d_model: one for x, one for each control bit, and one for y (the output of the controlled
         # piecewise linear)
-        self.d_model = self.num_functions + 2
+        self.d_model = self.d_control + 2
+        if self.d_control == self.num_layers:
+            self.control_W_E = torch.eye(self.d_control)
+        else:
+            random_matrix = torch.randn(self.d_control, self.num_functions)
+            # normalise rows
+            self.control_W_E = random_matrix / random_matrix.norm(dim=1).unsqueeze(1)
 
         self.controlled_piecewise_linear = ControlledPiecewiseLinear(
-            functions, start, end, num_neurons
+            functions, start, end, num_neurons, self.control_W_E
         )
         # create a random permutation of the neurons
         self.neuron_permutation = torch.randperm(self.total_neurons)
@@ -370,8 +417,17 @@ class ControlledResNet(nn.Module):
 
 
 # test
-test = ControlledResNet([lambda x: x**2, lambda x: 10 * np.sin(x)], 0, 5, 40, 5)
+if __name__ == "__main__":
+    test = ControlledResNet(
+        [lambda x: x**2 - 0.1 * x**4, lambda x: 10 * np.sin(5 * x)], 0, 5, 40, 5
+    )
 
-test.plot(-2, 6, 1000, control_bits=torch.tensor([0, 0], dtype=torch.float32))
+    test.plot(-2, 6, 1000, control_bits=torch.tensor([0, 0], dtype=torch.float32))
+
 
 # %%
+a = torch.randn((50, 20))
+# normalise rows of a
+a = a / a.norm(dim=1).unsqueeze(1)
+plt.imshow(a @ a.T)
+plt.colorbar()
