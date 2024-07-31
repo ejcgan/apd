@@ -183,7 +183,7 @@ def plot_circuit(circuit: list[BooleanOperation], num_inputs: int, filename: str
 
     # Add input nodes
     for i in range(num_inputs):
-        dot.node(f"x{i}", f"x{i}\nout_idx: {i}")
+        dot.node(f"x{i}", f"x{i}")
 
     # Add operation nodes
     for i, op in enumerate(circuit):
