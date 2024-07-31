@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 
 from spd.log import logger
-from spd.scripts.bool_circuits.bool_circuit_model import BoolCircuitTransformer
+from spd.models.bool_circuit_models import BoolCircuitTransformer
 from spd.scripts.bool_circuits.bool_circuit_utils import (
     create_circuit_str,
     create_truth_table,

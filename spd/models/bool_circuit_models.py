@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,6 +8,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from spd.log import logger
+from spd.models.base import Model, SPDModel
 from spd.scripts.bool_circuits.bool_circuit_utils import BooleanOperation, make_detailed_circuit
 
 
@@ -18,7 +22,7 @@ class MLP(nn.Module):
         return self.linear2(F.relu(self.linear1(x)))
 
 
-class BoolCircuitTransformer(nn.Module):
+class BoolCircuitTransformer(Model):
     def __init__(self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, n_outputs: int = 1):
         super().__init__()
         self.n_inputs = n_inputs
@@ -36,6 +40,24 @@ class BoolCircuitTransformer(nn.Module):
         for layer in self.layers:
             residual = residual + layer(residual)
         return self.W_U(residual)
+
+    @classmethod
+    def from_pretrained(cls, path: str | Path) -> "BoolCircuitTransformer":
+        path = Path(path)
+        with open(path / "config.json") as f:
+            config = json.load(f)
+
+        params = torch.load(path / "model.pt")
+
+        model = cls(
+            n_inputs=config["n_inputs"],
+            d_embed=config["d_embed"],
+            d_mlp=config["d_mlp"],
+            n_layers=config["n_layers"],
+            n_outputs=config["n_outputs"],
+        )
+        model.load_state_dict(params)
+        return model
 
     def init_handcoded(self, circuit: list[BooleanOperation]) -> None:
         detailed_circuit: list[BooleanOperation] = make_detailed_circuit(circuit, self.n_inputs)
@@ -106,3 +128,33 @@ class BoolCircuitTransformer(nn.Module):
             else:
                 raise ValueError(f"Unknown gate {gate}")
         logger.info(f"Used neurons per layer: {used_neurons}")
+
+
+class MLPComponents(nn.Module):
+    def __init__(self, d_embed: int, d_mlp: int):
+        super().__init__()
+        self.linear1 = nn.Linear(d_embed, d_mlp)
+        self.linear2 = nn.Linear(d_mlp, d_embed, bias=False)  # No bias in down-projection
+
+    def forward(self, x: Float[Tensor, "... d_embed"]) -> Float[Tensor, "... d_embed"]:
+        return self.linear2(F.relu(self.linear1(x)))
+
+
+class BoolCircuitSPDTransformer(SPDModel):
+    def __init__(self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, n_outputs: int = 1):
+        super().__init__()
+        self.n_inputs = n_inputs
+        self.d_embed = d_embed
+        self.d_mlp = d_mlp
+        self.n_layers = n_layers
+        self.n_outputs = n_outputs
+
+        self.W_E = nn.Linear(n_inputs, d_embed, bias=False)
+        self.W_U = nn.Linear(d_embed, n_outputs, bias=False)
+        self.layers = nn.ModuleList([MLP(d_embed, d_mlp) for _ in range(n_layers)])
+
+    def forward(self, x: Float[Tensor, "batch inputs"]) -> Float[Tensor, "batch outputs"]:
+        residual = self.W_E(x)
+        for layer in self.layers:
+            residual = residual + layer(residual)
+        return self.W_U(residual)

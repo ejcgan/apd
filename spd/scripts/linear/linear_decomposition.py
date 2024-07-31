@@ -10,7 +10,7 @@ import wandb
 import yaml
 
 from spd.log import logger
-from spd.models import DeepLinearComponentModel, DeepLinearModel
+from spd.models.linear_models import DeepLinearComponentModel, DeepLinearModel
 from spd.run_spd import Config, optimize
 from spd.utils import (
     init_wandb,

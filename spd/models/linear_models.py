@@ -1,36 +1,10 @@
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 import torch
 from jaxtyping import Float
 from torch import Tensor, nn
 
-
-class SPDModel(ABC, nn.Module):
-    @abstractmethod
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... n_features"],
-        topk: int,
-        all_grads: list[Float[Tensor, "... k"]] | None = None,
-    ) -> tuple[
-        Float[Tensor, "... n_features"],
-        list[Float[Tensor, "... n_features"]],
-        list[Float[Tensor, "... k"]],
-    ]:
-        pass
-
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path: str | Path) -> "SPDModel":
-        pass
-
-
-class Model(ABC, nn.Module):
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path: str | Path) -> "Model":
-        pass
+from spd.models.base import Model, SPDModel
 
 
 class DeepLinearModel(Model):
@@ -95,7 +69,7 @@ class ParamComponent(nn.Module):
         topk: int,
         grads: Float[Tensor, "... n_instances k"] | None = None,
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
-        """If grads are passed, do a forward pass with topk. Otherwise, do a regular forward pass."""
+        """If grads are passed, do a forward pass with topk. Otherwise, do regular forward pass."""
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         if grads is not None:
