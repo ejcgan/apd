@@ -1,5 +1,6 @@
 """Linear decomposition script."""
 
+import json
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,11 +9,13 @@ import fire
 import torch
 import wandb
 import yaml
+from torch.utils.data import DataLoader
 
 from spd.log import logger
-from spd.models.linear_models import DeepLinearComponentModel, DeepLinearModel
+from spd.models.bool_circuit_models import BoolCircuitSPDTransformer, BoolCircuitTransformer
 from spd.run_spd import Config, optimize
-from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
+from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
+from spd.scripts.bool_circuits.bool_circuit_utils import form_circuit
 from spd.utils import (
     init_wandb,
     load_config,
@@ -68,38 +71,32 @@ def main(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     model_config = config.torch_model_config
-    if model_config.pretrained_model_path:
-        dl_model = DeepLinearModel.from_pretrained(model_config.pretrained_model_path).to(device)
-        assert (
-            model_config.n_features is None
-            and model_config.n_layers is None
-            and model_config.n_instances is None
-        ), "n_features, n_layers, and n_instances must not be set if pretrained_model_path is set"
-        n_features = dl_model.n_features
-        n_layers = dl_model.n_layers
-        n_instances = dl_model.n_instances
-    else:
-        n_features = model_config.n_features
-        n_layers = model_config.n_layers
-        n_instances = model_config.n_instances
-        assert (
-            n_features is not None and n_layers is not None and n_instances is not None
-        ), "n_features, n_layers, and n_instances must be set"
-    dlc_model = DeepLinearComponentModel(
-        n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=model_config.k
+
+    dl_model = BoolCircuitTransformer.from_pretrained(model_config.pretrained_model_path).to(device)
+
+    dlc_model = BoolCircuitSPDTransformer(
+        n_inputs=dl_model.n_inputs,
+        d_embed=dl_model.d_embed,
+        d_mlp=dl_model.d_mlp,
+        n_layers=dl_model.n_layers,
+        k=model_config.k,
+        n_outputs=dl_model.n_outputs,
     ).to(device)
 
-    dataset = DeepLinearDataset(n_features, n_instances)
-    dataloader = DeepLinearDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    with open(model_config.pretrained_model_path.parent / "circuit_repr.json") as f:
+        circuit_repr = json.load(f)
+
+    dataset = BooleanCircuitDataset(circuit=form_circuit(circuit_repr), n_inputs=dl_model.n_inputs)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     optimize(
         model=dlc_model,
         config=config,
         out_dir=out_dir,
         device=device,
-        dataloader=dataloader,
         pretrained_model_path=model_config.pretrained_model_path,
-        pretrained_model_class=DeepLinearModel,
+        pretrained_model_class=BoolCircuitTransformer,
+        dataloader=dataloader,
     )
 
     if config.wandb_project:

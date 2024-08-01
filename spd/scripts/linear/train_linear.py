@@ -6,8 +6,10 @@ import torch
 import wandb
 from pydantic import BaseModel, ConfigDict
 from torch.nn import functional as F
+from torch.utils.data import DataLoader
 
 from spd.models.linear_models import DeepLinearModel
+from spd.scripts.linear.linear_dataset import DeepLinearDataset
 from spd.types import RootPath
 from spd.utils import set_seed
 
@@ -33,13 +35,17 @@ def train(config: Config):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(config.seed)
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
+    dataset = DeepLinearDataset(config.n_features, config.n_instances)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+
+    data_iter = iter(dataloader)
     for step in range(config.steps):
         optimizer.zero_grad()
-        x = model.generate_batch(config.batch_size).to(device)
-        labels = x.detach()
+        batch = next(data_iter).to(device)
+        labels = batch.detach()
         # with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        loss = F.mse_loss(model(x), labels)
+        loss = F.mse_loss(model(batch), labels)
         loss.backward()
         optimizer.step()
         if step % config.print_freq == 0:

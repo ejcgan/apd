@@ -10,18 +10,18 @@ from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
 from spd.models.bool_circuit_models import BoolCircuitTransformer
+from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
 from spd.scripts.bool_circuits.bool_circuit_utils import (
-    AndOperation,
     BooleanOperation,
-    NotOperation,
-    OrOperation,
     create_circuit_str,
     create_truth_table,
+    form_circuit,
+    form_circuit_repr,
     generate_circuit,
 )
 from spd.types import RootPath
@@ -35,7 +35,9 @@ class Config(BaseModel):
     n_inputs: int
     n_operations: int
     d_embed: int
+    d_mlp: int
     n_layers: int
+    n_outputs: int = 1
     batch_size: int
     steps: int
     print_freq: int
@@ -46,27 +48,6 @@ class Config(BaseModel):
     eval_every_n_samples: int = 1000
     circuit_repr: list[tuple[Literal["AND", "OR", "NOT"], int, int | None]] | None = None
     circuit_min_variables: int  # Min number of variables in the final circuit
-
-
-class BooleanCircuitDataset(Dataset[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]]):
-    def __init__(
-        self,
-        circuit: list[BooleanOperation],
-        n_inputs: int,
-        valid_idxs: list[int],
-    ):
-        self.circuit = circuit
-        self.n_inputs = n_inputs
-        self.valid_idxs = valid_idxs
-        self.data_table = create_truth_table(n_inputs, circuit)
-
-    def __len__(self) -> int:
-        return len(self.valid_idxs)
-
-    def __getitem__(self, idx: int) -> tuple[Float[Tensor, ""], Float[Tensor, ""]]:
-        data_idx = self.valid_idxs[idx]
-        data = self.data_table[data_idx].detach().clone()
-        return data[:-1], data[-1:]
 
 
 def evaluate_model(
@@ -97,6 +78,7 @@ def train(
     train_dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     eval_dataloader: DataLoader[tuple[Float[Tensor, " inputs"], Float[Tensor, ""]]],
     device: str,
+    circuit_repr: list[tuple[Literal["AND", "OR", "NOT"], int, int | None]],
 ) -> None:
     set_seed(config.global_seed)
 
@@ -146,6 +128,10 @@ def train(
         torch.save(model.state_dict(), experiment_dir / "model.pt")
         logger.info(f"Saved model to {experiment_dir / 'model.pt'}")
 
+        with open(experiment_dir / "circuit_repr.json", "w") as f:
+            json.dump(circuit_repr, f, indent=4)
+        logger.info(f"Saved circuit repr to {experiment_dir / 'circuit_repr.json'}")
+
 
 def get_circuit(config: Config) -> list[BooleanOperation]:
     if config.circuit_repr is None:
@@ -157,14 +143,7 @@ def get_circuit(config: Config) -> list[BooleanOperation]:
             circuit_min_variables=config.circuit_min_variables,
         )
     else:
-        circuit: list[BooleanOperation] = []
-        for op_name, input_idx1, input_idx2 in config.circuit_repr:
-            if op_name == "AND":
-                circuit.append(AndOperation(input_idx1, input_idx2))
-            elif op_name == "OR":
-                circuit.append(OrOperation(input_idx1, input_idx2))
-            elif op_name == "NOT":
-                circuit.append(NotOperation(input_idx1, None))
+        circuit = form_circuit(config.circuit_repr)
     return circuit
 
 
@@ -197,6 +176,7 @@ if __name__ == "__main__":
         n_operations=20,
         circuit_min_variables=6,
         d_embed=8,
+        d_mlp=8,
         n_layers=1,
         batch_size=16,
         steps=10000,
@@ -216,7 +196,6 @@ if __name__ == "__main__":
     logger.info(f"Truth table:\n{truth_table}")
 
     train_dataloader, eval_dataloader = get_train_test_dataloaders(config, circuit)
-    # assert len(train_dataloader.dataset) + len(eval_dataloader.dataset) == 2**config.n_inputs
     assert len(truth_table) == 2**config.n_inputs
 
     model = BoolCircuitTransformer(
@@ -224,6 +203,7 @@ if __name__ == "__main__":
         d_embed=config.d_embed,
         d_mlp=config.d_embed,
         n_layers=config.n_layers,
+        n_outputs=config.n_outputs,
     ).to(device)
 
     train(
@@ -232,4 +212,5 @@ if __name__ == "__main__":
         train_dataloader=train_dataloader,
         eval_dataloader=eval_dataloader,
         device=device,
+        circuit_repr=form_circuit_repr(circuit),
     )

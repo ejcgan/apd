@@ -10,8 +10,9 @@ import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from torch import Tensor
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
@@ -19,6 +20,23 @@ from spd.models.base import Model, SPDModel
 from spd.models.linear_models import DeepLinearComponentModel
 from spd.types import RootPath
 from spd.utils import permute_to_identity
+
+
+class BoolCircuitModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    torch_model_type: Literal["bool_circuit"] = "bool_circuit"
+    k: int
+    pretrained_model_path: RootPath
+
+
+class DeepLinearModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    torch_model_type: Literal["deep_linear"] = "deep_linear"
+    n_features: int | None = None
+    n_layers: int | None = None
+    n_instances: int | None = None
+    k: int | None = None
+    pretrained_model_path: RootPath | None = None
 
 
 class Config(BaseModel):
@@ -34,17 +52,15 @@ class Config(BaseModel):
     save_freq: int | None = None
     lr: float
     max_sparsity_coeff: float
-    n_features: int | None = None
-    n_layers: int | None = None
-    n_instances: int | None = None
-    k: int | None = None
     pnorm: float | None = None
     pnorm_end: float | None = None
     lr_scale: Literal["linear", "constant", "cosine"] = "constant"
     lr_warmup_pct: float = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: float = 0.0
-    pretrained_model_path: RootPath | None = None
+    torch_model_config: DeepLinearModelConfig | BoolCircuitModelConfig = Field(
+        ..., discriminator="torch_model_type"
+    )
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -57,6 +73,19 @@ def constant_lr(*_: int) -> float:
 
 def cosine_decay_lr(step: int, steps: int) -> float:
     return np.cos(0.5 * np.pi * step / (steps - 1))
+
+
+def get_lr_scale_fn(
+    lr_scale: Literal["linear", "constant", "cosine"],
+) -> Callable[[int, int], float]:
+    if lr_scale == "linear":
+        return linear_lr
+    elif lr_scale == "constant":
+        return constant_lr
+    elif lr_scale == "cosine":
+        return cosine_decay_lr
+    else:
+        raise ValueError(f"Unknown lr_scale: {lr_scale}")
 
 
 def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = None) -> float:
@@ -196,6 +225,7 @@ def optimize(
     config: Config,
     out_dir: Path,
     device: str,
+    dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model_path: RootPath | None = None,
     pretrained_model_class: type[Model] | None = None,
 ) -> None:
@@ -212,26 +242,16 @@ def optimize(
         # Get the class of model
         pretrained_model = pretrained_model_class.from_pretrained(pretrained_model_path).to(device)
 
-        # TODO: Enforce that pretrained_model has the required properties
-        pretrained_weights = [weight for weight in pretrained_model.layers]
-        assert len(pretrained_weights) == model.n_layers
-        for weight in pretrained_weights:
-            weight.requires_grad = False
+        pretrained_model.requires_grad_(False)
+        pretrained_weights = pretrained_model.all_decomposable_params
 
     opt = torch.optim.AdamW(model.parameters(), lr=config.lr)
 
-    lr_scale_fn: Callable[[int, int], float]
-    if config.lr_scale == "linear":
-        lr_scale_fn = linear_lr
-    elif config.lr_scale == "constant":
-        lr_scale_fn = constant_lr
-    elif config.lr_scale == "cosine":
-        lr_scale_fn = cosine_decay_lr
-    else:
-        lr_scale_fn = constant_lr
+    lr_scale_fn = get_lr_scale_fn(config.lr_scale)
 
     total_samples = 0
 
+    data_iter = iter(dataloader)
     for step in tqdm(range(config.steps)):
         step_lr = get_lr_with_warmup(
             step=step,
@@ -250,7 +270,15 @@ def optimize(
         for group in opt.param_groups:
             group["lr"] = step_lr
         opt.zero_grad(set_to_none=True)
-        batch = model.generate_batch(config.batch_size).to(dtype=torch.float32, device=device)
+        # batch = model.generate_batch(config.batch_size).to(dtype=torch.float32, device=device)
+        try:
+            batch, labels = next(data_iter)
+        except StopIteration:
+            data_iter = iter(dataloader)
+            batch, labels = next(data_iter)
+
+        batch = batch.to(dtype=torch.float32, device=device)
+        labels = labels.to(dtype=torch.float32, device=device)
 
         total_samples += batch.shape[0]  # don't include the number of instances
 
@@ -270,7 +298,7 @@ def optimize(
                 all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
                 for feature_idx in range(dlc_out.shape[-1]):
                     grads = torch.autograd.grad(
-                        dlc_out[:, :, feature_idx].sum(), inner_acts, retain_graph=True
+                        dlc_out[..., feature_idx].sum(), inner_acts, retain_graph=True
                     )
                     for param_matrix_idx in range(model.n_param_matrices):
                         all_grads[param_matrix_idx] += grads[param_matrix_idx]
@@ -285,24 +313,20 @@ def optimize(
 
             assert len(inner_acts) == model.n_param_matrices
 
-            param_match_loss = torch.zeros(model.n_instances, device=device)
+            param_match_loss = torch.zeros(1, device=device)
             if pretrained_model_path:
                 # If the user passed a pretrained model, then calculate the param_match_loss
                 assert pretrained_weights is not None
-                if isinstance(model, DeepLinearComponentModel):
-                    for i in range(model.n_layers):
-                        normed_A = model.layers[i].A / model.layers[i].A.norm(
-                            p=2, dim=-2, keepdim=True
-                        )
-                        AB = torch.einsum("ifk,ikg->ifg", normed_A, model.layers[i].B)
-                        param_match_loss = param_match_loss + (
-                            (AB - pretrained_weights[i]) ** 2
-                        ).sum(dim=(-2, -1))
-                else:
-                    raise NotImplementedError(f"Param match loss not implemented for {type(model)}")
+                for i, (A, B) in enumerate(zip(model.all_As, model.all_Bs, strict=False)):
+                    normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
+                    AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
+                    param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
+                        dim=(-2, -1)
+                    )
 
-            output_error = (dlc_out - batch) ** 2
-            out_recon_loss = einops.reduce(output_error, "b i f -> i", "mean")
+            out_recon_loss = (dlc_out - labels) ** 2
+            if out_recon_loss.ndim == 3:
+                out_recon_loss = einops.reduce(out_recon_loss, "b i f -> i", "mean")
 
             if config.topk is None:
                 sparsity_loss = torch.zeros_like(layer_acts[0], requires_grad=True)
@@ -329,16 +353,15 @@ def optimize(
 
                 # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner
                 # above
-                sparsity_loss = einops.reduce(
-                    ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1),
-                    "b i -> i",
-                    "mean",
-                )
+                sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
+                if sparsity_loss.ndim == 2:
+                    sparsity_loss = einops.reduce(sparsity_loss, "b i -> i", "mean")
             else:
                 # Assert that dlc_out_topk is not unbound
                 assert dlc_out_topk is not None
-                output_topk_error = (dlc_out_topk - batch) ** 2
-                sparsity_loss = einops.reduce(output_topk_error, "b i f -> i", "mean")
+                sparsity_loss = (dlc_out_topk - batch) ** 2
+                if sparsity_loss.ndim == 3:
+                    sparsity_loss = einops.reduce(sparsity_loss, "b i f -> i", "mean")
 
             with torch.inference_mode():
                 if step % config.print_freq == config.print_freq - 1 or step == 0:
@@ -359,7 +382,7 @@ def optimize(
                         fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
                         fig.savefig(out_dir / f"inner_acts_{step}.png")
                         plt.close(fig)
-                    tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
+                        tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
 
                     if config.wandb_project:
                         wandb.log(

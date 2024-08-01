@@ -41,13 +41,22 @@ class BoolCircuitTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
+    @property
+    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
+        """List of all parameters which will be decomposed with SPD."""
+        params = []
+        for mlp in self.layers:
+            params.append(mlp.linear1.weight.T)
+            params.append(mlp.linear2.weight.T)
+        return params
+
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "BoolCircuitTransformer":
         path = Path(path)
-        with open(path / "config.json") as f:
+        with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path / "model.pt")
+        params = torch.load(path)
 
         model = cls(
             n_inputs=config["n_inputs"],
@@ -131,10 +140,10 @@ class BoolCircuitTransformer(Model):
 
 
 class ParamComponents(nn.Module):
-    def __init__(self, n_features: int, k: int):
+    def __init__(self, dim1: int, dim2: int, k: int):
         super().__init__()
-        self.A = nn.Parameter(torch.empty(n_features, k))
-        self.B = nn.Parameter(torch.empty(k, n_features))
+        self.A = nn.Parameter(torch.empty(dim1, k))
+        self.B = nn.Parameter(torch.empty(k, dim2))
 
         nn.init.kaiming_normal_(self.A)
         nn.init.kaiming_normal_(self.B)
@@ -184,10 +193,10 @@ class ParamComponents(nn.Module):
 
 
 class MLPComponents(nn.Module):
-    def __init__(self, d_embed: int, d_mlp: int):
+    def __init__(self, d_embed: int, d_mlp: int, k: int):
         super().__init__()
-        self.linear1 = ParamComponents(d_embed, d_mlp)
-        self.linear2 = ParamComponents(d_mlp, d_embed)
+        self.linear1 = ParamComponents(d_embed, d_mlp, k)
+        self.linear2 = ParamComponents(d_mlp, d_embed, k)
         self.bias2 = nn.Parameter(torch.zeros(d_embed))
 
     def forward(
@@ -259,18 +268,30 @@ class MLPComponents(nn.Module):
 
 
 class BoolCircuitSPDTransformer(SPDModel):
-    def __init__(self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, n_outputs: int = 1):
+    def __init__(
+        self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, k: int, n_outputs: int = 1
+    ):
         super().__init__()
         self.n_inputs = n_inputs
         self.d_embed = d_embed
         self.d_mlp = d_mlp
         self.n_layers = n_layers
         self.n_param_matrices = n_layers * 2
+        self.k = k
         self.n_outputs = n_outputs
 
         self.W_E = nn.Linear(n_inputs, d_embed, bias=False)
         self.W_U = nn.Linear(d_embed, n_outputs, bias=False)
-        self.layers = nn.ModuleList([MLPComponents(d_embed, d_mlp) for _ in range(n_layers)])
+        self.layers = nn.ModuleList([MLPComponents(d_embed, d_mlp, k) for _ in range(n_layers)])
+
+    @property
+    def all_As(self) -> list[Float[Tensor, "dim k"]]:
+        all_A_pairs = [
+            (self.layers[i].linear1.A, self.layers[i].linear2.A) for i in range(self.n_layers)
+        ]
+        As = [A for A_pair in all_A_pairs for A in A_pair]
+        assert len(As) == self.n_param_matrices
+        return As
 
     @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
@@ -278,8 +299,9 @@ class BoolCircuitSPDTransformer(SPDModel):
         all_B_pairs = [
             (self.layers[i].linear1.B, self.layers[i].linear2.B) for i in range(self.n_layers)
         ]
-        all_Bs = [B for B_pair in all_B_pairs for B in B_pair]
-        return all_Bs
+        As = [B for B_pair in all_B_pairs for B in B_pair]
+        assert len(As) == self.n_param_matrices
+        return As
 
     def forward(
         self, x: Float[Tensor, "... inputs"]
@@ -344,3 +366,22 @@ class BoolCircuitSPDTransformer(SPDModel):
             inner_acts.extend(inner_acts_i)
 
         return self.W_U(residual), layer_acts, inner_acts
+
+    @classmethod
+    def from_pretrained(cls, path: str | Path) -> "BoolCircuitSPDTransformer":
+        path = Path(path)
+        with open(path.parent / "config.json") as f:
+            config = json.load(f)
+
+        params = torch.load(path)
+
+        model = cls(
+            n_inputs=config["n_inputs"],
+            d_embed=config["d_embed"],
+            d_mlp=config["d_mlp"],
+            n_layers=config["n_layers"],
+            k=config["k"],
+            n_outputs=config["n_outputs"],
+        )
+        model.load_state_dict(params)
+        return model

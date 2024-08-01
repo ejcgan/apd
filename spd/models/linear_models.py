@@ -28,14 +28,6 @@ class DeepLinearModel(Model):
             x = torch.einsum("bif,ifj->bij", x, layer)
         return x
 
-    def generate_batch(self, batch_size: int) -> torch.Tensor:
-        """Generate a batch of inputs. Each input should be a random one-hot vector of dimension
-        n_features.
-        """
-        x_idx = torch.randint(0, self.n_features, (batch_size, self.n_instances))
-        x = torch.nn.functional.one_hot(x_idx, num_classes=self.n_features).float()
-        return x
-
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":
         params = torch.load(path)
@@ -46,6 +38,11 @@ class DeepLinearModel(Model):
         model = cls(n_features, n_layers, n_instances)
         model.load_state_dict(params)
         return model
+
+    @property
+    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
+        """List of all parameters which will be decomposed with SPD."""
+        return [layer for layer in self.layers]
 
 
 class ParamComponent(nn.Module):
@@ -96,7 +93,7 @@ class DeepLinearComponentModel(SPDModel):
         super().__init__()
         self.n_features = n_features
         self.n_layers = n_layers
-        self.n_param_matrices = n_layers * 2
+        self.n_param_matrices = n_layers
         self.n_instances = n_instances
         self.k = k if k is not None else n_features
         self.layers = nn.ModuleList(
@@ -108,6 +105,10 @@ class DeepLinearComponentModel(SPDModel):
 
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
+
+    @property
+    def all_As(self) -> list[Float[Tensor, "dim k"]]:
+        return [layer.A for layer in self.layers]
 
     @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
@@ -155,11 +156,3 @@ class DeepLinearComponentModel(SPDModel):
         model = cls(n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=k)
         model.load_state_dict(params)
         return model
-
-    def generate_batch(self, batch_size: int) -> torch.Tensor:
-        """Generate a batch of inputs. Each input should be a random one-hot vector of dimension
-        n_features.
-        """
-        x_idx = torch.randint(0, self.n_features, (batch_size, self.n_instances))
-        x = torch.nn.functional.one_hot(x_idx, num_classes=self.n_features)
-        return x
