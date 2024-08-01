@@ -4,8 +4,10 @@ import torch
 from jaxtyping import Float
 from torch import Tensor, nn
 
+from spd.models.base import Model, SPDModel
 
-class DeepLinearModel(nn.Module):
+
+class DeepLinearModel(Model):
     def __init__(self, n_features: int, n_layers: int, n_instances: int):
         super().__init__()
         self.n_features = n_features
@@ -67,7 +69,7 @@ class ParamComponent(nn.Module):
         topk: int,
         grads: Float[Tensor, "... n_instances k"] | None = None,
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
-        """If grads are passed, do a forward pass with topk. Otherwise, do a regular forward pass."""
+        """If grads are passed, do a forward pass with topk. Otherwise, do regular forward pass."""
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         if grads is not None:
@@ -83,7 +85,7 @@ class ParamComponent(nn.Module):
         return out, inner_acts_topk
 
 
-class DeepLinearComponentModel(nn.Module):
+class DeepLinearComponentModel(SPDModel):
     def __init__(
         self,
         n_features: int,
@@ -123,7 +125,11 @@ class DeepLinearComponentModel(nn.Module):
         x: Float[Tensor, "... n_instances n_features"],
         topk: int,
         all_grads: list[Float[Tensor, "... n_instances k"]] | None = None,
-    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[
+        Float[Tensor, "... n_instances n_features"],
+        list[Float[Tensor, "... n_instances n_features"]],
+        list[Float[Tensor, "... n_instances k"]],
+    ]:
         layer_acts = []
         inner_acts_topk = []
         for i, layer in enumerate(self.layers):
