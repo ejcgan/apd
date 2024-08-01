@@ -267,41 +267,44 @@ def optimize(
                 # First do a full forward pass and get the gradients w.r.t. inner_acts
                 # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
                 dlc_out, _, inner_acts = model(batch)
-                all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_layers)]
+                all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
                 for feature_idx in range(dlc_out.shape[-1]):
                     grads = torch.autograd.grad(
                         dlc_out[:, :, feature_idx].sum(), inner_acts, retain_graph=True
                     )
-                    for layer_idx in range(model.n_layers):
-                        all_grads[layer_idx] += grads[layer_idx]
+                    for param_matrix_idx in range(model.n_param_matrices):
+                        all_grads[param_matrix_idx] += grads[param_matrix_idx]
 
                 # Now do a full forward pass with topk
                 dlc_out_topk, layer_acts, inner_acts_topk = model.forward_topk(
                     batch, config.topk, all_grads
                 )
-                assert len(inner_acts_topk) == model.n_layers
+                assert len(inner_acts_topk) == model.n_param_matrices
             else:
                 dlc_out, layer_acts, inner_acts = model(batch)
 
-            assert len(inner_acts) == model.n_layers
+            assert len(inner_acts) == model.n_param_matrices
 
             param_match_loss = torch.zeros(model.n_instances, device=device)
             if pretrained_model_path:
                 # If the user passed a pretrained model, then calculate the param_match_loss
                 assert pretrained_weights is not None
-                for i in range(model.n_layers):
-                    normed_A = model.layers[i].A / model.layers[i].A.norm(p=2, dim=-2, keepdim=True)
-                    AB = torch.einsum("ifk,ikg->ifg", normed_A, model.layers[i].B)
-                    param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
-                        dim=(-2, -1)
-                    )
+                if isinstance(model, DeepLinearComponentModel):
+                    for i in range(model.n_layers):
+                        normed_A = model.layers[i].A / model.layers[i].A.norm(
+                            p=2, dim=-2, keepdim=True
+                        )
+                        AB = torch.einsum("ifk,ikg->ifg", normed_A, model.layers[i].B)
+                        param_match_loss = param_match_loss + (
+                            (AB - pretrained_weights[i]) ** 2
+                        ).sum(dim=(-2, -1))
+                else:
+                    raise NotImplementedError(f"Param match loss not implemented for {type(model)}")
 
             output_error = (dlc_out - batch) ** 2
             out_recon_loss = einops.reduce(output_error, "b i f -> i", "mean")
 
             if config.topk is None:
-                all_Bs = [model.layers[i].B for i in range(model.n_layers)]
-
                 sparsity_loss = torch.zeros_like(layer_acts[0], requires_grad=True)
                 for feature_idx in range(dlc_out.shape[-1]):
                     grad_layer_acts = torch.autograd.grad(
@@ -310,14 +313,14 @@ def optimize(
                         retain_graph=True,
                     )
                     sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
-                    for layer_idx in range(model.n_layers):
+                    for param_matrix_idx in range(model.n_layers):
                         # h_i * grad_h_i
                         sparsity_inner = sparsity_inner + (
-                            inner_acts[layer_idx]
+                            inner_acts[param_matrix_idx]
                             * torch.einsum(
                                 "...ih,ikh->...ik",
-                                grad_layer_acts[layer_idx].detach(),
-                                all_Bs[layer_idx],
+                                grad_layer_acts[param_matrix_idx].detach(),
+                                model.all_Bs[param_matrix_idx],
                             )
                         )
 

@@ -96,6 +96,7 @@ class DeepLinearComponentModel(SPDModel):
         super().__init__()
         self.n_features = n_features
         self.n_layers = n_layers
+        self.n_param_matrices = n_layers * 2
         self.n_instances = n_instances
         self.k = k if k is not None else n_features
         self.layers = nn.ModuleList(
@@ -107,6 +108,10 @@ class DeepLinearComponentModel(SPDModel):
 
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
+
+    @property
+    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
+        return [layer.B for layer in self.layers]
 
     def forward(
         self,
