@@ -136,15 +136,16 @@ class ControlledPiecewiseLinear(nn.Module):
         )
         for i in range(self.num_functions):
             piecewise_linear = self.piecewise_linears[i]
-            self.input_layer.bias.data[i * self.num_neurons : (i + 1) * self.num_neurons] = (
-                piecewise_linear.input_layer.bias.data
-            )
+            self.input_layer.bias.data[
+                i * self.num_neurons : (i + 1) * self.num_neurons
+            ] = -negative_suppression
 
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 0] = (
                 piecewise_linear.input_layer.weight.data.squeeze()
             )
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 1:] += (
-                -negative_suppression * self.control_W_E[i]
+                self.control_W_E[i]
+                * (negative_suppression + piecewise_linear.input_layer.bias.data.unsqueeze(1))
             )
 
         self.relu = nn.ReLU()
@@ -167,11 +168,7 @@ class ControlledPiecewiseLinear(nn.Module):
         if control_vectors.dim() == 1:
             control_vectors = control_vectors.unsqueeze(0).repeat(len(x), 1)
         control_vectors = control_vectors.to(torch.float32)
-
-        print(control_vectors.shape)
-        print(x.shape)
         x = torch.cat([x, control_vectors], dim=1)
-        print(x.shape)
         x = self.input_layer(x)
         x = self.relu(x)
         x = self.output_layer(x)
@@ -244,13 +241,36 @@ def generate_trig_functions(num_trig_functions: int):
     return trig_functions
 
 
-cubics = generate_trig_functions(5)
-control_W_E = torch.randn(5, 3)
-control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+def generate_simplex_vertices(d):
+    vertices = torch.zeros((d - 1, d))
+    for i in range(d - 1):
+        vertices[i, i] = 1 - 1 / (i + 2)
+        vertices[i, i + 1 :] = -1 / (i + 2)
+    return vertices.T
 
-test = ControlledPiecewiseLinear(cubics, 0, 5, 22, control_W_E, negative_suppression=2)
 
-control_bits = torch.tensor([0.0, 1, 0, 0, 0])
+num_functions = 50
+dim = 50
+
+trigs = generate_trig_functions(num_functions)
+if num_functions == dim:
+    control_W_E = torch.eye(num_functions)
+elif num_functions == dim + 1:
+    control_W_E = generate_simplex_vertices(num_functions)
+    control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+else:
+    control_W_E = torch.randn(num_functions, dim)
+    control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+test = ControlledPiecewiseLinear(trigs, 0, 5, 32, control_W_E, negative_suppression=6)
+
+if num_functions == dim:
+    control_bits = torch.ones(num_functions, dtype=torch.float32)
+else:
+    control_bits = torch.zeros(num_functions, dtype=torch.float32)
+    control_bits[4] = 1
+    control_bits[9] = 1
+    control_bits[17] = 1
+
 test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
 
 
@@ -295,6 +315,7 @@ class ControlledResNet(nn.Module):
         num_neurons: int,
         num_layers: int,
         d_control: int,
+        negative_suppression: int = 100,
     ):
         super().__init__()
         self.functions = functions
@@ -310,7 +331,8 @@ class ControlledResNet(nn.Module):
         # d_model: one for x, one for each control bit, and one for y (the output of the controlled
         # piecewise linear)
         self.d_model = self.d_control + 2
-        if self.d_control == self.num_layers:
+        if self.d_control == self.num_functions:
+            print("control_W_E is identity")
             self.control_W_E = torch.eye(self.d_control)
         else:
             random_matrix = torch.randn(self.d_control, self.num_functions)
@@ -318,7 +340,7 @@ class ControlledResNet(nn.Module):
             self.control_W_E = random_matrix / random_matrix.norm(dim=1).unsqueeze(1)
 
         self.controlled_piecewise_linear = ControlledPiecewiseLinear(
-            functions, start, end, num_neurons, self.control_W_E
+            functions, start, end, num_neurons, self.control_W_E, negative_suppression
         )
         # create a random permutation of the neurons
         self.neuron_permutation = torch.randperm(self.total_neurons)
@@ -404,9 +426,7 @@ class ControlledResNet(nn.Module):
         target = np.zeros((self.num_functions, len(x)))
         for i in range(self.num_functions):
             target[i] = np.array([self.functions[i](x) for x in x])
-        target = torch.einsum(
-            "fb,f -> b", torch.tensor(target, dtype=torch.float32), 1 - control_bits
-        )
+        target = torch.einsum("fb,f -> b", torch.tensor(target, dtype=torch.float32), control_bits)
         ax.plot(x, target, label="f(x)", linewidth=8)
 
         if layers is None:
@@ -436,16 +456,43 @@ class ControlledResNet(nn.Module):
         # add vertical lines to show start and end
         ax.axvline(x=self.start, color="r", linestyle="--")
         ax.axvline(x=self.end, color="r", linestyle="--")
+        # set ylim between -2 and 2
+        ax.set_ylim(-10, 10)
         plt.show()
 
 
 # test
 if __name__ == "__main__":
-    test = ControlledResNet(
-        [lambda x: x**2 - 0.1 * x**4, lambda x: 10 * np.sin(5 * x)], 0, 5, 40, 5
-    )
+    num_functions = 3
+    dim = 3
 
-    test.plot(-2, 6, 1000, control_bits=torch.tensor([0, 0], dtype=torch.float32))
+    trigs = generate_trig_functions(num_functions)
+    if num_functions == dim:
+        control_W_E = torch.eye(num_functions)
+    elif num_functions == dim + 1:
+        control_W_E = generate_simplex_vertices(num_functions)
+        control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+    else:
+        control_W_E = torch.randn(num_functions, dim)
+        control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
+    # test = ControlledPiecewiseLinear(trigs, 0, 5, 32, control_W_E, negative_suppression=6)
+    test = ControlledResNet(trigs, 0, 5, 40, 5, dim, negative_suppression=100)
+
+    if num_functions == dim:
+        control_bits = torch.ones(num_functions, dtype=torch.float32)
+    else:
+        control_bits = torch.zeros(num_functions, dtype=torch.float32)
+        control_bits[0] = 1
+        control_bits[1] = 1
+
+    test.controlled_piecewise_linear.plot(-0.1, 5.1, 1000, control_bits=control_bits)
+
+    test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
+    # test = ControlledResNet(
+    #     [lambda x: x**2 - 0.1 * x**4, lambda x: 10 * np.sin(5 * x)], 0, 5, 40, 5
+    # )
+
+    # test.plot(-2, 6, 1000, control_bits=torch.tensor([0, 0], dtype=torch.float32))
 
 
 # %%
