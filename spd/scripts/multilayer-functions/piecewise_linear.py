@@ -26,42 +26,36 @@ class PiecewiseLinear(nn.Module):
 
         self.interval = (end - start) / (num_neurons - 1)
         self.input_layer = nn.Linear(1, num_neurons, bias=True)
+        self.relu = nn.ReLU()
+        self.output_layer = nn.Linear(self.num_neurons, 1, bias=True)
 
-        biases = -np.linspace(start, end, num_neurons) + self.interval
+        self.initialise_params()
+
+    def initialise_params(self):
+        biases = -np.linspace(self.start, self.end, self.num_neurons) + self.interval
         assert (
-            len(biases) == num_neurons
-        ), f"len(biases) = {len(biases)}, num_neurons = {num_neurons}, biases = {biases}"
+            len(biases) == self.num_neurons
+        ), f"len(biases) = {len(biases)}, num_neurons = {self.num_neurons}, biases = {biases}"
 
         self.input_layer.bias.data = torch.tensor(biases, dtype=torch.float32)
         # -torch.tensor(
         #     np.linspace(start-self.interval, end, num_neurons), dtype=torch.float32
         # )[:-1] + self.interval
         # print("neuron bias", self.neurons.bias.data)
-        self.input_layer.weight.data = torch.ones(num_neurons, 1, dtype=torch.float32)
-
-        self.relu = nn.ReLU()
-
-        self.output_layer = nn.Linear(num_neurons, 1, bias=True)
+        self.input_layer.weight.data = torch.ones(self.num_neurons, 1, dtype=torch.float32)
 
         self.output_layer.bias.data = torch.tensor(0, dtype=torch.float32)
 
-        xs = np.linspace(start, end, num_neurons)
-        # add one more x value in front with same spacing
-
-        self.function_values = torch.tensor([f(x) for x in xs], dtype=torch.float32)
+        xs = np.linspace(self.start, self.end, self.num_neurons)
+        self.function_values = torch.tensor([self.f(x) for x in xs], dtype=torch.float32)
         self.function_values = torch.cat(
             [torch.tensor([0], dtype=torch.float32), self.function_values]
         )
-
-        # print('interval', self.interval)
-        # print('function_vals', self.function_values)
         slopes = (self.function_values[1:] - self.function_values[:-1]) / self.interval
-        # print("slopes", slopes.shape)
-        slope_diffs = torch.zeros(num_neurons, dtype=torch.float32)
+        slope_diffs = torch.zeros(self.num_neurons, dtype=torch.float32)
         slope_diffs[0] = slopes[0]
         slope_diffs[1:] = slopes[1:] - slopes[:-1]
         self.output_layer.weight.data = slope_diffs.view(-1, 1).T
-        # print("output weight", self.output.weight.data)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.input_layer(x)
@@ -111,6 +105,7 @@ class ControlledPiecewiseLinear(nn.Module):
         start: float,
         end: float,
         num_neurons: int,
+        d_control: int,
         control_W_E: torch.Tensor | None = None,
         negative_suppression: int = 100,
     ):
@@ -120,16 +115,29 @@ class ControlledPiecewiseLinear(nn.Module):
         self.start = start
         self.end = end
         self.num_neurons = num_neurons
-
-        self.control_W_E = torch.eye(self.num_functions) if control_W_E is None else control_W_E
-        assert (
-            self.control_W_E.shape[0] <= self.num_functions
-        ), "control_W_E should have at most num_functions rows"
-        self.d_control = self.control_W_E.shape[1]
-        self.piecewise_linears = [PiecewiseLinear(f, start, end, num_neurons) for f in functions]
+        self.negative_suppression = negative_suppression
+        self.d_control = d_control
+        self.control_W_E = control_W_E
         self.input_layer = nn.Linear(
             self.d_control + 1, self.num_functions * self.num_neurons, bias=True
         )
+        self.relu = nn.ReLU()
+        self.output_layer = nn.Linear(
+            self.num_functions * self.num_neurons, self.num_functions, bias=True
+        )
+        self.initialise_params()
+
+    def initialise_params(self):
+        self.control_W_E = (
+            torch.eye(self.num_functions) if self.control_W_E is None else self.control_W_E
+        )
+        assert (
+            self.control_W_E.shape[0] <= self.num_functions
+        ), "control_W_E should have at most num_functions rows"
+        assert self.d_control == self.control_W_E.shape[1], "control_W_E should have d_control cols"
+        self.piecewise_linears = [
+            PiecewiseLinear(f, self.start, self.end, self.num_neurons) for f in self.functions
+        ]
         # initialise all weights and biases to 0
         self.input_layer.weight.data = torch.zeros(
             self.num_functions * self.num_neurons, self.d_control + 1
@@ -138,23 +146,18 @@ class ControlledPiecewiseLinear(nn.Module):
             piecewise_linear = self.piecewise_linears[i]
             self.input_layer.bias.data[
                 i * self.num_neurons : (i + 1) * self.num_neurons
-            ] = -negative_suppression
+            ] = -self.negative_suppression
 
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 0] = (
                 piecewise_linear.input_layer.weight.data.squeeze()
             )
             self.input_layer.weight.data[i * self.num_neurons : (i + 1) * self.num_neurons, 1:] += (
                 self.control_W_E[i]
-                * (negative_suppression + piecewise_linear.input_layer.bias.data.unsqueeze(1))
+                * (self.negative_suppression + piecewise_linear.input_layer.bias.data.unsqueeze(1))
             )
 
-        self.relu = nn.ReLU()
-
-        self.output_layer = nn.Linear(
-            self.num_functions * self.num_neurons, self.num_functions, bias=True
-        )
         self.output_layer.weight.data = torch.zeros(
-            self.num_functions, self.num_functions * num_neurons
+            self.num_functions, self.num_functions * self.num_neurons
         )
         for i in range(self.num_functions):
             piecewise_linear = self.piecewise_linears[i]
@@ -163,12 +166,16 @@ class ControlledPiecewiseLinear(nn.Module):
                 piecewise_linear.output_layer.weight.data.squeeze()
             )
 
-    def forward(self, x: torch.Tensor, control_bits: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        control_bits = x[:, 1:]
+        input_value = x[:, 0].unsqueeze(1)
+        assert control_bits.shape[1] == self.num_functions
+        assert torch.all((control_bits == 0) | (control_bits == 1))
         control_vectors = control_bits @ self.control_W_E
         if control_vectors.dim() == 1:
             control_vectors = control_vectors.unsqueeze(0).repeat(len(x), 1)
         control_vectors = control_vectors.to(torch.float32)
-        x = torch.cat([x, control_vectors], dim=1)
+        x = torch.cat([input_value, control_vectors], dim=1)
         x = self.input_layer(x)
         x = self.relu(x)
         x = self.output_layer(x)
@@ -186,13 +193,10 @@ class ControlledPiecewiseLinear(nn.Module):
             control_bits = control_bits.unsqueeze(0).repeat(len(x), 1)
         assert control_bits.shape[1] == self.num_functions
         assert control_bits.shape[0] == len(x)
-        outputs = (
-            self.forward(
-                torch.tensor(x, dtype=torch.float32).unsqueeze(1), control_bits=control_bits
-            )
-            .detach()
-            .numpy()
-        )
+        input = torch.tensor(x, dtype=torch.float32).unsqueeze(1)
+        input_with_control = torch.cat([input, control_bits], dim=1)
+        print(input_with_control.shape)
+        outputs = self.forward(input_with_control).detach().numpy()
         for i in range(self.num_functions):
             target = np.array([self.functions[i](x) for x in x])
             axs[i].plot(x, target, label="f(x)")
@@ -241,27 +245,47 @@ def generate_trig_functions(num_trig_functions: int):
     return trig_functions
 
 
-def generate_simplex_vertices(d):
-    vertices = torch.zeros((d - 1, d))
-    for i in range(d - 1):
-        vertices[i, i] = 1 - 1 / (i + 2)
-        vertices[i, i + 1 :] = -1 / (i + 2)
-    return vertices.T
+def generate_regular_simplex(num_vertices):
+    # Create the standard basis in num_vertices dimensions
+    basis = torch.eye(num_vertices)
+
+    # Create the (1,1,...,1) vector
+    ones = torch.ones(num_vertices)
+
+    # Compute the Householder transformation
+    v = ones / torch.norm(ones)
+    last_basis_vector = torch.zeros(num_vertices)
+    last_basis_vector[-1] = 1
+    u = v - last_basis_vector
+    u = u / torch.norm(u)
+
+    # Apply the Householder transformation
+    H = torch.eye(num_vertices) - 2 * u.outer(u)
+    rotated_basis = basis @ H
+
+    # Remove the last coordinate
+    simplex = rotated_basis[:, :-1]
+
+    # Center the simplex at the origin
+    centroid = simplex.mean(dim=0)
+    simplex = simplex - centroid
+
+    return simplex / simplex.norm(dim=1).unsqueeze(1)
 
 
 num_functions = 50
-dim = 50
+dim = 49
 
 trigs = generate_trig_functions(num_functions)
 if num_functions == dim:
     control_W_E = torch.eye(num_functions)
 elif num_functions == dim + 1:
-    control_W_E = generate_simplex_vertices(num_functions)
+    control_W_E = generate_regular_simplex(num_functions)
     control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
 else:
     control_W_E = torch.randn(num_functions, dim)
     control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
-test = ControlledPiecewiseLinear(trigs, 0, 5, 32, control_W_E, negative_suppression=6)
+test = ControlledPiecewiseLinear(trigs, 0, 5, 32, dim, control_W_E, negative_suppression=6)
 
 if num_functions == dim:
     control_bits = torch.ones(num_functions, dtype=torch.float32)
@@ -273,8 +297,9 @@ else:
 
 test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
 
-
 # %%
+plt.imshow((control_W_E @ control_W_E.T).abs().log())
+plt.colorbar()
 
 
 # %%
@@ -287,10 +312,13 @@ class MLP(nn.Module):
         self.relu = nn.ReLU()
         self.output_layer = nn.Linear(d_mlp, d_model)
         if initialise_zero:
-            self.input_layer.weight.data = torch.zeros(d_mlp, d_model)
-            self.input_layer.bias.data = torch.zeros(d_mlp)
-            self.output_layer.weight.data = torch.zeros(d_model, d_mlp)
-            self.output_layer.bias.data = torch.zeros(d_model)
+            self.initialise_zero()
+
+    def initialise_zero(self):
+        self.input_layer.weight.data = torch.zeros(self.d_mlp, self.d_model)
+        self.input_layer.bias.data = torch.zeros(self.d_mlp)
+        self.output_layer.weight.data = torch.zeros(self.d_model, self.d_mlp)
+        self.output_layer.bias.data = torch.zeros(self.d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.input_layer(x)
@@ -326,11 +354,17 @@ class ControlledResNet(nn.Module):
         self.num_neurons = num_neurons
         self.num_layers = num_layers
         self.total_neurons = num_neurons * self.num_functions
-        assert self.total_neurons % num_layers == 0
+        assert self.total_neurons % num_layers == 0, "num_neurons must be divisible by num layers"
+        self.negative_suppression = negative_suppression
+
         self.d_mlp = self.total_neurons // num_layers
         # d_model: one for x, one for each control bit, and one for y (the output of the controlled
         # piecewise linear)
         self.d_model = self.d_control + 2
+        self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(num_layers)])
+        self.initialise_params()
+
+    def initialise_params(self):
         if self.d_control == self.num_functions:
             print("control_W_E is identity")
             self.control_W_E = torch.eye(self.d_control)
@@ -340,21 +374,26 @@ class ControlledResNet(nn.Module):
             self.control_W_E = random_matrix / random_matrix.norm(dim=1).unsqueeze(1)
 
         self.controlled_piecewise_linear = ControlledPiecewiseLinear(
-            functions, start, end, num_neurons, self.control_W_E, negative_suppression
+            self.functions,
+            self.start,
+            self.end,
+            self.num_neurons,
+            self.d_control,
+            self.control_W_E,
+            self.negative_suppression,
         )
+
         # create a random permutation of the neurons
         self.neuron_permutation = torch.randperm(self.total_neurons)
         # split the neurons into num_layers parts
         self.neuron_permutations = torch.split(self.neuron_permutation, self.d_mlp)
         # create num_layers residual layers
-        self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(num_layers)])
 
         output_weights_summed = self.controlled_piecewise_linear.output_layer.weight.data.sum(dim=0)
-        # print(output_weights_summed.shape)
+
         # set the weights of the residual layers to be the weights of the corresponding neurons in
         # the controlled piecewise linear
-
-        for i in range(num_layers):
+        for i in range(self.num_layers):
             self.mlps[i].input_layer.weight.data[:, :-1] = (
                 self.controlled_piecewise_linear.input_layer.weight.data[
                     self.neuron_permutations[i]
@@ -372,19 +411,25 @@ class ControlledResNet(nn.Module):
                 self.neuron_permutations[i]
             ]
 
-    def forward(self, x: torch.Tensor, control_bits: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # concatenate x and control bits
-        if control_bits is None:
-            control_bits = torch.zeros(x.shape[0], self.num_functions)
-        assert control_bits.shape[1] == self.num_functions
-        assert control_bits.shape[0] == x.shape[0]
+        control_bits = x[:, 1:]
+        input_value = x[:, 0].unsqueeze(1)
 
-        x = torch.cat([x, control_bits], dim=1)
+        # if control_bits is None:
+        #     control_bits = torch.zeros(x.shape[0], self.num_functions)
+        assert (
+            control_bits.shape[1] == self.num_functions
+        ), "control bits should have num_functions columns"
+        assert torch.all((control_bits == 0) | (control_bits == 1)), "control bits should be 0 or 1"
+        # map control bits to control vectors
+        control_vectors = control_bits @ self.control_W_E
+        x = torch.cat([input_value, control_vectors], dim=1)
+
         # add a zero for the output of the controlled piecewise linear
         x = torch.cat([x, torch.zeros_like(x[:, :1])], dim=1)
 
         assert x.shape[1] == self.d_model
-        # print(x)
         for i in range(self.num_layers):
             x = x + self.mlps[i](x)
         return x
@@ -447,30 +492,30 @@ class ControlledResNet(nn.Module):
 
         # print("input shape", torch.tensor(x, dtype=torch.float32).unsqueeze(1).shape)
         ax.legend()
-        ax.set_title(
-            "Piecewise Linear Approximation of functions "
-            f"with control bits {control_bits.detach().numpy().tolist()}"
-        )
+        # ax.set_title(
+        #     "Piecewise Linear Approximation of functions "
+        #     f"with control bits {control_bits.detach().numpy().tolist()}"
+        # )
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         # add vertical lines to show start and end
         ax.axvline(x=self.start, color="r", linestyle="--")
         ax.axvline(x=self.end, color="r", linestyle="--")
-        # set ylim between -2 and 2
-        ax.set_ylim(-10, 10)
+        # set ylim between min and max value of target
+        ax.set_ylim([target.min().item() - 2, target.max().item() + 2])  # type: ignore
         plt.show()
 
 
 # test
 if __name__ == "__main__":
-    num_functions = 3
-    dim = 3
+    num_functions = 50
+    dim = 50
 
     trigs = generate_trig_functions(num_functions)
     if num_functions == dim:
         control_W_E = torch.eye(num_functions)
     elif num_functions == dim + 1:
-        control_W_E = generate_simplex_vertices(num_functions)
+        control_W_E = generate_regular_simplex(num_functions)
         control_W_E = control_W_E / control_W_E.norm(dim=1).unsqueeze(1)
     else:
         control_W_E = torch.randn(num_functions, dim)
@@ -484,8 +529,9 @@ if __name__ == "__main__":
         control_bits = torch.zeros(num_functions, dtype=torch.float32)
         control_bits[0] = 1
         control_bits[1] = 1
-
-    test.controlled_piecewise_linear.plot(-0.1, 5.1, 1000, control_bits=control_bits)
+    # control_bits = torch.zeros(num_functions, dtype=torch.float32)
+    # control_bits[torch.tensor([4, 9, 12])] = 1
+    # test.controlled_piecewise_linear.plot(-0.1, 5.1, 1000, control_bits=control_bits)
 
     test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
     # test = ControlledResNet(
