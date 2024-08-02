@@ -11,7 +11,7 @@ import yaml
 
 from spd.log import logger
 from spd.models.linear_models import DeepLinearComponentModel, DeepLinearModel
-from spd.run_spd import Config, optimize
+from spd.run_spd import Config, DeepLinearModelConfig, optimize
 from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
 from spd.utils import (
     init_wandb,
@@ -68,7 +68,8 @@ def main(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     model_config = config.torch_model_config
-    if model_config.pretrained_model_path:
+    assert isinstance(model_config, DeepLinearModelConfig)
+    if model_config.pretrained_model_path is not None:
         dl_model = DeepLinearModel.from_pretrained(model_config.pretrained_model_path).to(device)
         assert (
             model_config.n_features is None

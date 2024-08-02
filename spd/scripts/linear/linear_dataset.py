@@ -6,17 +6,15 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 
-class DeepLinearDataset(Dataset[Float[Tensor, "n_instances n_features"]]):
+class DeepLinearDataset(
+    Dataset[tuple[Float[Tensor, "n_instances n_features"], Float[Tensor, "n_instances n_features"]]]
+):
     def __init__(self, n_features: int, n_instances: int):
         self.n_features = n_features
         self.n_instances = n_instances
 
     def __len__(self):
         return 2**31
-
-    def __getitem__(self, _: int) -> Float[Tensor, "n_instances n_features"]:
-        # This method will not be used directly
-        pass
 
     def generate_batch(
         self, batch_size: int
@@ -26,7 +24,11 @@ class DeepLinearDataset(Dataset[Float[Tensor, "n_instances n_features"]]):
         return x, x.clone().detach()
 
 
-class DeepLinearDataLoader(DataLoader[Float[Tensor, "n_instances n_features"]]):
+class DeepLinearDataLoader(
+    DataLoader[
+        tuple[Float[Tensor, "n_instances n_features"], Float[Tensor, "n_instances n_features"]]
+    ]
+):
     def __init__(
         self,
         dataset: DeepLinearDataset,
@@ -45,4 +47,4 @@ class DeepLinearDataLoader(DataLoader[Float[Tensor, "n_instances n_features"]]):
         ]
     ]:
         for _ in range(len(self)):
-            yield self.dataset.generate_batch(self.batch_size)
+            yield self.dataset.generate_batch(self.batch_size)  # type: ignore

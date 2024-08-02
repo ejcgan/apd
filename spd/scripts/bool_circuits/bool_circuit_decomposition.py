@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from spd.log import logger
 from spd.models.bool_circuit_models import BoolCircuitSPDTransformer, BoolCircuitTransformer
-from spd.run_spd import Config, optimize
+from spd.run_spd import BoolCircuitModelConfig, Config, optimize
 from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
 from spd.scripts.bool_circuits.bool_circuit_utils import form_circuit
 from spd.utils import (
@@ -71,6 +71,7 @@ def main(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     model_config = config.torch_model_config
+    assert isinstance(model_config, BoolCircuitModelConfig)
 
     dl_model = BoolCircuitTransformer.from_pretrained(model_config.pretrained_model_path).to(device)
 
