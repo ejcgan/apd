@@ -65,16 +65,17 @@
             }
         },
         {
-            "name": "linear_match_param_topk",
+            "name": "bool_circuit_spd",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/spd/scripts/linear/linear_decomposition_topk.py",
-            "args": "${workspaceFolder}/spd/scripts/linear/linear_topk_match_param_config.yaml",
+            "program": "${workspaceFolder}/spd/scripts/bool_circuits/bool_circuit_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/bool_circuits/bool_circuit_spd_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
                 "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
         }
+
     ]
 }

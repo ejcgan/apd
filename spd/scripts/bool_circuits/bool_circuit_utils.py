@@ -273,3 +273,31 @@ def plot_circuit(
     else:
         dot.render(filename, format="png", cleanup=True)
         logger.info(f"Saved circuit plot as {filename}")
+
+
+def form_circuit(
+    circuit_repr: list[tuple[Literal["AND", "OR", "NOT"], int, int | None]],
+) -> list[BooleanOperation]:
+    circuit: list[BooleanOperation] = []
+    for op_name, input_idx1, input_idx2 in circuit_repr:
+        if op_name == "AND":
+            circuit.append(AndOperation(input_idx1, input_idx2))
+        elif op_name == "OR":
+            circuit.append(OrOperation(input_idx1, input_idx2))
+        elif op_name == "NOT":
+            circuit.append(NotOperation(input_idx1, None))
+    return circuit
+
+
+def form_circuit_repr(
+    circuit: list[BooleanOperation],
+) -> list[tuple[Literal["AND", "OR", "NOT"], int, int | None]]:
+    circuit_repr: list[tuple[Literal["AND", "OR", "NOT"], int, int | None]] = []
+    for op in circuit:
+        if isinstance(op, AndOperation):
+            circuit_repr.append(("AND", op.input_idx1, op.input_idx2))
+        elif isinstance(op, OrOperation):
+            circuit_repr.append(("OR", op.input_idx1, op.input_idx2))
+        elif isinstance(op, NotOperation):
+            circuit_repr.append(("NOT", op.input_idx1, None))
+    return circuit_repr
