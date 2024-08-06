@@ -57,6 +57,7 @@ class Config(BaseModel):
     lr_scale: Literal["linear", "constant", "cosine"] = "constant"
     lr_warmup_pct: float = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
+    loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
     torch_model_config: DeepLinearModelConfig | BoolCircuitModelConfig = Field(
         ..., discriminator="torch_model_type"
@@ -226,8 +227,7 @@ def optimize(
     out_dir: Path,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
-    pretrained_model_path: RootPath | None = None,
-    pretrained_model_class: type[Model] | None = None,
+    pretrained_model: Model | None,
 ) -> None:
     assert (
         (config.pnorm is None and config.pnorm_end is not None)
@@ -235,15 +235,12 @@ def optimize(
         or config.topk is not None
     ), "Exactly one of pnorm and pnorm_end must be set"
 
-    pretrained_weights: list[torch.Tensor] | None = None
-    if pretrained_model_path:
-        assert pretrained_model_class is not None
-        # call from_pretrained on the class of `model`
-        # Get the class of model
-        pretrained_model = pretrained_model_class.from_pretrained(pretrained_model_path).to(device)
-
+    if config.loss_type == "param_match":
+        assert pretrained_model is not None, "Need a pretrained model for param_match loss"
         pretrained_model.requires_grad_(False)
         pretrained_weights = pretrained_model.all_decomposable_params
+    else:
+        pretrained_weights = None
 
     opt = torch.optim.AdamW(model.parameters(), lr=config.lr)
 
@@ -314,8 +311,7 @@ def optimize(
             assert len(inner_acts) == model.n_param_matrices
 
             param_match_loss = torch.zeros(1, device=device)
-            if pretrained_model_path:
-                # If the user passed a pretrained model, then calculate the param_match_loss
+            if config.loss_type == "param_match":
                 assert pretrained_weights is not None
                 for i, (A, B) in enumerate(zip(model.all_As, model.all_Bs, strict=False)):
                     normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
@@ -369,7 +365,7 @@ def optimize(
                     tqdm.write(f"Current pnorm: {current_pnorm}")
                     tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
                     tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
-                    if pretrained_model_path:
+                    if config.loss_type == "param_match":
                         param_match_repr = [f"{x}" for x in param_match_loss]
                         tqdm.write(f"Param match loss: \n{param_match_repr}")
 
@@ -406,7 +402,7 @@ def optimize(
             sparsity_loss = sparsity_loss.mean()
             param_match_loss = param_match_loss.mean()
 
-            if pretrained_model_path:
+            if config.loss_type == "param_match":
                 loss = param_match_loss + sparsity_coeff * sparsity_loss
             else:
                 loss = out_recon_loss + sparsity_coeff * sparsity_loss
