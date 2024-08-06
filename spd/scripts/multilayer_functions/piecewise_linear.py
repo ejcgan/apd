@@ -244,7 +244,7 @@ class ControlledResNet(nn.Module):
         functions: list[Callable[[float], float]],
         start: float,
         end: float,
-        num_neurons: int,
+        neurons_per_function: int,
         num_layers: int,
         d_control: int,
         negative_suppression: int = 100,
@@ -255,9 +255,9 @@ class ControlledResNet(nn.Module):
         self.num_functions = len(functions)
         self.start = start
         self.end = end
-        self.num_neurons = num_neurons
+        self.num_neurons = neurons_per_function
         self.num_layers = num_layers
-        self.total_neurons = num_neurons * self.num_functions
+        self.total_neurons = neurons_per_function * self.num_functions
         assert self.total_neurons % num_layers == 0, "num_neurons must be divisible by num layers"
         self.negative_suppression = negative_suppression
 
