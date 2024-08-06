@@ -95,8 +95,7 @@ def main(
         config=config,
         out_dir=out_dir,
         device=device,
-        pretrained_model_path=model_config.pretrained_model_path,
-        pretrained_model_class=BoolCircuitTransformer,
+        pretrained_model=dl_model,
         dataloader=dataloader,
     )
 

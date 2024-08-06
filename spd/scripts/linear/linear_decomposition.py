@@ -69,6 +69,7 @@ def main(
     print(f"Using device: {device}")
     model_config = config.torch_model_config
     assert isinstance(model_config, DeepLinearModelConfig)
+
     if model_config.pretrained_model_path is not None:
         dl_model = DeepLinearModel.from_pretrained(model_config.pretrained_model_path).to(device)
         assert (
@@ -80,12 +81,15 @@ def main(
         n_layers = dl_model.n_layers
         n_instances = dl_model.n_instances
     else:
+        assert config.loss_type == "behavioral", "Only behavioral loss allows no pretrained model"
+        dl_model = None
         n_features = model_config.n_features
         n_layers = model_config.n_layers
         n_instances = model_config.n_instances
         assert (
             n_features is not None and n_layers is not None and n_instances is not None
         ), "n_features, n_layers, and n_instances must be set"
+
     dlc_model = DeepLinearComponentModel(
         n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=model_config.k
     ).to(device)
@@ -99,8 +103,7 @@ def main(
         out_dir=out_dir,
         device=device,
         dataloader=dataloader,
-        pretrained_model_path=model_config.pretrained_model_path,
-        pretrained_model_class=DeepLinearModel,
+        pretrained_model=dl_model,
     )
 
     if config.wandb_project:

@@ -6,10 +6,9 @@ import torch
 import wandb
 from pydantic import BaseModel, ConfigDict
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
 
 from spd.models.linear_models import DeepLinearModel
-from spd.scripts.linear.linear_dataset import DeepLinearDataset
+from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
 from spd.types import RootPath
 from spd.utils import set_seed
 
@@ -36,15 +35,15 @@ def train(config: Config):
     set_seed(config.seed)
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DeepLinearDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
 
     data_iter = iter(dataloader)
     for step in range(config.steps):
         optimizer.zero_grad()
-        batch = next(data_iter).to(device)
-        labels = batch.detach()
-        # with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        batch, labels = next(data_iter)
+        batch = batch.to(device)
+        labels = labels.to(device)
         loss = F.mse_loss(model(batch), labels)
         loss.backward()
         optimizer.step()

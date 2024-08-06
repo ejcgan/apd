@@ -11,6 +11,7 @@ save_freq: 10_000
 lr: 1e-1
 lr_scale: constant
 lr_warmup_pct: 0.1
+loss_type: param_match
 torch_model_config:
   torch_model_type: bool_circuit
   # n_inputs: 5
