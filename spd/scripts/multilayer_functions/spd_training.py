@@ -5,8 +5,8 @@ from jaxtyping import Float
 from torch import Tensor, nn
 
 from spd.models.base import Model, SPDModel
-from spd.models.bool_circuit_models import MLPComponents
-from spd.scripts.multilayer_functions.piecewise_linear import ControlledResNet
+# from spd.models.bool_circuit_models import MLPComponents
+from spd.scripts.multilayer_functions.piecewise_linear import MLP, ControlledResNet
 
 
 class PiecewiseFunctionTransformer(Model):
@@ -33,7 +33,7 @@ class PiecewiseFunctionTransformer(Model):
         self.initialise_embeds()
 
         self.layers = nn.ModuleList(
-            [MLPComponents(self.d_embed, d_mlp, k) for _ in range(num_layers)]
+            [MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(num_layers)]
         )
 
     def initialise_embeds(self):
@@ -76,6 +76,8 @@ class PiecewiseFunctionTransformer(Model):
         start = 0
         end = 5
         model = cls(n_inputs=len(functions) + 2, d_mlp=32, num_layers=4, k=4)
+        # Note that our MLP differs from the bool_circuit_models.MLP in having b_out
+        # Also different names
         handcoded_model = ControlledResNet(
             functions,
             start=start,
@@ -85,6 +87,11 @@ class PiecewiseFunctionTransformer(Model):
             d_control=d_embed - 2,
         )
         # Copy the weights from the hand-coded model to the model
+        # MLPs
+        for i, layer in enumerate(handcoded_model.layers):
+            model.layers[i].linear1.weight.data = layer.linear1.weight
+            model.layers[i].linear2.weight.data = layer.linear2.weight
+
         raise NotImplementedError
 
 
