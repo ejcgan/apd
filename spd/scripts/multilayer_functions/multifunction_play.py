@@ -1,7 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from piecewise_linear import ControlledPiecewiseLinear, ControlledResNet
+
+from spd.scripts.multilayer_functions.piecewise_linear import (
+    ControlledPiecewiseLinear,
+    ControlledResNet,
+)
 
 
 # test
