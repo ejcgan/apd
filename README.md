@@ -9,6 +9,8 @@ make install-dev  # To install the package, dev requirements and pre-commit hook
 make install  # To just install the package (runs `pip install -e .`)
 ```
 
+To use the graph viz, install it with your package manager. E.g. `apt install graphviz`
+
 ## Development
 
 Suggested extensions and settings for VSCode are provided in `.vscode/`. To use the suggested

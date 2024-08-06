@@ -4,8 +4,10 @@ import torch
 from jaxtyping import Float
 from torch import Tensor, nn
 
+from spd.models.base import Model, SPDModel
 
-class DeepLinearModel(nn.Module):
+
+class DeepLinearModel(Model):
     def __init__(self, n_features: int, n_layers: int, n_instances: int):
         super().__init__()
         self.n_features = n_features
@@ -26,14 +28,6 @@ class DeepLinearModel(nn.Module):
             x = torch.einsum("bif,ifj->bij", x, layer)
         return x
 
-    def generate_batch(self, batch_size: int) -> torch.Tensor:
-        """Generate a batch of inputs. Each input should be a random one-hot vector of dimension
-        n_features.
-        """
-        x_idx = torch.randint(0, self.n_features, (batch_size, self.n_instances))
-        x = torch.nn.functional.one_hot(x_idx, num_classes=self.n_features).float()
-        return x
-
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":
         params = torch.load(path)
@@ -44,6 +38,11 @@ class DeepLinearModel(nn.Module):
         model = cls(n_features, n_layers, n_instances)
         model.load_state_dict(params)
         return model
+
+    @property
+    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
+        """List of all parameters which will be decomposed with SPD."""
+        return [layer for layer in self.layers]
 
 
 class ParamComponent(nn.Module):
@@ -67,7 +66,7 @@ class ParamComponent(nn.Module):
         topk: int,
         grads: Float[Tensor, "... n_instances k"] | None = None,
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
-        """If grads are passed, do a forward pass with topk. Otherwise, do a regular forward pass."""
+        """If grads are passed, do a forward pass with topk. Otherwise, do regular forward pass."""
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
         if grads is not None:
@@ -83,7 +82,7 @@ class ParamComponent(nn.Module):
         return out, inner_acts_topk
 
 
-class DeepLinearComponentModel(nn.Module):
+class DeepLinearComponentModel(SPDModel):
     def __init__(
         self,
         n_features: int,
@@ -94,6 +93,7 @@ class DeepLinearComponentModel(nn.Module):
         super().__init__()
         self.n_features = n_features
         self.n_layers = n_layers
+        self.n_param_matrices = n_layers
         self.n_instances = n_instances
         self.k = k if k is not None else n_features
         self.layers = nn.ModuleList(
@@ -105,6 +105,14 @@ class DeepLinearComponentModel(nn.Module):
 
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
+
+    @property
+    def all_As(self) -> list[Float[Tensor, "dim k"]]:
+        return [layer.A for layer in self.layers]
+
+    @property
+    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
+        return [layer.B for layer in self.layers]
 
     def forward(
         self,
@@ -123,7 +131,11 @@ class DeepLinearComponentModel(nn.Module):
         x: Float[Tensor, "... n_instances n_features"],
         topk: int,
         all_grads: list[Float[Tensor, "... n_instances k"]] | None = None,
-    ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[
+        Float[Tensor, "... n_instances n_features"],
+        list[Float[Tensor, "... n_instances n_features"]],
+        list[Float[Tensor, "... n_instances k"]],
+    ]:
         layer_acts = []
         inner_acts_topk = []
         for i, layer in enumerate(self.layers):
@@ -144,11 +156,3 @@ class DeepLinearComponentModel(nn.Module):
         model = cls(n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=k)
         model.load_state_dict(params)
         return model
-
-    def generate_batch(self, batch_size: int) -> torch.Tensor:
-        """Generate a batch of inputs. Each input should be a random one-hot vector of dimension
-        n_features.
-        """
-        x_idx = torch.randint(0, self.n_features, (batch_size, self.n_instances))
-        x = torch.nn.functional.one_hot(x_idx, num_classes=self.n_features)
-        return x
