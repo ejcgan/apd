@@ -7,10 +7,7 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.scripts.multilayer_functions.piecewise_linear import (
-    ControlledPiecewiseLinear,
-    ControlledResNet,
-)
+from spd.models.piecewise_models import ControlledPiecewiseLinear, ControlledResNet
 
 # %%
 
@@ -81,14 +78,14 @@ def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
 
 
 # %% Do it with the new class
-from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
+from spd.models.piecewise_models import PiecewiseFunctionTransformer
 
 num_functions = 50
 trigs = generate_trig_functions(num_functions)
 test = PiecewiseFunctionTransformer.from_handcoded(trigs)
 
 # %%
-from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionSPDTransformer
+from spd.models.piecewise_models import PiecewiseFunctionSPDTransformer
 
 spd_model = PiecewiseFunctionSPDTransformer(n_inputs=4, d_mlp=20, num_layers=3, k=5)
 # %%
