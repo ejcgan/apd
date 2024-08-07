@@ -1,7 +1,9 @@
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from jaxtyping import Float
 from torch import Tensor, nn
@@ -12,7 +14,13 @@ from spd.scripts.multilayer_functions.piecewise_linear import MLP, ControlledRes
 
 
 class PiecewiseFunctionTransformer(Model):
-    def __init__(self, n_inputs: int, d_mlp: int, num_layers: int, d_embed: int | None = None):
+    def __init__(
+        self,
+        n_inputs: int,
+        d_mlp: int,
+        num_layers: int,
+        d_embed: int | None = None,
+    ):
         super().__init__()
         self.n_inputs = n_inputs
         self.num_layers = num_layers
@@ -72,7 +80,7 @@ class PiecewiseFunctionTransformer(Model):
         cls, functions: list[Callable[[float], float]]
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
-        neurons_per_function = 20
+        neurons_per_function = 200
         num_layers = 4
         d_mlp = neurons_per_function * len(functions) // num_layers
         d_embed = n_inputs + 1
@@ -108,6 +116,35 @@ class PiecewiseFunctionTransformer(Model):
             model.mlps[i].output_layer.bias.data = mlp.output_layer.bias
 
         return model
+
+    def plot(
+        self,
+        start: float,
+        end: float,
+        num_points: int,
+        control_bits: torch.Tensor | None = None,
+        functions: list[Callable[[float], float]] | None = None,
+    ):
+        fig, axs = plt.subplots(self.num_functions, 1, figsize=(10, 5 * self.num_functions))
+        assert isinstance(axs, Iterable)
+        x = torch.linspace(start, end, num_points)
+
+        for i in range(self.num_functions):
+            input_with_control = torch.zeros(num_points, self.n_inputs)
+            input_with_control[:, 0] = x
+            input_with_control[:, i + 1] = 1.0
+            outputs = self.forward(input_with_control).detach().numpy()
+            if functions is not None:
+                target = [functions[i](xi) for xi in x]
+                axs[i].plot(x, target, label="f(x)")
+            axs[i].plot(x, outputs[:, 0], label="NN(x)")
+            axs[i].legend()
+            axs[i].set_title(f"Piecewise Linear Approximation of function {i}")
+            axs[i].set_xlabel("x")
+            axs[i].set_ylabel("y")
+            axs[i].axvline(x=start, color="r", linestyle="--")
+            axs[i].axvline(x=end, color="r", linestyle="--")
+        plt.show()
 
 
 class PiecewiseFunctionSPDTransformer(SPDModel):
