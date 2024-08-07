@@ -87,7 +87,7 @@ class PiecewiseFunctionTransformer(Model):
             end=end,
             neurons_per_function=neurons_per_function,
             num_layers=num_layers,
-            d_control=d_embed - 2,
+            d_control=d_embed - 2,  # no superpos
             negative_suppression=end + 1,
         )
         # Copy the weights from the hand-coded model to the model

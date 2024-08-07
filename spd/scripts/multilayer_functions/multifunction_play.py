@@ -76,8 +76,16 @@ def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
     return simplex / simplex.norm(dim=1).unsqueeze(1)
 
 
+# %% Do it with the new class
+from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
+
 num_functions = 50
-dim = 49
+trigs = generate_trig_functions(num_functions)
+test = PiecewiseFunctionTransformer.from_handcoded(trigs)
+
+# %%
+
+dim = 50
 
 trigs = generate_trig_functions(num_functions)
 if num_functions == dim:  # type: ignore
@@ -100,6 +108,7 @@ else:
 
 test.plot(-0.1, 5.1, 1000, control_bits=control_bits)
 
+# %%
 num_functions = 50
 dim = 50
 
