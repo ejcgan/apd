@@ -34,7 +34,7 @@ def permute_to_identity(x: torch.Tensor, normalize_rows: bool = False) -> torch.
 
     # Assert that arr only has two dimensions and that it is square
     assert x.dim() == 2
-    assert x.shape[0] == x.shape[1]
+    assert x.shape[0] == x.shape[1], "Must have the same number of subnetworks (k) as features"
 
     # Get the number of rows and columns
     n_rows, n_cols = x.shape

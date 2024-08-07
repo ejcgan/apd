@@ -17,5 +17,5 @@ torch_model_config:
   # n_features: 5
   # n_layers: 3
   # n_instances: 2
-  k: 1
+  k: 5
   pretrained_model_path: spd/scripts/linear/out/linear.pt
