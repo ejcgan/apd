@@ -71,16 +71,19 @@ class PiecewiseFunctionTransformer(Model):
     def from_handcoded(
         cls, functions: list[Callable[[float], float]]
     ) -> "PiecewiseFunctionTransformer":
-        n_inputs = len(functions) + 2
+        n_inputs = len(functions) + 1
         neurons_per_function = 20
         num_layers = 4
         d_mlp = neurons_per_function * len(functions) // num_layers
-        d_embed = n_inputs
+        d_embed = n_inputs + 1
         start = 0
         end = 5
-        model = cls(n_inputs=n_inputs, d_mlp=d_mlp, num_layers=num_layers, d_embed=d_embed)
+        # , d_embed=d_embed
+        model = cls(n_inputs=n_inputs, d_mlp=d_mlp, num_layers=num_layers)
         # Note that our MLP differs from the bool_circuit_models.MLP in having b_out
         # Also different names
+        assert len(functions) == d_embed - 2
+        assert len(functions) == n_inputs - 1
         handcoded_model = ControlledResNet(
             functions,
             start=start,
