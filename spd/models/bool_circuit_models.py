@@ -150,8 +150,8 @@ class ParamComponents(nn.Module):
 
     def forward(
         self,
-        x: Float[Tensor, "... dim"],
-    ) -> tuple[Float[Tensor, "... dim"], Float[Tensor, "... k"]]:
+        x: Float[Tensor, "... dim1"],
+    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
         out = torch.einsum("bk,kg->bg", inner_acts, self.B)
@@ -159,10 +159,10 @@ class ParamComponents(nn.Module):
 
     def forward_topk(
         self,
-        x: Float[Tensor, "... dim"],
+        x: Float[Tensor, "... dim1"],
         topk: int,
         grads: Float[Tensor, "... k"] | None = None,
-    ) -> tuple[Float[Tensor, "... dim"], Float[Tensor, "... k"]]:
+    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
         """
         Performs a forward pass using only the top-k components.
 
@@ -196,8 +196,8 @@ class MLPComponents(nn.Module):
     def __init__(self, d_embed: int, d_mlp: int, k: int):
         super().__init__()
         self.linear1 = ParamComponents(d_embed, d_mlp, k)
+        self.bias1 = nn.Parameter(torch.zeros(d_mlp))
         self.linear2 = ParamComponents(d_mlp, d_embed, k)
-        self.bias2 = nn.Parameter(torch.zeros(d_embed))
 
     def forward(
         self, x: Float[Tensor, "... d_embed"]
@@ -215,13 +215,14 @@ class MLPComponents(nn.Module):
         inner_acts = []
         layer_acts = []
         x, inner_acts_linear1 = self.linear1(x)
+        x += self.bias1
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
 
         x, inner_acts_linear2 = self.linear2(F.relu(x))
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
-        return x + self.bias2, layer_acts, inner_acts
+        return x, layer_acts, inner_acts
 
     def forward_topk(
         self,
@@ -252,6 +253,7 @@ class MLPComponents(nn.Module):
         # First linear layer
         grad1 = grads[0] if grads is not None else None
         x, inner_acts_linear1 = self.linear1.forward_topk(x, topk, grad1)
+        x += self.bias1
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
 
@@ -264,7 +266,7 @@ class MLPComponents(nn.Module):
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
 
-        return x + self.bias2, layer_acts, inner_acts
+        return x, layer_acts, inner_acts
 
 
 class BoolCircuitSPDTransformer(SPDModel):
