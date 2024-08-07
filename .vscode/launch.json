@@ -75,6 +75,18 @@
             "env": {
                 "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
+        },
+        {
+            "name": "piecewise_spd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_spd_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
         }
 
     ]

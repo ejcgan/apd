@@ -42,7 +42,6 @@ class BoolCircuitTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-    @property
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
         params = []
@@ -57,7 +56,7 @@ class BoolCircuitTransformer(Model):
         with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path)
+        params = torch.load(path, map_location="cpu")
 
         model = cls(
             n_inputs=config["n_inputs"],
@@ -157,7 +156,6 @@ class BoolCircuitSPDTransformer(SPDModel):
         self.W_U = nn.Linear(d_embed, n_outputs, bias=False)
         self.layers = nn.ModuleList([MLPComponents(d_embed, d_mlp, k) for _ in range(n_layers)])
 
-    @property
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         all_A_pairs = [
             (self.layers[i].linear1.A, self.layers[i].linear2.A) for i in range(self.n_layers)
@@ -166,9 +164,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         assert len(As) == self.n_param_matrices
         return As
 
-    @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        # Get all B matrices
         all_B_pairs = [
             (self.layers[i].linear1.B, self.layers[i].linear2.B) for i in range(self.n_layers)
         ]

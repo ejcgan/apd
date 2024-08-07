@@ -39,7 +39,6 @@ class DeepLinearModel(Model):
         model.load_state_dict(params)
         return model
 
-    @property
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
         return [layer for layer in self.layers]
@@ -106,11 +105,9 @@ class DeepLinearComponentModel(SPDModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    @property
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         return [layer.A for layer in self.layers]
 
-    @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         return [layer.B for layer in self.layers]
 

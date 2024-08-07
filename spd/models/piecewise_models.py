@@ -191,7 +191,6 @@ class ControlledPiecewiseLinear(nn.Module):
         assert control_bits.shape[0] == len(x)
         input = torch.tensor(x, dtype=torch.float32).unsqueeze(1)
         input_with_control = torch.cat([input, control_bits], dim=1)
-        print(input_with_control.shape)
         outputs = self.forward(input_with_control).detach().numpy()
         for i in range(self.num_functions):
             target = np.array([self.functions[i](x) for x in x])
@@ -465,7 +464,6 @@ class PiecewiseFunctionTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-    @property
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
         params = []
@@ -609,6 +607,23 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             [MLPComponents(self.d_embed, d_mlp, k) for _ in range(num_layers)]
         )  # TODO: Check what is going on with bias2 in MLPComponents
 
+    def all_As(self) -> list[Float[Tensor, "dim k"]]:
+        all_A_pairs = [
+            (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.num_layers)
+        ]
+        As = [A for A_pair in all_A_pairs for A in A_pair]
+        assert len(As) == self.n_param_matrices
+        return As
+
+    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
+        # Get all B matrices
+        all_B_pairs = [
+            (self.mlps[i].linear1.B, self.mlps[i].linear2.B) for i in range(self.num_layers)
+        ]
+        As = [B for B_pair in all_B_pairs for B in B_pair]
+        assert len(As) == self.n_param_matrices
+        return As
+
     def initialise_embeds(self):
         self.W_E.weight.data = torch.zeros(self.d_embed, self.n_inputs)
         self.W_E.weight.data[0, 0] = 1.0
@@ -621,25 +636,6 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
 
         self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
         self.W_U.weight.data[:, -1] = 1.0
-
-    @property
-    def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        all_A_pairs = [
-            (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.n_layers)
-        ]
-        As = [A for A_pair in all_A_pairs for A in A_pair]
-        assert len(As) == self.n_param_matrices
-        return As
-
-    @property
-    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        # Get all B matrices
-        all_B_pairs = [
-            (self.mlps[i].linear1.B, self.mlps[i].linear2.B) for i in range(self.n_layers)
-        ]
-        As = [B for B_pair in all_B_pairs for B in B_pair]
-        assert len(As) == self.n_param_matrices
-        return As
 
     def forward(
         self, x: Float[Tensor, "... inputs"]

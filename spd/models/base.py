@@ -24,19 +24,16 @@ class SPDModel(ABC, nn.Module):
     def from_pretrained(cls, path: str | Path) -> "SPDModel":
         pass
 
-    @property
     @abstractmethod
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         pass
 
-    @property
     @abstractmethod
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         pass
 
 
 class Model(ABC, nn.Module):
-    @property
     @abstractmethod
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         pass

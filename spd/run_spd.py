@@ -43,7 +43,6 @@ class PiecewiseModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     torch_model_type: Literal["piecewise"] = "piecewise"
     n_functions: int
-    n_inputs: int
     k: int
 
 
@@ -67,8 +66,8 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
-    torch_model_config: DeepLinearModelConfig | BoolCircuitModelConfig = Field(
-        ..., discriminator="torch_model_type"
+    torch_model_config: DeepLinearModelConfig | BoolCircuitModelConfig | PiecewiseModelConfig = (
+        Field(..., discriminator="torch_model_type")
     )
 
 
@@ -246,7 +245,7 @@ def optimize(
     if config.loss_type == "param_match":
         assert pretrained_model is not None, "Need a pretrained model for param_match loss"
         pretrained_model.requires_grad_(False)
-        pretrained_weights = pretrained_model.all_decomposable_params
+        pretrained_weights = pretrained_model.all_decomposable_params()
     else:
         pretrained_weights = None
 
@@ -321,7 +320,7 @@ def optimize(
             param_match_loss = torch.zeros(1, device=device)
             if config.loss_type == "param_match":
                 assert pretrained_weights is not None
-                for i, (A, B) in enumerate(zip(model.all_As, model.all_Bs, strict=False)):
+                for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
                     normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
                     AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
                     param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
@@ -348,7 +347,7 @@ def optimize(
                             * torch.einsum(
                                 "...ih,ikh->...ik",
                                 grad_layer_acts[param_matrix_idx].detach(),
-                                model.all_Bs[param_matrix_idx],
+                                model.all_Bs()[param_matrix_idx],
                             )
                         )
 

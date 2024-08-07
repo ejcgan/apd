@@ -4,9 +4,9 @@ wandb_run_name_prefix: ""
 seed: 0
 topk: 1
 max_sparsity_coeff: 1
-batch_size: 1024
+batch_size: 4
 steps: 20_000
-print_freq: 4000
+print_freq: 10
 save_freq: 10_000
 lr: 1e-1
 lr_scale: constant
@@ -19,4 +19,5 @@ torch_model_config:
   # d_mlp: 3
   # n_layers: 3
   # n_outputs: 2
+  n_functions: 7
   k: 3
