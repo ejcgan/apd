@@ -5,7 +5,8 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
+# from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
+from spd.models.piecewise_models import PiecewiseFunctionTransformer
 
 # %%
 
@@ -82,4 +83,28 @@ trigs = generate_trig_functions(num_functions)
 test = PiecewiseFunctionTransformer.from_handcoded(trigs)
 
 control_bits = torch.ones(num_functions, dtype=torch.float32)
-test.plot(-0.1, 5.1, 1000, control_bits=control_bits, functions=trigs)
+# test.plot(-0.1, 5.1, 1000, control_bits=control_bits, functions=trigs)
+test.plot_multiple(-0.1, 5.1, 200, control_bits=control_bits, functions=trigs)
+
+# %%
+from torch.utils.data import DataLoader
+
+from spd.scripts.multilayer_functions.multilayer_functions_decomposition import PiecewiseDataset
+
+functions = trigs
+ds = PiecewiseDataset(4, functions, prob_one=0.5)
+dl = DataLoader(ds, batch_size=1, shuffle=False)
+for i, (batch, labels) in enumerate(dl):
+    print("Batch")
+    print(batch)
+    print("labels")
+    print(labels)
+    # Check that the model outputs the same
+    model_out = test(batch)
+    print("model_out")
+    print(model_out)
+    print("\n")
+
+    if i > 10:
+        break
+# %%

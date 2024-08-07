@@ -1,0 +1,22 @@
+# wandb_project: piecewise
+wandb_run_name: null
+wandb_run_name_prefix: ""
+seed: 0
+topk: 1
+max_sparsity_coeff: 1
+batch_size: 1024
+steps: 20_000
+print_freq: 4000
+save_freq: 10_000
+lr: 1e-1
+lr_scale: constant
+lr_warmup_pct: 0.1
+loss_type: param_match
+torch_model_config:
+  torch_model_type: piecewise
+  # n_inputs: 5
+  # d_embed: 3
+  # d_mlp: 3
+  # n_layers: 3
+  # n_outputs: 2
+  k: 3

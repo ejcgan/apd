@@ -39,6 +39,14 @@ class DeepLinearModelConfig(BaseModel):
     pretrained_model_path: RootPath | None = None
 
 
+class PiecewiseModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    torch_model_type: Literal["piecewise"] = "piecewise"
+    n_functions: int
+    n_inputs: int
+    k: int
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     wandb_project: str | None = None

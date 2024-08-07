@@ -421,6 +421,7 @@ class PiecewiseFunctionTransformer(Model):
     ):
         super().__init__()
         self.n_inputs = n_inputs
+        self.d_mlp = d_mlp
         self.num_layers = num_layers
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
@@ -542,6 +543,42 @@ class PiecewiseFunctionTransformer(Model):
             axs[i].set_ylabel("y")
             axs[i].axvline(x=start, color="r", linestyle="--")
             axs[i].axvline(x=end, color="r", linestyle="--")
+        plt.show()
+
+    def plot_multiple(
+        self,
+        start: float,
+        end: float,
+        num_points: int,
+        control_bits: torch.Tensor | None = None,
+        functions: list[Callable[[float | Float[Tensor, ""]], float]] | None = None,
+        prob: float = 0.5,
+    ):
+        fig, axs = plt.subplots(1, 1, figsize=(10, 5))
+        x = torch.linspace(start, end, num_points)
+
+        # Give this ones based on bernoulli dist
+        control_bits = torch.bernoulli(torch.full((self.num_functions,), prob))
+
+        input_with_control = torch.zeros(num_points, self.n_inputs)
+        input_with_control[:, 0] = x
+        # Expand the control bits over num_points
+        control_bits_expanded = control_bits.unsqueeze(0).repeat(num_points, 1)
+        input_with_control[:, 1:] = control_bits_expanded
+        outputs = self.forward(input_with_control).detach().numpy()
+        if functions is not None:
+            # Sums of the functions that depends on the bernoulli controlled inputs
+            target = [
+                sum(functions[j](xi).item() for j in np.where(control_bits == 1)[0]) for xi in x
+            ]
+            axs.plot(x, target, label="f(x)")
+        axs.plot(x, outputs[:, 0], label="NN(x)")
+        axs.legend()
+        axs.set_title("Piecewise Linear Approximation of function")
+        axs.set_xlabel("x")
+        axs.set_ylabel("y")
+        axs.axvline(x=start, color="r", linestyle="--")
+        axs.axvline(x=end, color="r", linestyle="--")
         plt.show()
 
 
