@@ -36,11 +36,6 @@ class SPDModel(ABC, nn.Module):
 
 
 class Model(ABC, nn.Module):
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path: str | Path) -> "Model":
-        pass
-
     @property
     @abstractmethod
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
