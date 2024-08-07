@@ -193,6 +193,13 @@ class ParamComponents(nn.Module):
 
 
 class MLPComponents(nn.Module):
+    """
+    A module that contains two linear layers with a ReLU activation in between.
+
+    Note that the first linear layer has a bias that is not decomposed, and the second linear layer
+    has no bias.
+    """
+
     def __init__(self, d_embed: int, d_mlp: int, k: int):
         super().__init__()
         self.linear1 = ParamComponents(d_embed, d_mlp, k)

@@ -1,13 +1,10 @@
 from collections.abc import Callable
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from jaxtyping import Float
+from torch import Tensor
 
-from spd.scripts.multilayer_functions.piecewise_linear import (
-    ControlledPiecewiseLinear,
-    ControlledResNet,
-)
 from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
 
 # %%
@@ -29,7 +26,9 @@ def generate_cubics(num_cubics: int) -> list[Callable[[float], float]]:
     return cubics
 
 
-def generate_trig_functions(num_trig_functions: int) -> list[Callable[[float], float]]:
+def generate_trig_functions(
+    num_trig_functions: int,
+) -> list[Callable[[float | Float[Tensor, ""]], float]]:
     def create_trig_function(
         a: float, b: float, c: float, d: float, e: float, f: float, g: float
     ) -> Callable[[float], float]:

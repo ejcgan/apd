@@ -4,6 +4,8 @@ from collections.abc import Callable
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from jaxtyping import Float
+from torch import Tensor
 
 from spd.scripts.multilayer_functions.piecewise_linear import (
     ControlledPiecewiseLinear,
@@ -29,11 +31,13 @@ def generate_cubics(num_cubics: int) -> list[Callable[[float], float]]:
     return cubics
 
 
-def generate_trig_functions(num_trig_functions: int) -> list[Callable[[float], float]]:
+def generate_trig_functions(
+    num_trig_functions: int,
+) -> list[Callable[[float | Float[Tensor, ""]], float]]:
     def create_trig_function(
         a: float, b: float, c: float, d: float, e: float, f: float, g: float
-    ) -> Callable[[float], float]:
-        return lambda x: a * np.sin(b * x + c) + d * np.cos(e * x + f) + g
+    ) -> Callable[[float | Float[Tensor, ""]], float]:
+        return lambda x: float(a * np.sin(b * x + c) + d * np.cos(e * x + f) + g)
 
     trig_functions = []
     for _ in range(num_trig_functions):
@@ -83,6 +87,10 @@ num_functions = 50
 trigs = generate_trig_functions(num_functions)
 test = PiecewiseFunctionTransformer.from_handcoded(trigs)
 
+# %%
+from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionSPDTransformer
+
+spd_model = PiecewiseFunctionSPDTransformer(n_inputs=4, d_mlp=20, num_layers=3, k=5)
 # %%
 
 dim = 50

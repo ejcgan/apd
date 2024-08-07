@@ -3,7 +3,6 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 from jaxtyping import Float
 from torch import Tensor, nn
@@ -77,7 +76,7 @@ class PiecewiseFunctionTransformer(Model):
 
     @classmethod
     def from_handcoded(
-        cls, functions: list[Callable[[float], float]]
+        cls, functions: list[Callable[[float | Float[Tensor, ""]], float]]
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
         neurons_per_function = 200
@@ -123,7 +122,7 @@ class PiecewiseFunctionTransformer(Model):
         end: float,
         num_points: int,
         control_bits: torch.Tensor | None = None,
-        functions: list[Callable[[float], float]] | None = None,
+        functions: list[Callable[[float | Float[Tensor, ""]], float]] | None = None,
     ):
         fig, axs = plt.subplots(self.num_functions, 1, figsize=(10, 5 * self.num_functions))
         assert isinstance(axs, Iterable)
@@ -157,6 +156,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         self.k = k
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
+        self.n_param_matrices = num_layers * 2
 
         self.num_functions = n_inputs - 1
         self.n_outputs = 1  # this is hardcoded. This class isn't defined for multiple outputs
@@ -167,7 +167,6 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
 
         self.W_E = nn.Linear(n_inputs, self.d_embed, bias=False)
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
-
         self.initialise_embeds()
 
         self.mlps = nn.ModuleList(
@@ -255,7 +254,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
 
-        n_param_matrices_per_layer = self.n_param_matrices // self.n_layers
+        n_param_matrices_per_layer = self.n_param_matrices // self.num_layers
 
         for i, layer in enumerate(self.mlps):
             # A single layer contains multiple parameter matrices
