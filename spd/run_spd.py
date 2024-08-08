@@ -45,7 +45,7 @@ class PiecewiseConfig(BaseModel):
     n_functions: int
     neurons_per_function: int
     n_layers: int
-    prob_one: float
+    feature_probability: float
     range_min: float
     range_max: float
     k: int
@@ -298,137 +298,131 @@ def optimize(
             sparsity_warmup_pct=config.sparsity_warmup_pct,
         )
 
-        dlc_out_topk = None
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            if config.topk is not None:
-                # First do a full forward pass and get the gradients w.r.t. inner_acts
-                # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
-                dlc_out, _, inner_acts = model(batch)
-                all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
-                for feature_idx in range(dlc_out.shape[-1]):
-                    grads = torch.autograd.grad(
-                        dlc_out[..., feature_idx].sum(), inner_acts, retain_graph=True
-                    )
-                    for param_matrix_idx in range(model.n_param_matrices):
-                        all_grads[param_matrix_idx] += grads[param_matrix_idx]
-
-                # Now do a full forward pass with topk
-                dlc_out_topk, layer_acts, inner_acts_topk = model.forward_topk(
-                    batch, config.topk, all_grads
+        out_topk = None
+        if config.topk is not None:
+            # First do a full forward pass and get the gradients w.r.t. inner_acts
+            # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
+            out, _, inner_acts = model(batch)
+            all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
+            for feature_idx in range(out.shape[-1]):
+                grads = torch.autograd.grad(
+                    out[..., feature_idx].sum(), inner_acts, retain_graph=True
                 )
-                assert len(inner_acts_topk) == model.n_param_matrices
-            else:
-                dlc_out, layer_acts, inner_acts = model(batch)
+                for param_matrix_idx in range(model.n_param_matrices):
+                    all_grads[param_matrix_idx] += grads[param_matrix_idx]
 
-            assert len(inner_acts) == model.n_param_matrices
+            # Now do a full forward pass with topk
+            out_topk, layer_acts, inner_acts_topk = model.forward_topk(
+                batch, config.topk, all_grads
+            )
+            assert len(inner_acts_topk) == model.n_param_matrices
+        else:
+            out, layer_acts, inner_acts = model(batch)
 
-            param_match_loss = torch.zeros(1, device=device)
-            if config.loss_type == "param_match":
-                assert pretrained_weights is not None
-                for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
-                    normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
-                    AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
-                    param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
-                        dim=(-2, -1)
-                    )
+        assert len(inner_acts) == model.n_param_matrices
 
-            out_recon_loss = (dlc_out - labels) ** 2
-            if out_recon_loss.ndim == 3:
-                assert hasattr(model, "n_instances")
-                out_recon_loss = einops.reduce(out_recon_loss, "b i f -> i", "mean")
-            elif out_recon_loss.ndim == 2:
-                out_recon_loss = out_recon_loss.mean()
-            else:
-                raise ValueError(
-                    f"Expected 2 or 3 dims in out_recon_loss, got {out_recon_loss.ndim}"
+        param_match_loss = torch.zeros(1, device=device)
+        if config.loss_type == "param_match":
+            assert pretrained_weights is not None
+            for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
+                normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
+                AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
+                param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
+                    dim=(-2, -1)
                 )
 
-            if config.topk is None:
-                sparsity_loss = torch.zeros_like(inner_acts[0], requires_grad=True)
-                for feature_idx in range(dlc_out.shape[-1]):
-                    grad_layer_acts = torch.autograd.grad(
-                        dlc_out[..., feature_idx].sum(),
-                        layer_acts,
-                        retain_graph=True,
-                    )
-                    sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
-                    for param_matrix_idx in range(model.n_layers):
-                        # h_i * grad_h_i
-                        sparsity_inner = sparsity_inner + (
-                            inner_acts[param_matrix_idx]
-                            * torch.einsum(
-                                "...h,...kh->...k",
-                                grad_layer_acts[param_matrix_idx].detach(),
-                                model.all_Bs()[param_matrix_idx],
-                            )
-                        )
-
-                    sparsity_loss = sparsity_loss + sparsity_inner**2
-                sparsity_loss = sparsity_loss / dlc_out.shape[-1] + 1e-16
-
-                # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner
-                # above
-                sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
-                sparsity_loss = sparsity_loss.mean(dim=0)  # Mean over batch dim
-            else:
-                # Assert that dlc_out_topk is not unbound
-                assert dlc_out_topk is not None
-                sparsity_loss = (dlc_out_topk - batch) ** 2
-                if sparsity_loss.ndim == 3:
-                    sparsity_loss = einops.reduce(sparsity_loss, "b i f -> i", "mean")
-                elif sparsity_loss.ndim == 2:
-                    sparsity_loss = sparsity_loss.mean()
-                else:
-                    raise ValueError(
-                        f"Expected 2 or 3 dims in sparsity_loss, got {sparsity_loss.ndim}"
-                    )
-
-            with torch.inference_mode():
-                if step % config.print_freq == config.print_freq - 1 or step == 0:
-                    tqdm.write(f"Step {step}")
-                    tqdm.write(f"Current pnorm: {current_pnorm}")
-                    tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
-                    tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
-                    if config.loss_type == "param_match":
-                        tqdm.write(f"Param match loss: \n{param_match_loss}\n")
-
-                    fig = None
-                    if isinstance(model, DeepLinearComponentModel):
-                        test_batch, test_inner_acts = collect_inner_act_data(
-                            model, device, config.topk
-                        )
-
-                        fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
-                        fig.savefig(out_dir / f"inner_acts_{step}.png")
-                        plt.close(fig)
-                        tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
-
-                    if config.wandb_project:
-                        wandb.log(
-                            {
-                                "step": step,
-                                "current_pnorm": current_pnorm,
-                                "current_lr": step_lr,
-                                "sparsity_loss": sparsity_loss.mean().item(),
-                                "recon_loss": out_recon_loss.mean().item(),
-                                "param_match_loss": param_match_loss.mean().item(),
-                                "inner_acts": wandb.Image(fig) if fig else None,
-                            },
-                            step=step,
-                        )
-
-                if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
-                    torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
-                    tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
-
+        out_recon_loss = (out - labels) ** 2
+        if out_recon_loss.ndim == 3:
+            assert hasattr(model, "n_instances")
+            out_recon_loss = einops.reduce(out_recon_loss, "b i f -> i", "mean")
+        elif out_recon_loss.ndim == 2:
             out_recon_loss = out_recon_loss.mean()
-            sparsity_loss = sparsity_loss.mean()
-            param_match_loss = param_match_loss.mean()
+        else:
+            raise ValueError(f"Expected 2 or 3 dims in out_recon_loss, got {out_recon_loss.ndim}")
 
-            if config.loss_type == "param_match":
-                loss = param_match_loss + sparsity_coeff * sparsity_loss
+        if config.topk is None:
+            sparsity_loss = torch.zeros_like(inner_acts[0], requires_grad=True)
+            for feature_idx in range(out.shape[-1]):
+                grad_layer_acts = torch.autograd.grad(
+                    out[..., feature_idx].sum(),
+                    layer_acts,
+                    retain_graph=True,
+                )
+                sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
+                for param_matrix_idx in range(model.n_layers):
+                    # h_i * grad_h_i
+                    sparsity_inner = sparsity_inner + (
+                        inner_acts[param_matrix_idx]
+                        * torch.einsum(
+                            "...h,...kh->...k",
+                            grad_layer_acts[param_matrix_idx].detach(),
+                            model.all_Bs()[param_matrix_idx],
+                        )
+                    )
+
+                sparsity_loss = sparsity_loss + sparsity_inner**2
+            sparsity_loss = sparsity_loss / out.shape[-1] + 1e-16
+
+            # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner
+            # above
+            sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
+            sparsity_loss = sparsity_loss.mean(dim=0)  # Mean over batch dim
+        else:
+            # Assert that out_topk is not unbound
+            assert out_topk is not None
+            sparsity_loss = (out_topk - labels) ** 2
+            if sparsity_loss.ndim == 3:
+                sparsity_loss = einops.reduce(sparsity_loss, "b i f -> i", "mean")
+            elif sparsity_loss.ndim == 2:
+                sparsity_loss = sparsity_loss.mean()
             else:
-                loss = out_recon_loss + sparsity_coeff * sparsity_loss
+                raise ValueError(f"Expected 2 or 3 dims in sparsity_loss, got {sparsity_loss.ndim}")
+
+        with torch.inference_mode():
+            if step % config.print_freq == config.print_freq - 1 or step == 0:
+                tqdm.write(f"Step {step}")
+                tqdm.write(f"Current pnorm: {current_pnorm}")
+                tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
+                tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
+                if config.loss_type == "param_match":
+                    param_match_loss_repr = [x for x in param_match_loss]
+                    tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
+
+                fig = None
+                if isinstance(model, DeepLinearComponentModel):
+                    test_batch, test_inner_acts = collect_inner_act_data(model, device, config.topk)
+
+                    fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
+                    fig.savefig(out_dir / f"inner_acts_{step}.png")
+                    plt.close(fig)
+                    tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
+
+                if config.wandb_project:
+                    wandb.log(
+                        {
+                            "step": step,
+                            "current_pnorm": current_pnorm,
+                            "current_lr": step_lr,
+                            "sparsity_loss": sparsity_loss.mean().item(),
+                            "recon_loss": out_recon_loss.mean().item(),
+                            "param_match_loss": param_match_loss.mean().item(),
+                            "inner_acts": wandb.Image(fig) if fig else None,
+                        },
+                        step=step,
+                    )
+
+            if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
+                torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
+                tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
+
+        out_recon_loss = out_recon_loss.mean()
+        sparsity_loss = sparsity_loss.mean()
+        param_match_loss = param_match_loss.mean()
+
+        if config.loss_type == "param_match":
+            loss = param_match_loss + sparsity_coeff * sparsity_loss
+        else:
+            loss = out_recon_loss + sparsity_coeff * sparsity_loss
 
         loss.backward()
         opt.step()

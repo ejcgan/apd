@@ -116,7 +116,7 @@ def main(
     dataset = PiecewiseDataset(
         n_inputs=piecewise_model.n_inputs,
         functions=functions,
-        prob_one=0.2,
+        feature_probability=config.task_config.feature_probability,
         range_min=config.task_config.range_min,
         range_max=config.task_config.range_max,
     )

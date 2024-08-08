@@ -9,13 +9,13 @@ def test_piecewise_dataset():
     # Define test parameters
     n_inputs = 5
     functions = [lambda x: x, lambda x: x**2, lambda x: x**3, lambda x: torch.sin(x)]
-    prob_one = 0.3
+    feature_probability = 0.3
     range_min = 0
     range_max = 5
     batch_size = 1000
 
     # Create dataset
-    dataset = PiecewiseDataset(n_inputs, functions, prob_one, range_min, range_max)
+    dataset = PiecewiseDataset(n_inputs, functions, feature_probability, range_min, range_max)
 
     # Create dataloader
     dataloader = DataLoader(dataset, batch_size=batch_size)
@@ -36,4 +36,4 @@ def test_piecewise_dataset():
 
     # Check mean of control bits
     mean_control_bits = control_bits.float().mean()
-    assert pytest.approx(mean_control_bits.item(), abs=0.05) == prob_one
+    assert pytest.approx(mean_control_bits.item(), abs=0.05) == feature_probability

@@ -19,14 +19,14 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         self,
         n_inputs: int,
         functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
-        prob_one: float,
+        feature_probability: float,
         range_min: float,
         range_max: float,
         buffer_size: int = 1_000_000,
     ):
         self.n_inputs = n_inputs
         self.functions = functions
-        self.prob_one = prob_one
+        self.feature_probability = feature_probability
         self.range_min = range_min
         self.range_max = range_max
         self.buffer_size = buffer_size
@@ -42,7 +42,7 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
             torch.rand(self.buffer_size) * (self.range_max - self.range_min) + self.range_min
         )
         control_bits = torch.bernoulli(
-            torch.full((self.buffer_size, self.n_inputs - 1), self.prob_one)
+            torch.full((self.buffer_size, self.n_inputs - 1), self.feature_probability)
         )
         data[:, 1:] = control_bits
 

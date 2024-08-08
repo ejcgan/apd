@@ -2,15 +2,48 @@ import torch
 from jaxtyping import Float
 from torch import Tensor, nn
 
+from spd.utils import init_param_
+
 
 class ParamComponents(nn.Module):
-    def __init__(self, dim1: int, dim2: int, k: int):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        k: int,
+        resid_component: nn.Parameter | None,
+        resid_dim: int | None,
+    ):
+        """
+        Args:
+            in_dim: Input dimension of the parameter to be replaced with AB.
+            out_dim: Output dimension of the parameter to be replaced with AB.
+            k: Number of subnetworks.
+            resid_component: Predefined component matrix of shape (d_resid, k) if A or (k, d_resid)
+                if B.
+            resid_dim: Dimension in which to use the predefined component.
+        """
         super().__init__()
-        self.A = nn.Parameter(torch.empty(dim1, k))
-        self.B = nn.Parameter(torch.empty(k, dim2))
 
-        nn.init.kaiming_normal_(self.A)
-        nn.init.kaiming_normal_(self.B)
+        a = None
+        b = None
+        if resid_component is not None:
+            assert resid_dim is not None and resid_dim in [0, 1]
+            if resid_dim == 0:
+                # Will use resid_component for A matrix, only need to set B
+                a = resid_component
+                b = nn.Parameter(torch.empty(k, out_dim))
+            else:
+                # Will use resid_component for B matrix, only need to set A
+                a = nn.Parameter(torch.empty(in_dim, k))
+                b = resid_component
+
+        assert a is not None
+        assert b is not None
+        init_param_(a)
+        init_param_(b)
+        self.A = a
+        self.B = b
 
     def forward(
         self,
@@ -64,11 +97,22 @@ class MLPComponents(nn.Module):
     has no bias.
     """
 
-    def __init__(self, d_embed: int, d_mlp: int, k: int):
+    def __init__(
+        self,
+        d_embed: int,
+        d_mlp: int,
+        k: int,
+        input_component: nn.Parameter | None = None,
+        output_component: nn.Parameter | None = None,
+    ):
         super().__init__()
-        self.linear1 = ParamComponents(d_embed, d_mlp, k)
+        self.linear1 = ParamComponents(
+            d_embed, d_mlp, k, resid_component=input_component, resid_dim=0
+        )
         self.bias1 = nn.Parameter(torch.zeros(d_mlp))
-        self.linear2 = ParamComponents(d_mlp, d_embed, k)
+        self.linear2 = ParamComponents(
+            d_mlp, d_embed, k, resid_component=output_component, resid_dim=1
+        )
 
     def forward(
         self, x: Float[Tensor, "... d_embed"]

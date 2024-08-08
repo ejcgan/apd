@@ -11,6 +11,7 @@ from torch import Tensor
 
 from spd.models.base import Model, SPDModel
 from spd.models.bool_circuit_models import MLPComponents
+from spd.utils import init_param_
 
 
 class PiecewiseLinear(nn.Module):
@@ -606,9 +607,23 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         self.W_E.requires_grad_(False)
         self.W_U.requires_grad_(False)
 
+        self.input_component = nn.Parameter(torch.empty(self.d_embed, self.k))
+        self.output_component = nn.Parameter(torch.empty(self.k, self.d_embed))
+        init_param_(self.input_component)
+        init_param_(self.output_component)
+
         self.mlps = nn.ModuleList(
-            [MLPComponents(self.d_embed, d_mlp, k) for _ in range(n_layers)]
-        )  # TODO: Check what is going on with bias2 in MLPComponents
+            [
+                MLPComponents(
+                    d_embed=self.d_embed,
+                    d_mlp=d_mlp,
+                    k=k,
+                    input_component=self.input_component,
+                    output_component=self.output_component,
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         all_A_pairs = [
