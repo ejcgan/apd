@@ -29,21 +29,21 @@ def generate_cubics(num_cubics: int) -> list[Callable[[float], float]]:
 
 def generate_trig_functions(
     num_trig_functions: int,
-) -> list[Callable[[float | Float[Tensor, ""]], float]]:
+) -> list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]:
     def create_trig_function(
         a: float, b: float, c: float, d: float, e: float, f: float, g: float
-    ) -> Callable[[float], float]:
-        return lambda x: a * np.sin(b * x + c) + d * np.cos(e * x + f) + g
+    ) -> Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]:
+        return lambda x: a * torch.sin(b * x + c) + d * torch.cos(e * x + f) + g
 
     trig_functions = []
     for _ in range(num_trig_functions):
-        a = np.random.uniform(-1, 1)
-        b = np.exp(np.random.uniform(-1, 3))
-        c = np.random.uniform(-np.pi, np.pi)
-        d = np.random.uniform(-1, 1)
-        e = np.exp(np.random.uniform(-1, 3))
-        f = np.random.uniform(-np.pi, np.pi)
-        g = np.random.uniform(-1, 1)
+        a = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
+        b = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
+        c = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
+        d = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
+        e = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
+        f = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
+        g = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
         trig_functions.append(create_trig_function(a, b, c, d, e, f, g))
     return trig_functions
 

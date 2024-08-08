@@ -6,13 +6,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import fire
-import numpy as np
 import torch
 import wandb
 import yaml
 from jaxtyping import Float
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from spd.log import logger
 from spd.models.piecewise_models import (
@@ -20,6 +19,7 @@ from spd.models.piecewise_models import (
     PiecewiseFunctionTransformer,
 )
 from spd.run_spd import Config, PiecewiseModelConfig, optimize
+from spd.scripts.multilayer_functions.multilayer_functions_dataset import PiecewiseDataset
 from spd.utils import (
     init_wandb,
     load_config,
@@ -31,49 +31,23 @@ wandb.require("core")
 
 def generate_trig_functions(
     num_trig_functions: int,
-) -> list[Callable[[float | Float[Tensor, ""]], float]]:
+) -> list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]:
     def create_trig_function(
         a: float, b: float, c: float, d: float, e: float, f: float, g: float
-    ) -> Callable[[float | Float[Tensor, ""]], float]:
-        return lambda x: float(a * np.sin(b * x + c) + d * np.cos(e * x + f) + g)
+    ) -> Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]:
+        return lambda x: a * torch.sin(b * x + c) + d * torch.cos(e * x + f) + g
 
     trig_functions = []
     for _ in range(num_trig_functions):
-        a = np.random.uniform(-1, 1)
-        b = np.exp(np.random.uniform(-1, 3))
-        c = np.random.uniform(-np.pi, np.pi)
-        d = np.random.uniform(-1, 1)
-        e = np.exp(np.random.uniform(-1, 3))
-        f = np.random.uniform(-np.pi, np.pi)
-        g = np.random.uniform(-1, 1)
+        a = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
+        b = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
+        c = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
+        d = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
+        e = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
+        f = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
+        g = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
         trig_functions.append(create_trig_function(a, b, c, d, e, f, g))
     return trig_functions
-
-
-class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]]):
-    def __init__(
-        self,
-        n_inputs: int,
-        functions: list[Callable[[float | Float[Tensor, ""]], float]],
-        prob_one: float,
-    ):
-        self.n_inputs = n_inputs
-        self.functions = functions
-        self.prob_one = prob_one
-
-    def __len__(self) -> int:
-        return 2**31
-
-    def __getitem__(self, index: int) -> tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]:
-        data = torch.empty(self.n_inputs)
-        # Set the first element to be a random float between 0 and 5
-        data[0] = torch.rand(1) * 5
-        # Set the other values to a random selection of 1s and 0s, where the probability of
-        # each value being 1 is `self.prob_one`.
-        data[1:] = torch.bernoulli(torch.full((self.n_inputs - 1,), self.prob_one))
-        control_bits = data[1:]
-        labels = [sum(self.functions[j](data[0]) for j in np.where(control_bits == 1)[0])]
-        return data, torch.tensor(labels, dtype=torch.float32)
 
 
 def get_run_name(config: Config) -> str:

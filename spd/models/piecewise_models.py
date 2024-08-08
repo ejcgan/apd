@@ -20,7 +20,13 @@ class PiecewiseLinear(nn.Module):
     num_neurons relus with biases given by np.linspace(start, end, num_neurons) that computes a
     piecewise linear approximation to the function"""
 
-    def __init__(self, f: Callable[[float], float], start: float, end: float, num_neurons: int):
+    def __init__(
+        self,
+        f: Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]],
+        start: float,
+        end: float,
+        num_neurons: int,
+    ):
         super().__init__()
         self.f = f
         self.start = start
@@ -49,7 +55,7 @@ class PiecewiseLinear(nn.Module):
 
         self.output_layer.bias.data = torch.tensor(0, dtype=torch.float32)
 
-        xs = np.linspace(self.start, self.end, self.num_neurons)
+        xs = torch.linspace(self.start, self.end, self.num_neurons)
         self.function_values = torch.tensor([self.f(x) for x in xs], dtype=torch.float32)
         self.function_values = torch.cat(
             [torch.tensor([0], dtype=torch.float32), self.function_values]
@@ -96,7 +102,7 @@ class ControlledPiecewiseLinear(nn.Module):
 
     def __init__(
         self,
-        functions: Sequence[Callable[[float | Float[Tensor, ""]], float]],
+        functions: Sequence[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
         start: float,
         end: float,
         num_neurons: int,
@@ -241,7 +247,7 @@ class ControlledResNet(nn.Module):
 
     def __init__(
         self,
-        functions: Sequence[Callable[[float | Float[Tensor, ""]], float]],
+        functions: Sequence[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
         start: float,
         end: float,
         neurons_per_function: int,
@@ -472,7 +478,7 @@ class PiecewiseFunctionTransformer(Model):
 
     @classmethod
     def from_handcoded(
-        cls, functions: list[Callable[[float | Float[Tensor, ""]], float]]
+        cls, functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
         neurons_per_function = 200
@@ -518,7 +524,8 @@ class PiecewiseFunctionTransformer(Model):
         end: float,
         num_points: int,
         control_bits: torch.Tensor | None = None,
-        functions: list[Callable[[float | Float[Tensor, ""]], float]] | None = None,
+        functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
+        | None = None,
     ):
         fig, axs = plt.subplots(self.num_functions, 1, figsize=(10, 5 * self.num_functions))
         assert isinstance(axs, Iterable)
@@ -547,7 +554,8 @@ class PiecewiseFunctionTransformer(Model):
         end: float,
         num_points: int,
         control_bits: torch.Tensor | None = None,
-        functions: list[Callable[[float | Float[Tensor, ""]], float]] | None = None,
+        functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
+        | None = None,
         prob: float = 0.5,
     ):
         fig, axs = plt.subplots(1, 1, figsize=(10, 5))
