@@ -314,9 +314,6 @@ class ControlledResNet(nn.Module):
             ].input_layer.bias.data = self.controlled_piecewise_linear.input_layer.bias.data[
                 self.neuron_permutations[i]
             ]
-            # print(self.residual_layers[i].output_layer.weight.data.shape)
-            # print(self.neuron_permutations[i].shape)
-            # print(output_weights_summed[self.neuron_permutations[i]].shape)
             self.mlps[i].output_layer.weight.data[-1] = output_weights_summed[
                 self.neuron_permutations[i]
             ]
@@ -326,8 +323,6 @@ class ControlledResNet(nn.Module):
         control_bits = x[:, 1:]
         input_value = x[:, 0].unsqueeze(1)
 
-        # if control_bits is None:
-        #     control_bits = torch.zeros(x.shape[0], self.num_functions)
         assert (
             control_bits.shape[1] == self.num_functions
         ), "control bits should have num_functions columns"
@@ -400,12 +395,8 @@ class ControlledResNet(nn.Module):
             )
             ax.plot(x, outputs[:, -1], label=f"layer {layer} NN(x)")
 
-        # print("input shape", torch.tensor(x, dtype=torch.float32).unsqueeze(1).shape)
         ax.legend()
-        # ax.set_title(
-        #     "Piecewise Linear Approximation of functions "
-        #     f"with control bits {control_bits.detach().numpy().tolist()}"
-        # )
+
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         # add vertical lines to show start and end
@@ -558,6 +549,7 @@ class PiecewiseFunctionTransformer(Model):
         | None = None,
         prob: float = 0.5,
     ):
+        """Plot the addition of multiple functions."""
         fig, axs = plt.subplots(1, 1, figsize=(10, 5))
         x = torch.linspace(start, end, num_points)
 
