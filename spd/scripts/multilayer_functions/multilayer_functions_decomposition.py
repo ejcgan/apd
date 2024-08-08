@@ -120,19 +120,19 @@ def main(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
     model_config = config.torch_model_config
     assert isinstance(model_config, PiecewiseModelConfig)
     assert model_config.k is not None
 
     functions = generate_trig_functions(model_config.n_functions)
 
-    piecewise_model = PiecewiseFunctionTransformer.from_handcoded(functions)
+    piecewise_model = PiecewiseFunctionTransformer.from_handcoded(functions).to(device)
 
     piecewise_model_spd = PiecewiseFunctionSPDTransformer(
         n_inputs=piecewise_model.n_inputs,
         d_mlp=piecewise_model.d_mlp,
-        num_layers=piecewise_model.num_layers,
+        n_layers=piecewise_model.n_layers,
         k=model_config.k,
     ).to(device)
 

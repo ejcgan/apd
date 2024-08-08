@@ -30,7 +30,7 @@ class DeepLinearModel(Model):
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
         # Get the n_features, n_layers, n_instances from the params
         n_layers = len(params.keys())
         n_features = params["layers.0"].shape[1]
@@ -144,7 +144,7 @@ class DeepLinearComponentModel(SPDModel):
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentModel":
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
         n_layers = len(params) // 2
         for param in params:
             assert param.startswith("layers.") and param.endswith(("A", "B"))

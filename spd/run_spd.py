@@ -329,13 +329,20 @@ def optimize(
 
             out_recon_loss = (dlc_out - labels) ** 2
             if out_recon_loss.ndim == 3:
+                assert hasattr(model, "n_instances")
                 out_recon_loss = einops.reduce(out_recon_loss, "b i f -> i", "mean")
+            elif out_recon_loss.ndim == 2:
+                out_recon_loss = out_recon_loss.mean()
+            else:
+                raise ValueError(
+                    f"Expected 2 or 3 dims in out_recon_loss, got {out_recon_loss.ndim}"
+                )
 
             if config.topk is None:
-                sparsity_loss = torch.zeros_like(layer_acts[0], requires_grad=True)
+                sparsity_loss = torch.zeros_like(inner_acts[0], requires_grad=True)
                 for feature_idx in range(dlc_out.shape[-1]):
                     grad_layer_acts = torch.autograd.grad(
-                        dlc_out[:, :, feature_idx].sum(),
+                        dlc_out[..., feature_idx].sum(),
                         layer_acts,
                         retain_graph=True,
                     )
@@ -345,7 +352,7 @@ def optimize(
                         sparsity_inner = sparsity_inner + (
                             inner_acts[param_matrix_idx]
                             * torch.einsum(
-                                "...ih,ikh->...ik",
+                                "...h,...kh->...k",
                                 grad_layer_acts[param_matrix_idx].detach(),
                                 model.all_Bs()[param_matrix_idx],
                             )
@@ -357,14 +364,19 @@ def optimize(
                 # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner
                 # above
                 sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
-                if sparsity_loss.ndim == 2:
-                    sparsity_loss = einops.reduce(sparsity_loss, "b i -> i", "mean")
+                sparsity_loss = sparsity_loss.mean(dim=0)  # Mean over batch dim
             else:
                 # Assert that dlc_out_topk is not unbound
                 assert dlc_out_topk is not None
                 sparsity_loss = (dlc_out_topk - batch) ** 2
                 if sparsity_loss.ndim == 3:
                     sparsity_loss = einops.reduce(sparsity_loss, "b i f -> i", "mean")
+                elif sparsity_loss.ndim == 2:
+                    sparsity_loss = sparsity_loss.mean()
+                else:
+                    raise ValueError(
+                        f"Expected 2 or 3 dims in sparsity_loss, got {sparsity_loss.ndim}"
+                    )
 
             with torch.inference_mode():
                 if step % config.print_freq == config.print_freq - 1 or step == 0:

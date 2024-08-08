@@ -87,7 +87,7 @@ test = PiecewiseFunctionTransformer.from_handcoded(trigs)
 # %%
 from spd.models.piecewise_models import PiecewiseFunctionSPDTransformer
 
-spd_model = PiecewiseFunctionSPDTransformer(n_inputs=4, d_mlp=20, num_layers=3, k=5)
+spd_model = PiecewiseFunctionSPDTransformer(n_inputs=4, d_mlp=20, n_layers=3, k=5)
 # %%
 
 dim = 50

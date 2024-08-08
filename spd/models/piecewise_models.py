@@ -233,7 +233,7 @@ class MLP(nn.Module):
 
 class ControlledResNet(nn.Module):
     """
-    Same inputs as ControlledPiecewiseLinear, but also takes in an input num_layers. Now it creates
+    Same inputs as ControlledPiecewiseLinear, but also takes in an input n_layers. Now it creates
     a network which has the same input and output as ControlledPiecewiseLinear, but the inputs and
     outputs lie in orthogonal parts of a single residual stream, and the neurons are randomly
     distributed across the layers.
@@ -245,7 +245,7 @@ class ControlledResNet(nn.Module):
         start: float,
         end: float,
         neurons_per_function: int,
-        num_layers: int,
+        n_layers: int,
         d_control: int,
         negative_suppression: int = 100,
     ):
@@ -256,16 +256,16 @@ class ControlledResNet(nn.Module):
         self.start = start
         self.end = end
         self.num_neurons = neurons_per_function
-        self.num_layers = num_layers
+        self.n_layers = n_layers
         self.total_neurons = neurons_per_function * self.num_functions
-        assert self.total_neurons % num_layers == 0, "num_neurons must be divisible by num layers"
+        assert self.total_neurons % n_layers == 0, "num_neurons must be divisible by num layers"
         self.negative_suppression = negative_suppression
 
-        self.d_mlp = self.total_neurons // num_layers
+        self.d_mlp = self.total_neurons // n_layers
         # d_model: one for x, one for each control bit, and one for y (the output of the controlled
         # piecewise linear)
         self.d_model = self.d_control + 2
-        self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(num_layers)])
+        self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(n_layers)])
         self.initialise_params()
 
     def initialise_params(self):
@@ -289,15 +289,15 @@ class ControlledResNet(nn.Module):
 
         # create a random permutation of the neurons
         self.neuron_permutation = torch.randperm(self.total_neurons)
-        # split the neurons into num_layers parts
+        # split the neurons into n_layers parts
         self.neuron_permutations = torch.split(self.neuron_permutation, self.d_mlp)
-        # create num_layers residual layers
+        # create n_layers residual layers
 
         output_weights_summed = self.controlled_piecewise_linear.output_layer.weight.data.sum(dim=0)
 
         # set the weights of the residual layers to be the weights of the corresponding neurons in
         # the controlled piecewise linear
-        for i in range(self.num_layers):
+        for i in range(self.n_layers):
             self.mlps[i].input_layer.weight.data[:, :-1] = (
                 self.controlled_piecewise_linear.input_layer.weight.data[
                     self.neuron_permutations[i]
@@ -334,7 +334,7 @@ class ControlledResNet(nn.Module):
         x = torch.cat([x, torch.zeros_like(x[:, :1])], dim=1)
 
         assert x.shape[1] == self.d_model
-        for i in range(self.num_layers):
+        for i in range(self.n_layers):
             x = x + self.mlps[i](x)
         return x
 
@@ -347,7 +347,7 @@ class ControlledResNet(nn.Module):
         assert control_bits.shape[1] == self.num_functions
         assert control_bits.shape[0] == x.shape[0]
         if layer is None:
-            layer = self.num_layers
+            layer = self.n_layers
         x = torch.cat([x, control_bits], dim=1)
         x = torch.cat([x, torch.zeros_like(x[:, :1])], dim=1)
         for i in range(layer):
@@ -379,7 +379,7 @@ class ControlledResNet(nn.Module):
         ax.plot(x, target, label="f(x)", linewidth=8)
 
         if layers is None:
-            layers = list(range(self.num_layers + 1))
+            layers = list(range(self.n_layers + 1))
         elif isinstance(layers, int):
             layers = [layers]
         for layer in layers:
@@ -415,13 +415,13 @@ class PiecewiseFunctionTransformer(Model):
         self,
         n_inputs: int,
         d_mlp: int,
-        num_layers: int,
+        n_layers: int,
         d_embed: int | None = None,
     ):
         super().__init__()
         self.n_inputs = n_inputs
         self.d_mlp = d_mlp
-        self.num_layers = num_layers
+        self.n_layers = n_layers
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
 
@@ -437,9 +437,7 @@ class PiecewiseFunctionTransformer(Model):
 
         self.initialise_embeds()
 
-        self.mlps = nn.ModuleList(
-            [MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(num_layers)]
-        )
+        self.mlps = nn.ModuleList([MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(n_layers)])
 
     def initialise_embeds(self, random_matrix: Tensor | None = None):
         self.W_E.weight.data = torch.zeros(self.d_embed, self.n_inputs)
@@ -478,13 +476,13 @@ class PiecewiseFunctionTransformer(Model):
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
         neurons_per_function = 200
-        num_layers = 4
-        d_mlp = neurons_per_function * len(functions) // num_layers
+        n_layers = 4
+        d_mlp = neurons_per_function * len(functions) // n_layers
         d_embed = n_inputs + 1
         start = 0
         end = 5
         # , d_embed=d_embed
-        model = cls(n_inputs=n_inputs, d_mlp=d_mlp, num_layers=num_layers)
+        model = cls(n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers)
         # Note that our MLP differs from the bool_circuit_models.MLP in having b_out
         # Also different names
         assert len(functions) == d_embed - 2
@@ -494,7 +492,7 @@ class PiecewiseFunctionTransformer(Model):
             start=start,
             end=end,
             neurons_per_function=neurons_per_function,
-            num_layers=num_layers,
+            n_layers=n_layers,
             d_control=d_embed - 2,  # no superpos
             negative_suppression=end + 1,
         )
@@ -582,15 +580,15 @@ class PiecewiseFunctionTransformer(Model):
 
 class PiecewiseFunctionSPDTransformer(SPDModel):
     def __init__(
-        self, n_inputs: int, d_mlp: int, num_layers: int, k: int, d_embed: int | None = None
+        self, n_inputs: int, d_mlp: int, n_layers: int, k: int, d_embed: int | None = None
     ):
         super().__init__()
         self.n_inputs = n_inputs
-        self.num_layers = num_layers
+        self.n_layers = n_layers
         self.k = k
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
-        self.n_param_matrices = num_layers * 2
+        self.n_param_matrices = n_layers * 2
 
         self.num_functions = n_inputs - 1
         self.n_outputs = 1  # this is hardcoded. This class isn't defined for multiple outputs
@@ -602,14 +600,17 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         self.W_E = nn.Linear(n_inputs, self.d_embed, bias=False)
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
         self.initialise_embeds()
+        # Avoid updating gradients in W_E and W_U
+        self.W_E.requires_grad_(False)
+        self.W_U.requires_grad_(False)
 
         self.mlps = nn.ModuleList(
-            [MLPComponents(self.d_embed, d_mlp, k) for _ in range(num_layers)]
+            [MLPComponents(self.d_embed, d_mlp, k) for _ in range(n_layers)]
         )  # TODO: Check what is going on with bias2 in MLPComponents
 
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         all_A_pairs = [
-            (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.num_layers)
+            (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.n_layers)
         ]
         As = [A for A_pair in all_A_pairs for A in A_pair]
         assert len(As) == self.n_param_matrices
@@ -618,7 +619,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         # Get all B matrices
         all_B_pairs = [
-            (self.mlps[i].linear1.B, self.mlps[i].linear2.B) for i in range(self.num_layers)
+            (self.mlps[i].linear1.B, self.mlps[i].linear2.B) for i in range(self.n_layers)
         ]
         As = [B for B_pair in all_B_pairs for B in B_pair]
         assert len(As) == self.n_param_matrices
@@ -686,7 +687,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
 
-        n_param_matrices_per_layer = self.n_param_matrices // self.num_layers
+        n_param_matrices_per_layer = self.n_param_matrices // self.n_layers
 
         for i, layer in enumerate(self.mlps):
             # A single layer contains multiple parameter matrices
@@ -707,12 +708,12 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
 
         model = cls(
             n_inputs=config["n_inputs"],
             d_mlp=config["d_mlp"],
-            num_layers=config["num_layers"],
+            n_layers=config["n_layers"],
             k=config["k"],
             d_embed=config["d_embed"],
         )

@@ -209,7 +209,9 @@ def optimize(
 
     pretrained_W = None
     if pretrained_model_path:
-        pretrained_W = torch.load(pretrained_model_path)["W"].to(device)
+        pretrained_W = torch.load(pretrained_model_path, weights_only=True, map_location="cpu")[
+            "W"
+        ].to(device)
         # Set requires_grad to False for the pretrained W
         pretrained_W.requires_grad = False
     opt = torch.optim.AdamW(list(model.parameters()), lr=config.lr)

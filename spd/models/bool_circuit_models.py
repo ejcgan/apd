@@ -242,7 +242,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
 
         model = cls(
             n_inputs=config["n_inputs"],
