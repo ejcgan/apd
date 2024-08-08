@@ -385,8 +385,7 @@ def optimize(
                     tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
                     tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
                     if config.loss_type == "param_match":
-                        param_match_repr = [f"{x}" for x in param_match_loss]
-                        tqdm.write(f"Param match loss: \n{param_match_repr}")
+                        tqdm.write(f"Param match loss: \n{param_match_loss}\n")
 
                     fig = None
                     if isinstance(model, DeepLinearComponentModel):

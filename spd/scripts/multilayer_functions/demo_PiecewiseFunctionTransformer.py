@@ -5,7 +5,6 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-# from spd.scripts.multilayer_functions.spd_training import PiecewiseFunctionTransformer
 from spd.models.piecewise_models import PiecewiseFunctionTransformer
 
 # %%
