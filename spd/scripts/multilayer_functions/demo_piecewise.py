@@ -91,7 +91,7 @@ from torch.utils.data import DataLoader
 from spd.scripts.multilayer_functions.multilayer_functions_decomposition import PiecewiseDataset
 
 functions = trigs
-ds = PiecewiseDataset(4, functions, prob_one=0.5)
+ds = PiecewiseDataset(4, functions, prob_one=0.5, range_min=0, range_max=5)
 dl = DataLoader(ds, batch_size=1, shuffle=False)
 for i, (batch, labels) in enumerate(dl):
     print("Batch")

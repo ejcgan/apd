@@ -18,7 +18,7 @@ from spd.models.piecewise_models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import Config, PiecewiseModelConfig, optimize
+from spd.run_spd import Config, PiecewiseConfig, optimize
 from spd.scripts.multilayer_functions.multilayer_functions_dataset import PiecewiseDataset
 from spd.utils import (
     init_wandb,
@@ -95,22 +95,31 @@ def main(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
-    model_config = config.torch_model_config
-    assert isinstance(model_config, PiecewiseModelConfig)
-    assert model_config.k is not None
+    assert isinstance(config.task_config, PiecewiseConfig)
+    assert config.task_config.k is not None
 
-    functions = generate_trig_functions(model_config.n_functions)
+    functions = generate_trig_functions(config.task_config.n_functions)
 
-    piecewise_model = PiecewiseFunctionTransformer.from_handcoded(functions).to(device)
+    piecewise_model = PiecewiseFunctionTransformer.from_handcoded(
+        functions=functions,
+        neurons_per_function=config.task_config.neurons_per_function,
+        n_layers=config.task_config.n_layers,
+    ).to(device)
 
     piecewise_model_spd = PiecewiseFunctionSPDTransformer(
         n_inputs=piecewise_model.n_inputs,
         d_mlp=piecewise_model.d_mlp,
         n_layers=piecewise_model.n_layers,
-        k=model_config.k,
+        k=config.task_config.k,
     ).to(device)
 
-    dataset = PiecewiseDataset(n_inputs=piecewise_model.n_inputs, functions=functions, prob_one=0.2)
+    dataset = PiecewiseDataset(
+        n_inputs=piecewise_model.n_inputs,
+        functions=functions,
+        prob_one=0.2,
+        range_min=config.task_config.range_min,
+        range_max=config.task_config.range_max,
+    )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     optimize(

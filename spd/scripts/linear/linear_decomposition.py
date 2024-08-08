@@ -11,7 +11,7 @@ import yaml
 
 from spd.log import logger
 from spd.models.linear_models import DeepLinearComponentModel, DeepLinearModel
-from spd.run_spd import Config, DeepLinearModelConfig, optimize
+from spd.run_spd import Config, DeepLinearConfig, optimize
 from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
 from spd.utils import (
     init_wandb,
@@ -67,15 +67,16 @@ def main(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
-    model_config = config.torch_model_config
-    assert isinstance(model_config, DeepLinearModelConfig)
+    assert isinstance(config.task_config, DeepLinearConfig)
 
-    if model_config.pretrained_model_path is not None:
-        dl_model = DeepLinearModel.from_pretrained(model_config.pretrained_model_path).to(device)
+    if config.task_config.pretrained_model_path is not None:
+        dl_model = DeepLinearModel.from_pretrained(config.task_config.pretrained_model_path).to(
+            device
+        )
         assert (
-            model_config.n_features is None
-            and model_config.n_layers is None
-            and model_config.n_instances is None
+            config.task_config.n_features is None
+            and config.task_config.n_layers is None
+            and config.task_config.n_instances is None
         ), "n_features, n_layers, and n_instances must not be set if pretrained_model_path is set"
         n_features = dl_model.n_features
         n_layers = dl_model.n_layers
@@ -83,15 +84,15 @@ def main(
     else:
         assert config.loss_type == "behavioral", "Only behavioral loss allows no pretrained model"
         dl_model = None
-        n_features = model_config.n_features
-        n_layers = model_config.n_layers
-        n_instances = model_config.n_instances
+        n_features = config.task_config.n_features
+        n_layers = config.task_config.n_layers
+        n_instances = config.task_config.n_instances
         assert (
             n_features is not None and n_layers is not None and n_instances is not None
         ), "n_features, n_layers, and n_instances must be set"
 
     dlc_model = DeepLinearComponentModel(
-        n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=model_config.k
+        n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=config.task_config.k
     ).to(device)
 
     dataset = DeepLinearDataset(n_features, n_instances)

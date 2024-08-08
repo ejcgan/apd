@@ -22,16 +22,16 @@ from spd.types import RootPath
 from spd.utils import permute_to_identity
 
 
-class BoolCircuitModelConfig(BaseModel):
+class BoolCircuitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    torch_model_type: Literal["bool_circuit"] = "bool_circuit"
+    task_name: Literal["bool_circuit"] = "bool_circuit"
     k: int
     pretrained_model_path: RootPath
 
 
-class DeepLinearModelConfig(BaseModel):
+class DeepLinearConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    torch_model_type: Literal["deep_linear"] = "deep_linear"
+    task_name: Literal["deep_linear"] = "deep_linear"
     n_features: int | None = None
     n_layers: int | None = None
     n_instances: int | None = None
@@ -39,10 +39,15 @@ class DeepLinearModelConfig(BaseModel):
     pretrained_model_path: RootPath | None = None
 
 
-class PiecewiseModelConfig(BaseModel):
+class PiecewiseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    torch_model_type: Literal["piecewise"] = "piecewise"
+    task_name: Literal["piecewise"] = "piecewise"
     n_functions: int
+    neurons_per_function: int
+    n_layers: int
+    prob_one: float
+    range_min: float
+    range_max: float
     k: int
 
 
@@ -66,8 +71,8 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
-    torch_model_config: DeepLinearModelConfig | BoolCircuitModelConfig | PiecewiseModelConfig = (
-        Field(..., discriminator="torch_model_type")
+    task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig = Field(
+        ..., discriminator="task_name"
     )
 
 

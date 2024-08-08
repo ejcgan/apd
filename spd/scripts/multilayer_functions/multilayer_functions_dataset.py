@@ -11,6 +11,8 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
 
     The first bit is a real value and the rest of the bits are control bits indicating which of a
     set of boolean functions is on or off.
+
+    Uses a buffer to save on expensive calls to torch.randn and torch.bernoulli.
     """
 
     def __init__(
@@ -18,12 +20,14 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         n_inputs: int,
         functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
         prob_one: float,
-        range_max: int = 5,
+        range_min: float,
+        range_max: float,
         buffer_size: int = 1_000_000,
     ):
         self.n_inputs = n_inputs
         self.functions = functions
         self.prob_one = prob_one
+        self.range_min = range_min
         self.range_max = range_max
         self.buffer_size = buffer_size
         self.buffer = None
@@ -34,7 +38,9 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
 
     def generate_buffer(self):
         data = torch.empty((self.buffer_size, self.n_inputs))
-        data[:, 0] = torch.rand(self.buffer_size) * self.range_max
+        data[:, 0] = (
+            torch.rand(self.buffer_size) * (self.range_max - self.range_min) + self.range_min
+        )
         control_bits = torch.bernoulli(
             torch.full((self.buffer_size, self.n_inputs - 1), self.prob_one)
         )

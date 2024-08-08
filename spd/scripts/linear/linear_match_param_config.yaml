@@ -15,8 +15,8 @@ lr_warmup_pct: 0.1
 sparsity_loss_type: jacobian
 sparsity_warmup_pct: 0.0
 loss_type: param_match
-torch_model_config:
-  torch_model_type: deep_linear
+task_config:
+  task_name: deep_linear
   # n_features: 5
   # n_layers: 3
   # n_instances: 2

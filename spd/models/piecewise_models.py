@@ -469,11 +469,13 @@ class PiecewiseFunctionTransformer(Model):
 
     @classmethod
     def from_handcoded(
-        cls, functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
+        cls,
+        functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
+        neurons_per_function: int = 200,
+        n_layers: int = 4,
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
-        neurons_per_function = 200
-        n_layers = 4
+        neurons_per_function = neurons_per_function
         d_mlp = neurons_per_function * len(functions) // n_layers
         d_embed = n_inputs + 1
         start = 0
