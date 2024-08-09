@@ -25,7 +25,7 @@ def test_piecewise_dataset():
 
     # Check shape
     assert batch_x.shape == (batch_size, n_inputs)
-    assert batch_y.shape == (batch_size,)
+    assert batch_y.shape == (batch_size, 1)
 
     # Check first column (real values)
     assert torch.all((batch_x[:, 0] >= 0) & (batch_x[:, 0] <= range_max))

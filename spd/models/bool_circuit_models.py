@@ -189,7 +189,8 @@ class BoolCircuitSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
         for layer in self.layers:
-            residual, layer_acts_i, inner_acts_i = layer(residual)
+            layer_out, layer_acts_i, inner_acts_i = layer(residual)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
         return self.W_U(residual), layer_acts, inner_acts
@@ -230,7 +231,8 @@ class BoolCircuitSPDTransformer(SPDModel):
                 if all_grads is not None
                 else None
             )
-            residual, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
 

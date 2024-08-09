@@ -14,10 +14,29 @@ from spd.models.bool_circuit_models import MLPComponents
 from spd.utils import init_param_
 
 
+def initialize_embeds(
+    W_E: nn.Linear, W_U: nn.Linear, n_inputs: int, d_embed: int, superposition: bool
+):
+    W_E.weight.data = torch.zeros(d_embed, n_inputs)
+    W_E.weight.data[0, 0] = 1.0
+    num_functions = n_inputs - 1
+    d_control = d_embed - 2
+
+    if not superposition:
+        W_E.weight.data[1:-1, 1:] = torch.eye(num_functions)
+    else:
+        random_matrix = torch.randn(d_control, num_functions)
+        random_normalised = random_matrix / torch.norm(random_matrix, dim=1, keepdim=True)
+        W_E.weight.data[1:-1, 1:] = random_normalised
+
+    W_U.weight.data = torch.zeros(1, d_embed)  # Assuming n_outputs is always 1
+    W_U.weight.data[:, -1] = 1.0
+
+
 class PiecewiseLinear(nn.Module):
     """
     this class is initialised with a function from real numbers to real numbers, a range
-    (start,end)], and a num_neurons. It returns a neural network with one hidden layer of
+    (start,end]], and a num_neurons. It returns a neural network with one hidden layer of
     num_neurons relus with biases given by np.linspace(start, end, num_neurons) that computes a
     piecewise linear approximation to the function"""
 
@@ -433,26 +452,9 @@ class PiecewiseFunctionTransformer(Model):
         self.W_E = nn.Linear(n_inputs, self.d_embed, bias=False)
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
 
-        self.initialise_embeds()
+        initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
         self.mlps = nn.ModuleList([MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(n_layers)])
-
-    def initialise_embeds(self, random_matrix: Tensor | None = None):
-        self.W_E.weight.data = torch.zeros(self.d_embed, self.n_inputs)
-        self.W_E.weight.data[0, 0] = 1.0
-        if not self.superposition:
-            self.W_E.weight.data[1:-1, 1:] = torch.eye(self.num_functions)
-        else:
-            random_matrix = (
-                torch.randn(self.d_control, self.num_functions)
-                if random_matrix is None
-                else random_matrix
-            )
-            random_normalised = random_matrix / torch.norm(random_matrix, dim=1, keepdim=True)
-            self.W_E.weight.data[1:-1, 1:] = random_normalised
-
-        self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
-        self.W_U.weight.data[:, -1] = 1.0
 
     def forward(self, x: Tensor) -> Tensor:
         residual = self.W_E(x)
@@ -499,7 +501,7 @@ class PiecewiseFunctionTransformer(Model):
 
         # the control_W_E of the ControlledResNet class is just a part of the W_E of this class. In
         # particular it is the part that is sliced in by the random matrix (or identity)
-        model.initialise_embeds(handcoded_model.control_W_E)
+        initialize_embeds(model.W_E, model.W_U, n_inputs, d_embed, model.superposition)
 
         for i, mlp in enumerate(handcoded_model.mlps):
             model.mlps[i].input_layer.weight.data = mlp.input_layer.weight
@@ -578,8 +580,25 @@ class PiecewiseFunctionTransformer(Model):
 
 
 class PiecewiseFunctionSPDTransformer(SPDModel):
+    """An SPD model for piecewise functions.
+
+    Args:
+        n_inputs: The number of input features
+        d_mlp: The number of neurons in each MLP layer
+        n_layers: The number of MLP layers
+        k: The number of components to keep
+        input_biases: The biases for the first linear layer of each MLP
+        d_embed: The dimension of the embedding space
+    """
+
     def __init__(
-        self, n_inputs: int, d_mlp: int, n_layers: int, k: int, d_embed: int | None = None
+        self,
+        n_inputs: int,
+        d_mlp: int,
+        n_layers: int,
+        k: int,
+        input_biases: list[Float[Tensor, " d_mlp"]],
+        d_embed: int | None = None,
     ):
         super().__init__()
         self.n_inputs = n_inputs
@@ -598,10 +617,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
 
         self.W_E = nn.Linear(n_inputs, self.d_embed, bias=False)
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
-        self.initialise_embeds()
-        # Avoid updating gradients in W_E and W_U
-        self.W_E.requires_grad_(False)
-        self.W_U.requires_grad_(False)
+        initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
         self.input_component = nn.Parameter(torch.empty(self.d_embed, self.k))
         self.output_component = nn.Parameter(torch.empty(self.k, self.d_embed))
@@ -614,10 +630,11 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                     d_embed=self.d_embed,
                     d_mlp=d_mlp,
                     k=k,
+                    input_bias=input_biases[i],
                     input_component=self.input_component,
                     output_component=self.output_component,
                 )
-                for _ in range(n_layers)
+                for i in range(n_layers)
             ]
         )
 
@@ -638,19 +655,6 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         assert len(As) == self.n_param_matrices
         return As
 
-    def initialise_embeds(self):
-        self.W_E.weight.data = torch.zeros(self.d_embed, self.n_inputs)
-        self.W_E.weight.data[0, 0] = 1.0
-        if not self.superposition:
-            self.W_E.weight.data[1:-1, 1:] = torch.eye(self.num_functions)
-        else:
-            random_matrix = torch.randn(self.d_control, self.num_functions)
-            random_normalised = random_matrix / torch.norm(random_matrix, dim=1, keepdim=True)
-            self.W_E.weight.data[1:-1, 1:] = random_normalised
-
-        self.W_U.weight.data = torch.zeros(self.n_outputs, self.d_embed)
-        self.W_U.weight.data[:, -1] = 1.0
-
     def forward(
         self, x: Float[Tensor, "... inputs"]
     ) -> tuple[
@@ -668,7 +672,8 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
         for layer in self.mlps:
-            residual, layer_acts_i, inner_acts_i = layer(residual)
+            layer_out, layer_acts_i, inner_acts_i = layer(residual)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
         return self.W_U(residual), layer_acts, inner_acts
@@ -709,7 +714,8 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                 if all_grads is not None
                 else None
             )
-            residual, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
 
@@ -729,6 +735,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             n_layers=config["n_layers"],
             k=config["k"],
             d_embed=config["d_embed"],
+            input_biases=params["input_biases"],
         )
         model.load_state_dict(params)
         return model

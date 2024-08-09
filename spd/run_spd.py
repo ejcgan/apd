@@ -347,9 +347,10 @@ def optimize(
             for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
                 normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
                 AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
-                param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).sum(
+                param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).mean(
                     dim=(-2, -1)
                 )
+            param_match_loss = param_match_loss / model.n_param_matrices
 
         out_recon_loss = calc_recon_mse(out, labels, has_instance_dim)
 

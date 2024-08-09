@@ -109,12 +109,23 @@ def main(
     ).to(device)
     piecewise_model.eval()
 
+    input_biases = [
+        piecewise_model.mlps[i].input_layer.bias.detach().clone()
+        for i in range(piecewise_model.n_layers)
+    ]
     piecewise_model_spd = PiecewiseFunctionSPDTransformer(
         n_inputs=piecewise_model.n_inputs,
         d_mlp=piecewise_model.d_mlp,
         n_layers=piecewise_model.n_layers,
         k=config.task_config.k,
+        input_biases=input_biases,
     ).to(device)
+
+    # Set requires_grad to False for all embeddings and all input biases
+    for i in range(piecewise_model_spd.n_layers):
+        piecewise_model_spd.mlps[i].bias1.requires_grad_(False)
+    piecewise_model_spd.W_E.requires_grad_(False)
+    piecewise_model_spd.W_U.requires_grad_(False)
 
     dataset = PiecewiseDataset(
         n_inputs=piecewise_model.n_inputs,
@@ -125,7 +136,7 @@ def main(
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
-    # Evaluate the pretrained model on 10 batches to get the labels
+    # Evaluate the pretrained model on 2 batches to get the labels
     n_batches = 2
     loss = 0
     for i, (batch, labels) in enumerate(dataloader):

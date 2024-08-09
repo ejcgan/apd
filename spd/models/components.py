@@ -102,6 +102,7 @@ class MLPComponents(nn.Module):
         d_embed: int,
         d_mlp: int,
         k: int,
+        input_bias: Float[Tensor, " d_mlp"] | None = None,
         input_component: nn.Parameter | None = None,
         output_component: nn.Parameter | None = None,
     ):
@@ -109,7 +110,10 @@ class MLPComponents(nn.Module):
         self.linear1 = ParamComponents(
             d_embed, d_mlp, k, resid_component=input_component, resid_dim=0
         )
-        self.bias1 = nn.Parameter(torch.zeros(d_mlp))
+        if input_bias is None:
+            self.bias1 = None
+        else:
+            self.bias1 = nn.Parameter(input_bias.detach().clone())
         self.linear2 = ParamComponents(
             d_mlp, d_embed, k, resid_component=output_component, resid_dim=1
         )
