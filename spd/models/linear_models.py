@@ -30,7 +30,7 @@ class DeepLinearModel(Model):
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
         # Get the n_features, n_layers, n_instances from the params
         n_layers = len(params.keys())
         n_features = params["layers.0"].shape[1]
@@ -39,7 +39,6 @@ class DeepLinearModel(Model):
         model.load_state_dict(params)
         return model
 
-    @property
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
         return [layer for layer in self.layers]
@@ -106,11 +105,9 @@ class DeepLinearComponentModel(SPDModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    @property
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         return [layer.A for layer in self.layers]
 
-    @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         return [layer.B for layer in self.layers]
 
@@ -147,7 +144,7 @@ class DeepLinearComponentModel(SPDModel):
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentModel":
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
         n_layers = len(params) // 2
         for param in params:
             assert param.startswith("layers.") and param.endswith(("A", "B"))

@@ -1,3 +1,4 @@
+import math
 import os
 import random
 from pathlib import Path
@@ -172,3 +173,7 @@ def init_wandb(config: T, project: str, sweep_config_path: Path | str | None) ->
     # Update the non-frozen keys in the wandb config (only relevant for sweeps)
     wandb.config.update(config.model_dump(mode="json"))
     return config
+
+
+def init_param_(param: torch.nn.Parameter) -> None:
+    torch.nn.init.kaiming_uniform_(param, a=math.sqrt(5))

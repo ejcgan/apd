@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from spd.log import logger
 from spd.models.bool_circuit_models import BoolCircuitSPDTransformer, BoolCircuitTransformer
-from spd.run_spd import BoolCircuitModelConfig, Config, optimize
+from spd.run_spd import BoolCircuitConfig, Config, optimize
 from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
 from spd.scripts.bool_circuits.bool_circuit_utils import form_circuit
 from spd.utils import (
@@ -70,21 +70,22 @@ def main(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
-    model_config = config.torch_model_config
-    assert isinstance(model_config, BoolCircuitModelConfig)
+    assert isinstance(config.task_config, BoolCircuitConfig)
 
-    dl_model = BoolCircuitTransformer.from_pretrained(model_config.pretrained_model_path).to(device)
+    dl_model = BoolCircuitTransformer.from_pretrained(config.task_config.pretrained_model_path).to(
+        device
+    )
 
     dlc_model = BoolCircuitSPDTransformer(
         n_inputs=dl_model.n_inputs,
         d_embed=dl_model.d_embed,
         d_mlp=dl_model.d_mlp,
         n_layers=dl_model.n_layers,
-        k=model_config.k,
+        k=config.task_config.k,
         n_outputs=dl_model.n_outputs,
     ).to(device)
 
-    with open(model_config.pretrained_model_path.parent / "circuit_repr.json") as f:
+    with open(config.task_config.pretrained_model_path.parent / "circuit_repr.json") as f:
         circuit_repr = json.load(f)
 
     dataset = BooleanCircuitDataset(circuit=form_circuit(circuit_repr), n_inputs=dl_model.n_inputs)

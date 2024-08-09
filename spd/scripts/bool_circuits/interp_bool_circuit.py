@@ -36,7 +36,9 @@ trained_model = BoolCircuitTransformer(
     d_mlp=config.d_embed,
     n_layers=config.n_layers,
 ).to(device)
-trained_model.load_state_dict(torch.load(out_dir / "model.pt"))
+trained_model.load_state_dict(
+    torch.load(out_dir / "model.pt", weights_only=True, map_location="cpu")
+)
 logger.info(f"Model loaded from {out_dir / 'model.pt'}")
 
 circuit = get_circuit(config)

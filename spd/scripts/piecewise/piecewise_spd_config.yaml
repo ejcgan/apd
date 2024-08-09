@@ -1,0 +1,24 @@
+wandb_project: spd-piecewise
+wandb_run_name: null
+wandb_run_name_prefix: ""
+seed: 0
+topk: null
+pnorm: 0.9
+max_sparsity_coeff: 1e-2
+batch_size: 256
+steps: 10_000
+print_freq: 500
+save_freq: 10_000
+lr: 1e-2
+lr_scale: constant
+lr_warmup_pct: 0.1
+loss_type: behavioral
+task_config:
+  task_name: piecewise
+  n_functions: 10
+  neurons_per_function: 200
+  n_layers: 4
+  feature_probability: 0.2
+  range_min: 0
+  range_max: 5
+  k: 3

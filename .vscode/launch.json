@@ -75,6 +75,30 @@
             "env": {
                 "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
+        },
+        {
+            "name": "piecewise_spd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/scripts/piecewise/piecewise_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/piecewise/piecewise_spd_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
+        },
+        {
+            "name": "piecewise_topk_spd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/scripts/piecewise/piecewise_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/piecewise/piecewise_spd_topk_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
         }
 
     ]

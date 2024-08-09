@@ -9,6 +9,7 @@ from torch import Tensor
 
 from spd.log import logger
 from spd.models.base import Model, SPDModel
+from spd.models.components import MLPComponents
 from spd.scripts.bool_circuits.bool_circuit_utils import BooleanOperation, make_detailed_circuit
 
 
@@ -41,7 +42,6 @@ class BoolCircuitTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-    @property
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
         params = []
@@ -56,7 +56,7 @@ class BoolCircuitTransformer(Model):
         with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path)
+        params = torch.load(path, map_location="cpu")
 
         model = cls(
             n_inputs=config["n_inputs"],
@@ -139,136 +139,6 @@ class BoolCircuitTransformer(Model):
         logger.info(f"Used neurons per layer: {used_neurons}")
 
 
-class ParamComponents(nn.Module):
-    def __init__(self, dim1: int, dim2: int, k: int):
-        super().__init__()
-        self.A = nn.Parameter(torch.empty(dim1, k))
-        self.B = nn.Parameter(torch.empty(k, dim2))
-
-        nn.init.kaiming_normal_(self.A)
-        nn.init.kaiming_normal_(self.B)
-
-    def forward(
-        self,
-        x: Float[Tensor, "... dim1"],
-    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
-        out = torch.einsum("bk,kg->bg", inner_acts, self.B)
-        return out, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... dim1"],
-        topk: int,
-        grads: Float[Tensor, "... k"] | None = None,
-    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
-        """
-        Performs a forward pass using only the top-k components.
-
-        Args:
-            x: Input tensor
-            topk: Number of top components to keep
-            grads: Optional gradients for each component
-
-        Returns:
-            out: Output tensor
-            inner_acts: Component activations
-        """
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
-
-        if grads is not None:
-            topk_indices = (grads * inner_acts).abs().topk(topk, dim=-1).indices
-        else:
-            topk_indices = inner_acts.abs().topk(topk, dim=-1).indices
-
-        # Get values in inner_acts corresponding to topk_indices
-        topk_values = inner_acts.gather(dim=-1, index=topk_indices)
-        inner_acts_topk = torch.zeros_like(inner_acts)
-        inner_acts_topk.scatter_(dim=-1, index=topk_indices, src=topk_values)
-        out = torch.einsum("bk,kg->bg", inner_acts_topk, self.B)
-
-        return out, inner_acts_topk
-
-
-class MLPComponents(nn.Module):
-    def __init__(self, d_embed: int, d_mlp: int, k: int):
-        super().__init__()
-        self.linear1 = ParamComponents(d_embed, d_mlp, k)
-        self.bias1 = nn.Parameter(torch.zeros(d_mlp))
-        self.linear2 = ParamComponents(d_mlp, d_embed, k)
-
-    def forward(
-        self, x: Float[Tensor, "... d_embed"]
-    ) -> tuple[
-        Float[Tensor, "... d_embed"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
-    ]:
-        """
-        Returns:
-            x: The output of the MLP
-            layer_acts: The activations of each linear layer
-            inner_acts: The component activations inside each linear layer
-        """
-        inner_acts = []
-        layer_acts = []
-        x, inner_acts_linear1 = self.linear1(x)
-        x += self.bias1
-        inner_acts.append(inner_acts_linear1)
-        layer_acts.append(x)
-
-        x, inner_acts_linear2 = self.linear2(F.relu(x))
-        inner_acts.append(inner_acts_linear2)
-        layer_acts.append(x)
-        return x, layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... d_embed"],
-        topk: int,
-        grads: list[Float[Tensor, "... k"] | None] | None = None,
-    ) -> tuple[
-        Float[Tensor, "... d_embed"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
-    ]:
-        """
-        Performs a forward pass using only the top-k components for each linear layer.
-
-        Args:
-            x: Input tensor
-            topk: Number of top components to keep
-            grads: Optional list of gradients for each linear layer
-
-        Returns:
-            x: The output of the MLP
-            layer_acts: The activations of each linear layer
-            inner_acts: The component activations inside each linear layer
-        """
-        inner_acts = []
-        layer_acts = []
-
-        # First linear layer
-        grad1 = grads[0] if grads is not None else None
-        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk, grad1)
-        x += self.bias1
-        inner_acts.append(inner_acts_linear1)
-        layer_acts.append(x)
-
-        # ReLU activation
-        x = F.relu(x)
-
-        # Second linear layer
-        grad2 = grads[1] if grads is not None else None
-        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk, grad2)
-        inner_acts.append(inner_acts_linear2)
-        layer_acts.append(x)
-
-        return x, layer_acts, inner_acts
-
-
 class BoolCircuitSPDTransformer(SPDModel):
     def __init__(
         self, n_inputs: int, d_embed: int, d_mlp: int, n_layers: int, k: int, n_outputs: int = 1
@@ -286,7 +156,6 @@ class BoolCircuitSPDTransformer(SPDModel):
         self.W_U = nn.Linear(d_embed, n_outputs, bias=False)
         self.layers = nn.ModuleList([MLPComponents(d_embed, d_mlp, k) for _ in range(n_layers)])
 
-    @property
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
         all_A_pairs = [
             (self.layers[i].linear1.A, self.layers[i].linear2.A) for i in range(self.n_layers)
@@ -295,9 +164,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         assert len(As) == self.n_param_matrices
         return As
 
-    @property
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        # Get all B matrices
         all_B_pairs = [
             (self.layers[i].linear1.B, self.layers[i].linear2.B) for i in range(self.n_layers)
         ]
@@ -322,7 +189,8 @@ class BoolCircuitSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
         for layer in self.layers:
-            residual, layer_acts_i, inner_acts_i = layer(residual)
+            layer_out, layer_acts_i, inner_acts_i = layer(residual)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
         return self.W_U(residual), layer_acts, inner_acts
@@ -363,7 +231,8 @@ class BoolCircuitSPDTransformer(SPDModel):
                 if all_grads is not None
                 else None
             )
-            residual, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)
 
@@ -375,7 +244,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         with open(path.parent / "config.json") as f:
             config = json.load(f)
 
-        params = torch.load(path)
+        params = torch.load(path, weights_only=True, map_location="cpu")
 
         model = cls(
             n_inputs=config["n_inputs"],
