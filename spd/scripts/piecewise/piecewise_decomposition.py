@@ -19,7 +19,7 @@ from spd.models.piecewise_models import (
     PiecewiseFunctionTransformer,
 )
 from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
-from spd.scripts.multilayer_functions.multilayer_functions_dataset import PiecewiseDataset
+from spd.scripts.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.utils import (
     init_wandb,
     load_config,

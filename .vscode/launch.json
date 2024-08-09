@@ -80,8 +80,8 @@
             "name": "piecewise_spd",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_decomposition.py",
-            "args": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_spd_config.yaml",
+            "program": "${workspaceFolder}/spd/scripts/piecewise/piecewise_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/piecewise/piecewise_spd_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -92,8 +92,8 @@
             "name": "piecewise_topk_spd",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_decomposition.py",
-            "args": "${workspaceFolder}/spd/scripts/multilayer_functions/multilayer_functions_spd_topk_config.yaml",
+            "program": "${workspaceFolder}/spd/scripts/piecewise/piecewise_decomposition.py",
+            "args": "${workspaceFolder}/spd/scripts/piecewise/piecewise_spd_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

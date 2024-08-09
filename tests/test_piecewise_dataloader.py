@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from spd.scripts.multilayer_functions.multilayer_functions_dataset import PiecewiseDataset
+from spd.scripts.piecewise.piecewise_dataset import PiecewiseDataset
 
 
 def test_piecewise_dataset():
