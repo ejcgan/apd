@@ -47,9 +47,9 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         data[:, 1:] = control_bits
 
         x = data[:, 0].unsqueeze(1).expand(-1, len(self.functions))
-        function_outputs = torch.stack([f(x[:, i]) for i, f in enumerate(self.functions)], dim=1)
+        function_outputs = torch.stack([f(x[:, i]) for i, f in enumerate(self.functions)], dim=-1)
 
-        labels = torch.einsum("bo,bo->b", control_bits, function_outputs)
+        labels = torch.einsum("bo,bo->b", control_bits, function_outputs).unsqueeze(1)
 
         self.buffer = (data, labels)
         self.buffer_index = 0

@@ -233,6 +233,22 @@ def collect_inner_act_data(
     return test_batch, test_inner_acts_permuted
 
 
+def calc_recon_mse(
+    output: Float[Tensor, "... n_features"],
+    labels: Float[Tensor, "... n_features"],
+    has_instance_dim: bool = False,
+) -> Float[Tensor, ""]:
+    recon_loss = (output - labels) ** 2
+    if recon_loss.ndim == 3:
+        assert has_instance_dim
+        recon_loss = einops.reduce(recon_loss, "b i f -> i", "mean")
+    elif recon_loss.ndim == 2:
+        recon_loss = recon_loss.mean()
+    else:
+        raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
+    return recon_loss
+
+
 def optimize(
     model: SPDModel,
     config: Config,
@@ -246,6 +262,8 @@ def optimize(
         or (config.pnorm is not None and config.pnorm_end is None)
         or config.topk is not None
     ), "Exactly one of pnorm and pnorm_end must be set"
+
+    has_instance_dim = hasattr(model, "n_instances")
 
     if config.loss_type == "param_match":
         assert pretrained_model is not None, "Need a pretrained model for param_match loss"
@@ -279,7 +297,6 @@ def optimize(
         for group in opt.param_groups:
             group["lr"] = step_lr
         opt.zero_grad(set_to_none=True)
-        # batch = model.generate_batch(config.batch_size).to(dtype=torch.float32, device=device)
         try:
             batch, labels = next(data_iter)
         except StopIteration:
@@ -288,6 +305,9 @@ def optimize(
 
         batch = batch.to(dtype=torch.float32, device=device)
         labels = labels.to(dtype=torch.float32, device=device)
+
+        if pretrained_model is not None:
+            labels = pretrained_model(batch)
 
         total_samples += batch.shape[0]  # don't include the number of instances
 
@@ -331,14 +351,7 @@ def optimize(
                     dim=(-2, -1)
                 )
 
-        out_recon_loss = (out - labels) ** 2
-        if out_recon_loss.ndim == 3:
-            assert hasattr(model, "n_instances")
-            out_recon_loss = einops.reduce(out_recon_loss, "b i f -> i", "mean")
-        elif out_recon_loss.ndim == 2:
-            out_recon_loss = out_recon_loss.mean()
-        else:
-            raise ValueError(f"Expected 2 or 3 dims in out_recon_loss, got {out_recon_loss.ndim}")
+        out_recon_loss = calc_recon_mse(out, labels, has_instance_dim)
 
         if config.topk is None:
             sparsity_loss = torch.zeros_like(inner_acts[0], requires_grad=True)
@@ -370,13 +383,7 @@ def optimize(
         else:
             # Assert that out_topk is not unbound
             assert out_topk is not None
-            sparsity_loss = (out_topk - labels) ** 2
-            if sparsity_loss.ndim == 3:
-                sparsity_loss = einops.reduce(sparsity_loss, "b i f -> i", "mean")
-            elif sparsity_loss.ndim == 2:
-                sparsity_loss = sparsity_loss.mean()
-            else:
-                raise ValueError(f"Expected 2 or 3 dims in sparsity_loss, got {sparsity_loss.ndim}")
+            sparsity_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
         with torch.inference_mode():
             if step % config.print_freq == config.print_freq - 1 or step == 0:

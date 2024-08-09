@@ -18,7 +18,7 @@ from spd.models.piecewise_models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import Config, PiecewiseConfig, optimize
+from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.scripts.multilayer_functions.multilayer_functions_dataset import PiecewiseDataset
 from spd.utils import (
     init_wandb,
@@ -104,7 +104,10 @@ def main(
         functions=functions,
         neurons_per_function=config.task_config.neurons_per_function,
         n_layers=config.task_config.n_layers,
+        range_min=config.task_config.range_min,
+        range_max=config.task_config.range_max,
     ).to(device)
+    piecewise_model.eval()
 
     piecewise_model_spd = PiecewiseFunctionSPDTransformer(
         n_inputs=piecewise_model.n_inputs,
@@ -121,6 +124,17 @@ def main(
         range_max=config.task_config.range_max,
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+
+    # Evaluate the pretrained model on 10 batches to get the labels
+    n_batches = 2
+    loss = 0
+    for i, (batch, labels) in enumerate(dataloader):
+        if i >= n_batches:
+            break
+        pretrained_out = piecewise_model(batch.to(device))
+        loss += calc_recon_mse(pretrained_out, labels.to(device))
+    loss /= n_batches
+    logger.info(f"Loss of pretrained model on 2 batches: {loss}")
 
     optimize(
         model=piecewise_model_spd,

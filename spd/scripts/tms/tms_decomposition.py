@@ -66,6 +66,7 @@ class Model(nn.Module):
     def __init__(self, config: Config, device: str = "cuda"):
         super().__init__()
         self.config = config
+        self.n_instances = config.n_instances
 
         k = config.k if config.k is not None else config.n_features
 

@@ -2,10 +2,11 @@ from collections.abc import Callable
 
 import numpy as np
 import torch
-from jaxtyping import Float
-from torch import Tensor
 
 from spd.models.piecewise_models import PiecewiseFunctionTransformer
+from spd.scripts.multilayer_functions.multilayer_functions_decomposition import (
+    generate_trig_functions,
+)
 
 # %%
 
@@ -24,27 +25,6 @@ def generate_cubics(num_cubics: int) -> list[Callable[[float], float]]:
         d = np.random.uniform(-8, 8)
         cubics.append(create_cubic(a, b, c, d))
     return cubics
-
-
-def generate_trig_functions(
-    num_trig_functions: int,
-) -> list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]:
-    def create_trig_function(
-        a: float, b: float, c: float, d: float, e: float, f: float, g: float
-    ) -> Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]:
-        return lambda x: a * torch.sin(b * x + c) + d * torch.cos(e * x + f) + g
-
-    trig_functions = []
-    for _ in range(num_trig_functions):
-        a = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
-        b = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
-        c = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
-        d = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
-        e = torch.exp(torch.rand(1) * 4 - 1).item()  # exp(Uniform(-1, 3))
-        f = torch.rand(1).item() * 2 * torch.pi - torch.pi  # Uniform(-π, π)
-        g = torch.rand(1).item() * 2 - 1  # Uniform(-1, 1)
-        trig_functions.append(create_trig_function(a, b, c, d, e, f, g))
-    return trig_functions
 
 
 def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
@@ -77,20 +57,26 @@ def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
 
 # %% Do it with the new class
 
-num_functions = 3
-trigs = generate_trig_functions(num_functions)
-test = PiecewiseFunctionTransformer.from_handcoded(trigs)
+num_functions = 5
+neurons_per_function = 200
+feature_probability = 0.5
+functions = generate_trig_functions(num_functions)
+test = PiecewiseFunctionTransformer.from_handcoded(
+    functions=functions,
+    neurons_per_function=neurons_per_function,
+    n_layers=4,
+    range_min=0,
+    range_max=5,
+)
 
-control_bits = torch.ones(num_functions, dtype=torch.float32)
-# test.plot(-0.1, 5.1, 1000, control_bits=control_bits, functions=trigs)
-test.plot_multiple(-0.1, 5.1, 200, control_bits=control_bits, functions=trigs)
+# test.plot(-0.1, 5.1, 1000, control_bits=control_bits, functions=functions)
+test.plot_multiple(start=-0, end=5.1, num_points=200, functions=functions, prob=feature_probability)
 
 # %%
 from torch.utils.data import DataLoader
 
 from spd.scripts.multilayer_functions.multilayer_functions_decomposition import PiecewiseDataset
 
-functions = trigs
 ds = PiecewiseDataset(4, functions, feature_probability=0.5, range_min=0, range_max=5)
 dl = DataLoader(ds, batch_size=1, shuffle=False)
 for i, (batch, labels) in enumerate(dl):

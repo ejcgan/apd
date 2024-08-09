@@ -474,14 +474,13 @@ class PiecewiseFunctionTransformer(Model):
         functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
         neurons_per_function: int = 200,
         n_layers: int = 4,
+        range_min: float = 0,
+        range_max: float = 5,
     ) -> "PiecewiseFunctionTransformer":
         n_inputs = len(functions) + 1
         neurons_per_function = neurons_per_function
         d_mlp = neurons_per_function * len(functions) // n_layers
         d_embed = n_inputs + 1
-        start = 0
-        end = 5
-        # , d_embed=d_embed
         model = cls(n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers)
         # Note that our MLP differs from the bool_circuit_models.MLP in having b_out
         # Also different names
@@ -489,12 +488,12 @@ class PiecewiseFunctionTransformer(Model):
         assert len(functions) == n_inputs - 1
         handcoded_model = ControlledResNet(
             functions,
-            start=start,
-            end=end,
+            start=range_min,
+            end=range_max,
             neurons_per_function=neurons_per_function,
             n_layers=n_layers,
             d_control=d_embed - 2,  # no superpos
-            negative_suppression=end + 1,
+            negative_suppression=int(range_max + 1),
         )
         # Copy the weights from the hand-coded model to the model
 
@@ -517,7 +516,6 @@ class PiecewiseFunctionTransformer(Model):
         start: float,
         end: float,
         num_points: int,
-        control_bits: torch.Tensor | None = None,
         functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
         | None = None,
     ):
@@ -547,31 +545,29 @@ class PiecewiseFunctionTransformer(Model):
         start: float,
         end: float,
         num_points: int,
-        control_bits: torch.Tensor | None = None,
-        functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]]
-        | None = None,
+        functions: list[Callable[[Float[Tensor, " n_inputs"]], Float[Tensor, " n_inputs"]]],
         prob: float = 0.5,
     ):
         """Plot the addition of multiple functions."""
         fig, axs = plt.subplots(1, 1, figsize=(10, 5))
         x = torch.linspace(start, end, num_points)
 
-        # Give this ones based on bernoulli dist
-        control_bits = torch.bernoulli(torch.full((self.num_functions,), prob))
-
-        input_with_control = torch.zeros(num_points, self.n_inputs)
-        input_with_control[:, 0] = x
-        # Expand the control bits over num_points
+        inputs_with_control = torch.zeros(num_points, self.n_inputs)
+        inputs_with_control[:, 0] = x
+        control_bits = torch.bernoulli(torch.full((self.n_inputs - 1,), prob))
+        # Use the same control bits for all points
         control_bits_expanded = control_bits.unsqueeze(0).repeat(num_points, 1)
-        input_with_control[:, 1:] = control_bits_expanded
-        outputs = self.forward(input_with_control).detach().numpy()
-        if functions is not None:
-            # Sums of the functions that depends on the bernoulli controlled inputs
-            target = [
-                sum(functions[j](xi).item() for j in np.where(control_bits == 1)[0]) for xi in x
-            ]
-            axs.plot(x, target, label="f(x)")
-        axs.plot(x, outputs[:, 0], label="NN(x)")
+        inputs_with_control[:, 1:] = control_bits_expanded
+
+        f_inputs = inputs_with_control[:, 0].unsqueeze(1).expand(-1, len(functions))
+        # x = inputs_with_control[:, 0].unsqueeze(1).expand(-1, len(functions))
+        function_outputs = torch.stack([f(f_inputs[:, i]) for i, f in enumerate(functions)], dim=-1)
+
+        labels = torch.einsum("bo,bo->b", control_bits_expanded, function_outputs)
+
+        axs.plot(x, labels, label="f(x)")
+        outputs = self.forward(inputs_with_control)
+        axs.plot(x, outputs[:, 0].detach().numpy(), label="NN(x)")
         axs.legend()
         axs.set_title("Piecewise Linear Approximation of function")
         axs.set_xlabel("x")
