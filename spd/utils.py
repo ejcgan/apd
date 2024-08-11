@@ -175,5 +175,5 @@ def init_wandb(config: T, project: str, sweep_config_path: Path | str | None) ->
     return config
 
 
-def init_param_(param: torch.nn.Parameter) -> None:
+def init_param_(param: torch.Tensor) -> None:
     torch.nn.init.kaiming_uniform_(param, a=math.sqrt(5))

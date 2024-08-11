@@ -58,13 +58,13 @@ def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
 # %% Do it with the new class
 
 num_functions = 5
-neurons_per_function = 200
-feature_probability = 0.5
-functions = generate_trig_functions(num_functions)
+neurons_per_function = 100
+feature_probability = 0.2
+functions, _ = generate_trig_functions(num_functions)
 test = PiecewiseFunctionTransformer.from_handcoded(
     functions=functions,
     neurons_per_function=neurons_per_function,
-    n_layers=4,
+    n_layers=2,
     range_min=0,
     range_max=5,
 )

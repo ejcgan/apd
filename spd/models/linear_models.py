@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import torch
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import Tensor, nn
 
 from spd.models.base import Model, SPDModel
@@ -62,16 +62,10 @@ class ParamComponent(nn.Module):
     def forward_topk(
         self,
         x: Float[Tensor, "... n_instances n_features"],
-        topk: int,
-        grads: Float[Tensor, "... n_instances k"] | None = None,
+        topk_indices: Int[Tensor, "... topk"],
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
-        """If grads are passed, do a forward pass with topk. Otherwise, do regular forward pass."""
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
-        if grads is not None:
-            topk_indices = (grads * inner_acts).abs().topk(topk, dim=-1).indices
-        else:
-            topk_indices = inner_acts.abs().topk(topk, dim=-1).indices
 
         # Get values in inner_acts corresponding to topk_indices
         topk_values = inner_acts.gather(dim=-1, index=topk_indices)
@@ -126,8 +120,7 @@ class DeepLinearComponentModel(SPDModel):
     def forward_topk(
         self,
         x: Float[Tensor, "... n_instances n_features"],
-        topk: int,
-        all_grads: list[Float[Tensor, "... n_instances k"]] | None = None,
+        topk_indices: Int[Tensor, "... topk"],
     ) -> tuple[
         Float[Tensor, "... n_instances n_features"],
         list[Float[Tensor, "... n_instances n_features"]],
@@ -135,9 +128,8 @@ class DeepLinearComponentModel(SPDModel):
     ]:
         layer_acts = []
         inner_acts_topk = []
-        for i, layer in enumerate(self.layers):
-            grads = all_grads[i] if all_grads is not None else None
-            x, inner_act_topk = layer.forward_topk(x, topk, grads)
+        for layer in self.layers:
+            x, inner_act_topk = layer.forward_topk(x, topk_indices)
             layer_acts.append(x)
             inner_acts_topk.append(inner_act_topk)
         return x, layer_acts, inner_acts_topk

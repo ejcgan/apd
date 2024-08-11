@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import Tensor
 
 from spd.log import logger
@@ -196,10 +196,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         return self.W_U(residual), layer_acts, inner_acts
 
     def forward_topk(
-        self,
-        x: Float[Tensor, "... inputs"],
-        topk: int,
-        all_grads: list[Float[Tensor, "... k"]] | None = None,
+        self, x: Float[Tensor, "... inputs"], topk_indices: Int[Tensor, "... topk"]
     ) -> tuple[
         Float[Tensor, "... outputs"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -210,8 +207,7 @@ class BoolCircuitSPDTransformer(SPDModel):
 
         Args:
             x: Input tensor
-            topk: Number of top components to keep
-            all_grads: Optional list of gradients for each layer's components
+            topk_indices: Boolean tensor indicating which components to keep
 
         Returns:
             output: The output of the transformer
@@ -222,16 +218,8 @@ class BoolCircuitSPDTransformer(SPDModel):
         inner_acts = []
         residual = self.W_E(x)
 
-        n_param_matrices_per_layer = self.n_param_matrices // self.n_layers
-
         for i, layer in enumerate(self.layers):
-            # A single layer contains multiple parameter matrices
-            layer_grads = (
-                all_grads[i * n_param_matrices_per_layer : (i + 1) * n_param_matrices_per_layer]
-                if all_grads is not None
-                else None
-            )
-            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk, layer_grads)
+            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_indices)
             residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
             inner_acts.extend(inner_acts_i)

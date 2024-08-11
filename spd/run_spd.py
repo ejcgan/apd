@@ -1,5 +1,6 @@
 """Run SPD on a model."""
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -189,7 +190,9 @@ def plot_inner_acts(
 
 
 def collect_inner_act_data(
-    model: DeepLinearComponentModel, device: str, topk: int | None = None
+    model: DeepLinearComponentModel,
+    device: str,
+    topk: int | None = None,
 ) -> tuple[
     Float[Tensor, "batch n_instances n_features"], list[Float[Tensor, "batch n_instances k"]]
 ]:
@@ -202,8 +205,7 @@ def collect_inner_act_data(
     Args:
         model (DeepLinearComponentModel): The model to collect data from.
         device (str): The device to run computations on.
-        topk (int, optional): The number of topk values to use in each layer. If None, use all
-            activations.
+        topk (int): The number of topk indices to use for the forward pass.
 
     Returns:
         - The input test batch (identity matrix expanded over instance dimension).
@@ -216,10 +218,24 @@ def collect_inner_act_data(
         i=model.n_instances,
     )
 
+    # Do forward and backward pass to get the attribution scores
+    out, _, test_inner_acts = model(test_batch)
     if topk is not None:
-        _, _, test_inner_acts = model.forward_topk(test_batch, topk=topk)
-    else:
-        _, _, test_inner_acts = model(test_batch)
+        all_grads = [torch.zeros_like(test_inner_acts[i]) for i in range(model.n_param_matrices)]
+        for feature_idx in range(out.shape[-1]):
+            grads = torch.autograd.grad(
+                out[..., feature_idx].sum(), test_inner_acts, retain_graph=True
+            )
+            for param_matrix_idx in range(model.n_param_matrices):
+                all_grads[param_matrix_idx] += grads[param_matrix_idx]
+
+        assert len(test_inner_acts) == len(all_grads) == model.n_param_matrices
+        all_grads_stacked = torch.stack(all_grads, dim=0)
+        inner_acts_stacked = torch.stack(test_inner_acts, dim=0)
+        attribution_scores = (inner_acts_stacked * all_grads_stacked).sum(dim=0)
+        # Get the topk indices of the attribution scores
+        topk_indices = attribution_scores.abs().topk(topk, dim=-1).indices
+        test_inner_acts = model.forward_topk(test_batch, topk_indices=topk_indices)[-1]
 
     test_inner_acts_permuted = []
     for layer in range(model.n_layers):
@@ -331,9 +347,15 @@ def optimize(
                 for param_matrix_idx in range(model.n_param_matrices):
                     all_grads[param_matrix_idx] += grads[param_matrix_idx]
 
-            # Now do a full forward pass with topk
+            assert len(inner_acts) == len(all_grads) == model.n_param_matrices
+            all_grads_stacked = torch.stack(all_grads, dim=0)
+            inner_acts_stacked = torch.stack(inner_acts, dim=0)
+            attribution_scores = (inner_acts_stacked * all_grads_stacked).sum(dim=0)
+            # Get the topk indices of the attribution scores
+            topk_indices = attribution_scores.abs().topk(config.topk, dim=-1).indices
+
             out_topk, layer_acts, inner_acts_topk = model.forward_topk(
-                batch, config.topk, all_grads
+                batch, topk_indices=topk_indices
             )
             assert len(inner_acts_topk) == model.n_param_matrices
         else:
@@ -386,44 +408,46 @@ def optimize(
             assert out_topk is not None
             sparsity_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
-        with torch.inference_mode():
-            if step % config.print_freq == config.print_freq - 1 or step == 0:
-                tqdm.write(f"Step {step}")
-                tqdm.write(f"Current pnorm: {current_pnorm}")
-                tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
-                tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
-                if config.loss_type == "param_match":
-                    param_match_loss_repr = (
-                        param_match_loss.item() if len(param_match_loss) == 1 else param_match_loss
-                    )
-                    tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
+        if step % config.print_freq == config.print_freq - 1 or step == 0:
+            tqdm.write(f"Step {step}")
+            tqdm.write(f"Current pnorm: {current_pnorm}")
+            tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
+            tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
+            if config.loss_type == "param_match":
+                param_match_loss_repr = (
+                    param_match_loss.item() if len(param_match_loss) == 1 else param_match_loss
+                )
+                tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
 
-                fig = None
-                if isinstance(model, DeepLinearComponentModel):
-                    test_batch, test_inner_acts = collect_inner_act_data(model, device, config.topk)
+            fig = None
+            if isinstance(model, DeepLinearComponentModel):
+                test_batch, test_inner_acts = collect_inner_act_data(model, device, config.topk)
 
-                    fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
-                    fig.savefig(out_dir / f"inner_acts_{step}.png")
-                    plt.close(fig)
-                    tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
+                fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
+                fig.savefig(out_dir / f"inner_acts_{step}.png")
+                plt.close(fig)
+                tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
 
-                if config.wandb_project:
-                    wandb.log(
-                        {
-                            "step": step,
-                            "current_pnorm": current_pnorm,
-                            "current_lr": step_lr,
-                            "sparsity_loss": sparsity_loss.mean().item(),
-                            "recon_loss": out_recon_loss.mean().item(),
-                            "param_match_loss": param_match_loss.mean().item(),
-                            "inner_acts": wandb.Image(fig) if fig else None,
-                        },
-                        step=step,
-                    )
+            if config.wandb_project:
+                wandb.log(
+                    {
+                        "step": step,
+                        "current_pnorm": current_pnorm,
+                        "current_lr": step_lr,
+                        "sparsity_loss": sparsity_loss.mean().item(),
+                        "recon_loss": out_recon_loss.mean().item(),
+                        "param_match_loss": param_match_loss.mean().item(),
+                        "inner_acts": wandb.Image(fig) if fig else None,
+                    },
+                    step=step,
+                )
 
-            if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
-                torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
-                tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
+        if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
+            torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
+            tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
+            with open(out_dir / "config.json", "w") as f:
+                json.dump(config.model_dump(), f, indent=4)
+            tqdm.write(f"Saved config to {out_dir / 'config.json'}")
 
         out_recon_loss = out_recon_loss.mean()
         sparsity_loss = sparsity_loss.mean()

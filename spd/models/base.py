@@ -1,17 +1,14 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from jaxtyping import Float
+from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
 
 class SPDModel(ABC, nn.Module):
     @abstractmethod
     def forward_topk(
-        self,
-        x: Float[Tensor, "... dim"],
-        topk: int,
-        all_grads: list[Float[Tensor, "... k"]] | None = None,
+        self, x: Float[Tensor, "... dim"], topk_indices: Bool[Tensor, "... k"]
     ) -> tuple[
         Float[Tensor, "... dim"],
         list[Float[Tensor, "... dim"]],
