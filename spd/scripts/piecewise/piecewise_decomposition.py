@@ -88,6 +88,7 @@ def main(
         n_layers=config.task_config.n_layers,
         range_min=config.task_config.range_min,
         range_max=config.task_config.range_max,
+        seed=config.seed,
     ).to(device)
     piecewise_model.eval()
 

@@ -16,12 +16,7 @@ from spd.scripts.piecewise.trig_functions import create_trig_function
 
 # %%
 if __name__ == "__main__":
-    pretrained_path = Path(
-        # "/root/spd/spd/scripts/piecewise/out/sp1.0_lr0.01_pNone_topk4_bs2048_/model_19999.pth"
-        # "/root/spd/spd/scripts/piecewise/out/test_sp1.0_lr0.01_pNone_topk4_bs2048_/model_20000.pth"
-        # "/root/spd/spd/scripts/piecewise/out/test2_sp1.0_lr0.01_pNone_topk4_bs2048_/model_15999.pth"
-        "out/sp1.0_lr0.01_pNone_topk4_bs2048_/model_20000.pth"
-    )
+    pretrained_path = Path("out/sp1.0_lr0.01_pNone_topk4_bs2048_/model_20000.pth")
 
     with open(pretrained_path.parent / "config.json") as f:
         config = Config(**json.load(f))
@@ -39,6 +34,7 @@ if __name__ == "__main__":
         n_layers=config.task_config.n_layers,
         range_min=config.task_config.range_min,
         range_max=config.task_config.range_max,
+        seed=config.seed,
     ).to(device)
     hardcoded_model.eval()
 
@@ -53,9 +49,6 @@ if __name__ == "__main__":
     model.to(device)
 
     # %%
-    # NOTE: This is currently broken. I think our hardcoded network is different than the one used
-    # in the training script. Maybe there is more randomness that happens at initialization?
-    # Check the param match between the two models
     hardcoded_weights = hardcoded_model.all_decomposable_params()
     param_match_loss = torch.zeros(1, device=device)
     for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
@@ -107,29 +100,54 @@ if __name__ == "__main__":
 
     # Find the max absolute value in the attribution scores
     max_abs_value = attribution_scores_normed.abs().max()
+    fig, ax = plt.subplots()
     # matshow
-    plt.matshow(
+    ax.matshow(
         attribution_scores_normed.detach().cpu().numpy(),
         cmap="coolwarm",
         vmin=-max_abs_value,
         vmax=max_abs_value,
     )
-    # plt.matshow(attribution_scores_normed.detach().cpu().numpy(), cmap="coolwarm")
     # ylabel should be the function index
-    plt.ylabel("Function index")
-    plt.xlabel("subnetwork index")
+    ax.set_ylabel("Function index")
+    ax.set_xlabel("subnetwork index")
     # Add title saying it's the attribution scores
-    plt.title("Attribution scores")
+    ax.set_title("Attribution scores")
     # Use coolwarm colormap
-    plt.colorbar()
+    assert ax.figure is not None
+    cbar = ax.figure.colorbar(
+        ax.matshow(attribution_scores_normed.detach().cpu().numpy(), cmap="coolwarm")
+    )
+    cbar.ax.set_ylabel("Attribution score", rotation=-90, va="bottom")
+    plt.savefig("out/attribution_scores.png")
     plt.show()
 
+    # %%
+    # Do a matshow plot for the normed_A matrix
+    normed_A = model.input_component / model.input_component.norm(p=2, dim=-2, keepdim=True)
+    fig, ax = plt.subplots()
+    max_abs_value = normed_A.abs().max()
+    ax.matshow(
+        normed_A.detach().cpu().numpy(), cmap="coolwarm", vmin=-max_abs_value, vmax=max_abs_value
+    )
+    ax.set_ylabel("Input index")
+    ax.set_xlabel("subnetwork index")
+    ax.set_title("Normed input component")
+    assert ax.figure is not None
+    cbar = ax.figure.colorbar(ax.matshow(normed_A.detach().cpu().numpy(), cmap="coolwarm"))
+    cbar.ax.set_ylabel("Normed A matrix", rotation=-90, va="bottom")
+    plt.savefig("out/normed_A_matrix.png")
+    plt.show()
+
+    # %%
+    # Our topk outputs should be similar to the true labels
     # Get the top 4 attribution abs values for each function
     top_k_indices = attribution_scores.abs().topk(4, dim=-1).indices
-    # print(f"Top-k indices: {top_k_indices}")
 
     # Do a forward_topk pass
     out_topk, layer_acts_topk, inner_acts_topk = model.forward_topk(x, top_k_indices)
     print(f"Top-k output: {out_topk}")
+    # Print the labels
+    print(f"Top-k labels: {true_labels}")
 
 # %%

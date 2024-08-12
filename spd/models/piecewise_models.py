@@ -14,8 +14,15 @@ from spd.models.bool_circuit_models import MLPComponents
 
 
 def initialize_embeds(
-    W_E: nn.Linear, W_U: nn.Linear, n_inputs: int, d_embed: int, superposition: bool
+    W_E: nn.Linear,
+    W_U: nn.Linear,
+    n_inputs: int,
+    d_embed: int,
+    superposition: bool,
+    torch_gen: torch.Generator | None = None,
 ):
+    if torch_gen is None:
+        torch_gen = torch.Generator()
     W_E.weight.data = torch.zeros(d_embed, n_inputs)
     W_E.weight.data[0, 0] = 1.0
     num_functions = n_inputs - 1
@@ -24,7 +31,7 @@ def initialize_embeds(
     if not superposition:
         W_E.weight.data[1:-1, 1:] = torch.eye(num_functions)
     else:
-        random_matrix = torch.randn(d_control, num_functions)
+        random_matrix = torch.randn(d_control, num_functions, generator=torch_gen)
         random_normalised = random_matrix / torch.norm(random_matrix, dim=1, keepdim=True)
         W_E.weight.data[1:-1, 1:] = random_normalised
 
@@ -128,6 +135,8 @@ class ControlledPiecewiseLinear(nn.Module):
         d_control: int,
         control_W_E: torch.Tensor | None = None,
         negative_suppression: int = 100,
+        rng: np.random.Generator | None = None,
+        torch_gen: torch.Generator | None = None,
     ):
         super().__init__()
         self.functions = functions
@@ -145,9 +154,16 @@ class ControlledPiecewiseLinear(nn.Module):
         self.output_layer = nn.Linear(
             self.num_functions * self.num_neurons, self.num_functions, bias=True
         )
-        self.initialise_params()
+        self.initialise_params(rng, torch_gen)
 
-    def initialise_params(self):
+    def initialise_params(
+        self, rng: np.random.Generator | None = None, torch_gen: torch.Generator | None = None
+    ):
+        if rng is None:
+            rng = np.random.default_rng()
+        if torch_gen is None:
+            torch_gen = torch.Generator()
+
         self.control_W_E = (
             torch.eye(self.num_functions) if self.control_W_E is None else self.control_W_E
         )
@@ -273,6 +289,8 @@ class ControlledResNet(nn.Module):
         n_layers: int,
         d_control: int,
         negative_suppression: int = 100,
+        rng: np.random.Generator | None = None,
+        torch_gen: torch.Generator | None = None,
     ):
         super().__init__()
         self.functions = functions
@@ -291,14 +309,21 @@ class ControlledResNet(nn.Module):
         # piecewise linear)
         self.d_model = self.d_control + 2
         self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(n_layers)])
-        self.initialise_params()
+        self.initialise_params(rng, torch_gen)
 
-    def initialise_params(self):
+    def initialise_params(
+        self, rng: np.random.Generator | None = None, torch_gen: torch.Generator | None = None
+    ):
+        if rng is None:
+            rng = np.random.default_rng()
+        if torch_gen is None:
+            torch_gen = torch.Generator()
+
         if self.d_control == self.num_functions:
             print("control_W_E is identity")
             self.control_W_E = torch.eye(self.d_control)
         else:
-            random_matrix = torch.randn(self.d_control, self.num_functions)
+            random_matrix = torch.randn(self.d_control, self.num_functions, generator=torch_gen)
             # normalise rows
             self.control_W_E = random_matrix / random_matrix.norm(dim=1).unsqueeze(1)
 
@@ -310,10 +335,12 @@ class ControlledResNet(nn.Module):
             self.d_control,
             self.control_W_E,
             self.negative_suppression,
+            rng,
+            torch_gen,
         )
 
         # create a random permutation of the neurons
-        self.neuron_permutation = torch.randperm(self.total_neurons)
+        self.neuron_permutation = torch.randperm(self.total_neurons, generator=torch_gen)
         # split the neurons into n_layers parts
         self.neuron_permutations = torch.split(self.neuron_permutation, self.d_mlp)
         # create n_layers residual layers
@@ -477,7 +504,17 @@ class PiecewiseFunctionTransformer(Model):
         n_layers: int = 4,
         range_min: float = 0,
         range_max: float = 5,
+        seed: int | None = None,
     ) -> "PiecewiseFunctionTransformer":
+        if seed is not None:
+            # Create local random number generators
+            rng = np.random.default_rng(seed)
+            torch_gen = torch.Generator()
+            torch_gen.manual_seed(seed)
+        else:
+            rng = None
+            torch_gen = None
+
         n_inputs = len(functions) + 1
         neurons_per_function = neurons_per_function
         d_mlp = neurons_per_function * len(functions) // n_layers
@@ -495,6 +532,8 @@ class PiecewiseFunctionTransformer(Model):
             n_layers=n_layers,
             d_control=d_embed - 2,  # no superpos
             negative_suppression=int(range_max + 1),
+            rng=rng,
+            torch_gen=torch_gen,
         )
         # Copy the weights from the hand-coded model to the model
 
@@ -618,8 +657,8 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
         initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
-        self.input_component = torch.empty(self.d_embed, self.k)
-        self.output_component = torch.empty(self.k, self.d_embed)
+        self.input_component = nn.Parameter(torch.empty(self.d_embed, self.k))
+        self.output_component = nn.Parameter(torch.empty(self.k, self.d_embed))
 
         self.mlps = nn.ModuleList(
             [
@@ -628,8 +667,8 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                     d_mlp=d_mlp,
                     k=k,
                     input_bias=input_biases[i] if input_biases is not None else None,
-                    input_component=self.input_component,
-                    output_component=self.output_component,
+                    input_component=self.input_component,  # type: ignore
+                    output_component=self.output_component,  # type: ignore
                 )
                 for i in range(n_layers)
             ]

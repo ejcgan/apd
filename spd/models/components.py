@@ -11,7 +11,7 @@ class ParamComponents(nn.Module):
         in_dim: int,
         out_dim: int,
         k: int,
-        resid_component: torch.Tensor | None,
+        resid_component: nn.Parameter | None,
         resid_dim: int | None,
     ):
         """
@@ -28,18 +28,18 @@ class ParamComponents(nn.Module):
         if resid_component is not None:
             if resid_dim == 0:
                 a = resid_component
-                b = torch.empty(k, out_dim)
+                b = nn.Parameter(torch.empty(k, out_dim))
             elif resid_dim == 1:
-                a = torch.empty(in_dim, k)
+                a = nn.Parameter(torch.empty(in_dim, k))
                 b = resid_component
             else:
                 raise ValueError("Invalid resid_dim value. Must be 0 or 1.")
         else:
-            a = torch.empty(in_dim, k)
-            b = torch.empty(k, out_dim)
+            a = nn.Parameter(torch.empty(in_dim, k))
+            b = nn.Parameter(torch.empty(k, out_dim))
 
-        self.A = nn.Parameter(a)
-        self.B = nn.Parameter(b)
+        self.A = a
+        self.B = b
         init_param_(self.A)
         init_param_(self.B)
 
@@ -94,8 +94,8 @@ class MLPComponents(nn.Module):
         d_mlp: int,
         k: int,
         input_bias: Float[Tensor, " d_mlp"] | None = None,
-        input_component: torch.Tensor | None = None,
-        output_component: torch.Tensor | None = None,
+        input_component: nn.Parameter | None = None,
+        output_component: nn.Parameter | None = None,
     ):
         super().__init__()
         self.linear1 = ParamComponents(
