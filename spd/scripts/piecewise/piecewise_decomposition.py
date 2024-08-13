@@ -33,8 +33,10 @@ def get_run_name(config: Config) -> str:
     if config.wandb_run_name:
         run_suffix = config.wandb_run_name
     else:
+        assert isinstance(config.task_config, PiecewiseConfig)
         run_suffix = (
             f"sp{config.max_sparsity_coeff}_"
+            f"lay{config.task_config.n_layers}_"
             f"lr{config.lr}_"
             f"p{config.pnorm}_"
             f"topk{config.topk}_"

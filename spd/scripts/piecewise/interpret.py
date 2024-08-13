@@ -16,7 +16,7 @@ from spd.scripts.piecewise.trig_functions import create_trig_function
 
 # %%
 if __name__ == "__main__":
-    pretrained_path = Path("out/sp1.0_lr0.01_pNone_topk4_bs2048_/model_20000.pth")
+    pretrained_path = Path("out/sp1.0_lr0.01_pNone_topk4_bs2048_/model_19999.pth")
 
     with open(pretrained_path.parent / "config.json") as f:
         config = Config(**json.load(f))
@@ -99,11 +99,13 @@ if __name__ == "__main__":
     ) / attribution_scores.std(dim=1, keepdim=True)
 
     # Find the max absolute value in the attribution scores
-    max_abs_value = attribution_scores_normed.abs().max()
+    # max_abs_value = attribution_scores_normed.abs().max()
+    max_abs_value = attribution_scores.abs().max()
     fig, ax = plt.subplots()
     # matshow
     ax.matshow(
-        attribution_scores_normed.detach().cpu().numpy(),
+        # attribution_scores_normed.detach().cpu().numpy(),
+        attribution_scores.detach().cpu().numpy(),
         cmap="coolwarm",
         vmin=-max_abs_value,
         vmax=max_abs_value,
@@ -112,32 +114,58 @@ if __name__ == "__main__":
     ax.set_ylabel("Function index")
     ax.set_xlabel("subnetwork index")
     # Add title saying it's the attribution scores
-    ax.set_title("Attribution scores")
+    # ax.set_title("Attribution scores (20k steps)")
+    ax.set_title("Attribution scores raw (50k steps)")
     # Use coolwarm colormap
     assert ax.figure is not None
     cbar = ax.figure.colorbar(
-        ax.matshow(attribution_scores_normed.detach().cpu().numpy(), cmap="coolwarm")
+        # ax.matshow(attribution_scores_normed.detach().cpu().numpy(), cmap="coolwarm")
+        ax.matshow(attribution_scores.detach().cpu().numpy(), cmap="coolwarm")
     )
     cbar.ax.set_ylabel("Attribution score", rotation=-90, va="bottom")
     plt.savefig("out/attribution_scores.png")
     plt.show()
 
     # %%
-    # Do a matshow plot for the normed_A matrix
-    normed_A = model.input_component / model.input_component.norm(p=2, dim=-2, keepdim=True)
-    fig, ax = plt.subplots()
-    max_abs_value = normed_A.abs().max()
-    ax.matshow(
-        normed_A.detach().cpu().numpy(), cmap="coolwarm", vmin=-max_abs_value, vmax=max_abs_value
+
+    def plot_component(
+        x: Float[Tensor, "dim1 dim2"],
+        ylabel: str,
+        xlabel: str,
+        title: str,
+        save_path: Path,
+    ) -> None:
+        fig, ax = plt.subplots()
+        max_abs_value = x.abs().max()
+        ax.matshow(
+            x.detach().cpu().numpy(),
+            cmap="coolwarm",
+            vmin=-max_abs_value,
+            vmax=max_abs_value,
+        )
+        ax.set_ylabel(ylabel)
+        ax.set_xlabel(xlabel)
+        ax.set_title(title)
+        assert ax.figure is not None
+        cbar = ax.figure.colorbar(ax.matshow(x.detach().cpu().numpy(), cmap="coolwarm"))
+        cbar.ax.set_ylabel(title, rotation=-90, va="bottom")
+        plt.savefig(save_path)
+        plt.show()
+
+    plot_component(
+        x=model.input_component / model.input_component.norm(p=2, dim=-2, keepdim=True),
+        ylabel="Input index",
+        xlabel="subnetwork index",
+        title="Normed input component (20k steps)",
+        save_path=Path("out/normed_A_matrix.png"),
     )
-    ax.set_ylabel("Input index")
-    ax.set_xlabel("subnetwork index")
-    ax.set_title("Normed input component")
-    assert ax.figure is not None
-    cbar = ax.figure.colorbar(ax.matshow(normed_A.detach().cpu().numpy(), cmap="coolwarm"))
-    cbar.ax.set_ylabel("Normed A matrix", rotation=-90, va="bottom")
-    plt.savefig("out/normed_A_matrix.png")
-    plt.show()
+    plot_component(
+        x=model.output_component.T,
+        ylabel="Output index",
+        xlabel="subnetwork index",
+        title="Output component (20k steps)",
+        save_path=Path("out/normed_B_matrix.png"),
+    )
 
     # %%
     # Our topk outputs should be similar to the true labels

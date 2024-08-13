@@ -1,0 +1,21 @@
+program: spd/scripts/piecewise/piecewise_decomposition.py
+method: grid
+metric:
+  name: final_closeness
+  goal: minimize
+parameters:
+  topk:
+    values: [1, 2, 4]
+  lr:
+    values: [5e-2, 1e-2, 1e-3]
+  max_sparsity_coeff:
+    values: [0.1, 1, 3, 10]
+  task_config:
+    parameters:
+      n_layers:
+        values: [1]
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/scripts/piecewise/piecewise_spd_topk_config.yaml
