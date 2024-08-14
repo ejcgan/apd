@@ -27,3 +27,4 @@ make test-all  # Run all tests
 ```
 
 ## Usage
+- Place your wandb information in a .env file. You can use the .env.example file as an example.
