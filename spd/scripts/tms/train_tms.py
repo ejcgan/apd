@@ -9,9 +9,9 @@ import numpy as np
 import torch
 from matplotlib import collections as mc
 from matplotlib import colors as mcolors
-from torch import nn
-from torch.nn import functional as F
 from tqdm import trange
+
+from spd.models.tms_models import TMSModel
 
 
 # %%
@@ -26,55 +26,7 @@ class Config:
 
     # We could potentially use torch.vmap instead.
     n_instances: int
-
-
-class Model(nn.Module):
-    def __init__(
-        self,
-        config: Config,
-        feature_probability: torch.Tensor | None = None,
-        importance: torch.Tensor | None = None,
-        device: str = "cuda",
-    ):
-        super().__init__()
-        self.config = config
-        self.W = nn.Parameter(
-            torch.empty((config.n_instances, config.n_features, config.n_hidden), device=device)
-        )
-        nn.init.xavier_normal_(self.W)
-        self.b_final = nn.Parameter(
-            torch.zeros((config.n_instances, config.n_features), device=device)
-        )
-
-        if feature_probability is None:
-            feature_probability = torch.ones(())
-        self.feature_probability = feature_probability.to(device)
-        if importance is None:
-            importance = torch.ones(())
-        self.importance = importance.to(device)
-
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        # features: [..., instance, n_features]
-        # W: [instance, n_features, n_hidden]
-        hidden = torch.einsum("...if,ifh->...ih", features, self.W)
-        out = torch.einsum("...ih,ifh->...if", hidden, self.W)
-        out = out + self.b_final
-        out = F.relu(out)
-        return out
-
-    def generate_batch(self, n_batch: int) -> torch.Tensor:
-        feat = torch.rand(
-            (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
-        )
-        batch = torch.where(
-            torch.rand(
-                (n_batch, self.config.n_instances, self.config.n_features), device=self.W.device
-            )
-            <= self.feature_probability,
-            feat,
-            torch.zeros((), device=self.W.device),
-        )
-        return batch
+    feature_probability: float
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -90,7 +42,7 @@ def cosine_decay_lr(step: int, steps: int) -> float:
 
 
 def optimize(
-    model: Model,
+    model: TMSModel,
     n_batch: int = 1024,
     steps: int = 10_000,
     print_freq: int = 100,
@@ -98,7 +50,6 @@ def optimize(
     lr_scale: Callable[[int, int], float] = linear_lr,
 ) -> None:
     hooks = []
-    cfg = model.config
 
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
 
@@ -123,13 +74,12 @@ def optimize(
                     h(hook_data)
             if step % print_freq == 0 or (step + 1 == steps):
                 t.set_postfix(
-                    loss=loss.item() / cfg.n_instances,
+                    loss=loss.item() / model.n_instances,
                     lr=step_lr,
                 )
 
 
-def plot_intro_diagram(model: Model, filepath: Path) -> None:
-    cfg = model.config
+def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
     WA = model.W.detach()
     N = len(WA[:, 0])
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
@@ -166,10 +116,13 @@ if __name__ == "__main__":
         n_features=5,
         n_hidden=2,
         n_instances=12,
+        feature_probability=0.05,
     )
 
-    model = Model(
-        config=config,
+    model = TMSModel(
+        n_instances=config.n_instances,
+        n_features=config.n_features,
+        n_hidden=config.n_hidden,
         device=device,
         # Exponential feature importance curve from 1 to 1/100
         # importance=(0.9 ** torch.arange(config.n_features))[None, :],
@@ -177,7 +130,8 @@ if __name__ == "__main__":
         # Sweep feature frequency across the instances from 1 (fully dense) to 1/20
         # feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
         # Make all features appear with probability 1/20
-        feature_probability=torch.ones((config.n_instances, config.n_features), device=device) / 20,
+        feature_probability=torch.ones((config.n_instances, config.n_features), device=device)
+        * config.feature_probability,
     )
     optimize(model)
 

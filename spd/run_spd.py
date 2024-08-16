@@ -19,8 +19,23 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.models.base import Model, SPDModel
 from spd.models.linear_models import DeepLinearComponentModel
+from spd.models.tms_models import TMSSPDModel
+from spd.scripts.tms.tms_utils import plot_A_matrix
 from spd.types import RootPath
-from spd.utils import permute_to_identity
+from spd.utils import calculate_closeness_to_identity, permute_to_identity
+
+
+class TMSConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    task_name: Literal["tms"] = "tms"
+    n_features: int
+    n_hidden: int
+    n_instances: int
+    k: int
+    feature_probability: float
+    train_bias: bool
+    bias_val: float
+    pretrained_model_path: RootPath
 
 
 class BoolCircuitConfig(BaseModel):
@@ -72,7 +87,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
-    task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig = Field(
+    task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
 
@@ -419,6 +434,7 @@ def optimize(
                 tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
 
             fig = None
+            # TODO: Instead of isinstance, pass a function that produces the plots
             if isinstance(model, DeepLinearComponentModel):
                 test_batch, test_inner_acts = collect_inner_act_data(model, device, config.topk)
 
@@ -426,6 +442,22 @@ def optimize(
                 fig.savefig(out_dir / f"inner_acts_{step}.png")
                 plt.close(fig)
                 tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
+            elif isinstance(model, TMSSPDModel):
+                closeness_vals: list[float] = []
+                permuted_A_T_list: list[torch.Tensor] = []
+                for i in range(model.n_instances):
+                    normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
+                    permuted_matrix = permute_to_identity(normed_A[i].T.abs())
+                    closeness = calculate_closeness_to_identity(permuted_matrix)
+                    closeness_vals.append(closeness)
+                    permuted_A_T_list.append(permuted_matrix)
+                permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
+
+                fig = plot_A_matrix(permuted_A_T, pos_only=True)
+
+                fig.savefig(out_dir / f"A_{step}.png")
+                plt.close(fig)
+                tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
 
             if config.wandb_project:
                 wandb.log(

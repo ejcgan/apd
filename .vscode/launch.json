@@ -17,11 +17,11 @@
             }
         },
         {
-            "name": "tms_match_param",
+            "name": "tms_lp_match_param",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/scripts/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/scripts/tms/tms_match_param_config.yaml",
+            "args": "${workspaceFolder}/spd/scripts/tms/tms_lp_match_param_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -32,7 +32,7 @@
             "name": "tms_topk_match_param",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/spd/scripts/tms/tms_decomposition_topk.py",
+            "program": "${workspaceFolder}/spd/scripts/tms/tms_decomposition.py",
             "args": "${workspaceFolder}/spd/scripts/tms/tms_topk_match_param_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
