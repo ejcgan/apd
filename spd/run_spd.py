@@ -384,7 +384,7 @@ def optimize(
                     retain_graph=True,
                 )
                 sparsity_inner = torch.zeros_like(sparsity_loss, requires_grad=True)
-                for param_matrix_idx in range(model.n_layers):
+                for param_matrix_idx in range(model.n_param_matrices):
                     # h_i * grad_h_i
                     sparsity_inner = sparsity_inner + (
                         inner_acts[param_matrix_idx]
