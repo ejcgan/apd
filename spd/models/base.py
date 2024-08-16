@@ -23,6 +23,7 @@ class SPDModel(ABC, nn.Module):
 
     @abstractmethod
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
+        """Pre-normalized A matrices."""
         pass
 
     @abstractmethod

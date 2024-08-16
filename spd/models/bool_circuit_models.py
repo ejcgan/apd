@@ -160,7 +160,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         all_A_pairs = [
             (self.layers[i].linear1.A, self.layers[i].linear2.A) for i in range(self.n_layers)
         ]
-        As = [A for A_pair in all_A_pairs for A in A_pair]
+        As = [A / A.norm(p=2, dim=-2, keepdim=True) for A_pair in all_A_pairs for A in A_pair]
         assert len(As) == self.n_param_matrices
         return As
 

@@ -100,7 +100,7 @@ class DeepLinearComponentModel(SPDModel):
             nn.init.kaiming_normal_(param)
 
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        return [layer.A for layer in self.layers]
+        return [layer.A / layer.A.norm(p=2, dim=-2, keepdim=True) for layer in self.layers]
 
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         return [layer.B for layer in self.layers]

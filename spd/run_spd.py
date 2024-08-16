@@ -367,8 +367,7 @@ def optimize(
         if config.loss_type == "param_match":
             assert pretrained_weights is not None
             for i, (A, B) in enumerate(zip(model.all_As(), model.all_Bs(), strict=True)):
-                normed_A = A / A.norm(p=2, dim=-2, keepdim=True)
-                AB = torch.einsum("...fk,...kg->...fg", normed_A, B)
+                AB = torch.einsum("...fk,...kg->...fg", A, B)
                 param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).mean(
                     dim=(-2, -1)
                 )
