@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from jaxtyping import Float
+from torch import Tensor
+from torch.utils.data import Dataset
 
 
 def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
@@ -32,3 +35,30 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
     fig.subplots_adjust(bottom=0.2)
 
     return fig
+
+
+class TMSDataset(
+    Dataset[tuple[Float[Tensor, "n_instances n_features"], Float[Tensor, "n_instances n_features"]]]
+):
+    def __init__(
+        self,
+        n_instances: int,
+        n_features: int,
+        feature_probability: float,
+        device: str,
+    ):
+        self.n_instances = n_instances
+        self.n_features = n_features
+        self.feature_probability = feature_probability
+        self.device = device
+
+    def __len__(self) -> int:
+        return 2**31
+
+    def generate_batch(
+        self, batch_size: int
+    ) -> tuple[Float[Tensor, "n_instances n_features"], Float[Tensor, "n_instances n_features"]]:
+        batch = torch.rand(batch_size, self.n_instances, self.n_features, device=self.device)
+        mask = torch.rand_like(batch) < self.feature_probability
+        batch = batch * mask
+        return batch, batch.clone().detach()

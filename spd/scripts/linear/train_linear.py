@@ -8,9 +8,9 @@ from pydantic import BaseModel, ConfigDict
 from torch.nn import functional as F
 
 from spd.models.linear_models import DeepLinearModel
-from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
+from spd.scripts.linear.linear_dataset import DeepLinearDataset
 from spd.types import RootPath
-from spd.utils import set_seed
+from spd.utils import BatchedDataLoader, set_seed
 
 wandb.require("core")
 
@@ -35,7 +35,7 @@ def train(config: Config):
     set_seed(config.seed)
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
-    dataloader = DeepLinearDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
 
     data_iter = iter(dataloader)

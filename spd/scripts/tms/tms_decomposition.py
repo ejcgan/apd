@@ -16,8 +16,10 @@ import yaml
 from spd.log import logger
 from spd.models.tms_models import TMSSPDModel
 from spd.run_spd import Config, TMSConfig, optimize
+from spd.scripts.tms.tms_utils import TMSDataset
 from spd.scripts.tms.train_tms import TMSModel
 from spd.utils import (
+    BatchedDataLoader,
     init_wandb,
     load_config,
     set_seed,
@@ -78,7 +80,6 @@ def main(
         n_features=task_config.n_features,
         n_hidden=task_config.n_hidden,
         k=task_config.k,
-        feature_probability=task_config.feature_probability,
         train_bias=task_config.train_bias,
         bias_val=task_config.bias_val,
         device=device,
@@ -97,24 +98,20 @@ def main(
         )
         pretrained_model.eval()
 
-    # TODO: Make dataloader independent of the model
-    class TMSDataLoader:
-        def __init__(self, model: TMSSPDModel, batch_size: int):
-            self.model = model
-            self.batch_size = batch_size
+    dataset = TMSDataset(
+        n_instances=task_config.n_instances,
+        n_features=task_config.n_features,
+        feature_probability=task_config.feature_probability,
+        device=device,
+    )
+    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
 
-        def __iter__(self):
-            while True:
-                batch = self.model.generate_batch(self.batch_size)
-                yield batch, batch
-
-    dataloader = TMSDataLoader(model, config.batch_size)
     optimize(
         model=model,
         config=config,
         out_dir=out_dir,
         device=device,
-        dataloader=dataloader,  # type: ignore
+        dataloader=dataloader,
         pretrained_model=pretrained_model,
     )
 

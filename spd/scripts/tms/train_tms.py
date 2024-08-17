@@ -12,6 +12,8 @@ from matplotlib import colors as mcolors
 from tqdm import trange
 
 from spd.models.tms_models import TMSModel
+from spd.scripts.tms.tms_utils import TMSDataset
+from spd.utils import BatchedDataLoader
 
 
 # %%
@@ -27,6 +29,7 @@ class Config:
     # We could potentially use torch.vmap instead.
     n_instances: int
     feature_probability: float
+    batch_size: int
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -43,7 +46,8 @@ def cosine_decay_lr(step: int, steps: int) -> float:
 
 def optimize(
     model: TMSModel,
-    n_batch: int = 1024,
+    dataloader: BatchedDataLoader,
+    importance: float = 1.0,
     steps: int = 10_000,
     print_freq: int = 100,
     lr: float = 5e-3,
@@ -53,15 +57,16 @@ def optimize(
 
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
 
+    data_iter = iter(dataloader)
     with trange(steps) as t:
         for step in t:
             step_lr = lr * lr_scale(step, steps)
             for group in opt.param_groups:
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)
-            batch = model.generate_batch(n_batch)
+            batch, labels = next(data_iter)
             out = model(batch)
-            error = model.importance * (batch.abs() - out) ** 2
+            error = importance * (labels.abs() - out) ** 2
             loss = einops.reduce(error, "b i f -> i", "mean").sum()
             loss.backward()
             opt.step()
@@ -85,7 +90,8 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
     plt.rcParams["axes.prop_cycle"] = plt.cycler(
         "color",
-        plt.cm.viridis(model.importance[0].cpu().numpy()),  # type: ignore
+        # plt.cm.viridis(model.importance[0].cpu().numpy()),  # type: ignore
+        plt.cm.viridis(np.array([1.0])),  # type: ignore
     )
     plt.rcParams["figure.dpi"] = 200
     fig, axs = plt.subplots(1, len(sel), figsize=(2 * len(sel), 2))
@@ -117,6 +123,7 @@ if __name__ == "__main__":
         n_hidden=2,
         n_instances=12,
         feature_probability=0.05,
+        batch_size=1024,
     )
 
     model = TMSModel(
@@ -124,16 +131,16 @@ if __name__ == "__main__":
         n_features=config.n_features,
         n_hidden=config.n_hidden,
         device=device,
-        # Exponential feature importance curve from 1 to 1/100
-        # importance=(0.9 ** torch.arange(config.n_features))[None, :],
-        importance=(1.0 ** torch.arange(config.n_features))[None, :],
-        # Sweep feature frequency across the instances from 1 (fully dense) to 1/20
-        # feature_probability=(20 ** -torch.linspace(0, 1, config.n_instances))[:, None],
-        # Make all features appear with probability 1/20
-        feature_probability=torch.ones((config.n_instances, config.n_features), device=device)
-        * config.feature_probability,
     )
-    optimize(model)
+
+    dataset = TMSDataset(
+        n_instances=config.n_instances,
+        n_features=config.n_features,
+        feature_probability=config.feature_probability,
+        device=device,
+    )
+    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    optimize(model, dataloader=dataloader)
 
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(parents=True, exist_ok=True)

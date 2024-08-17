@@ -1,4 +1,4 @@
-wandb_project: spd-linear
+# wandb_project: spd-linear
 wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0

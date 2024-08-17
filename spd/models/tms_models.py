@@ -14,8 +14,6 @@ class TMSModel(Model):
         n_instances: int,
         n_features: int,
         n_hidden: int,
-        feature_probability: torch.Tensor | None = None,
-        importance: torch.Tensor | None = None,
         device: str = "cuda",
     ):
         super().__init__()
@@ -26,13 +24,6 @@ class TMSModel(Model):
         nn.init.xavier_normal_(self.W)
         self.b_final = nn.Parameter(torch.zeros((n_instances, n_features), device=device))
 
-        if feature_probability is None:
-            feature_probability = torch.ones(())
-        self.feature_probability = feature_probability.to(device)
-        if importance is None:
-            importance = torch.ones(())
-        self.importance = importance.to(device)
-
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
@@ -41,16 +32,6 @@ class TMSModel(Model):
         out = out + self.b_final
         out = F.relu(out)
         return out
-
-    def generate_batch(self, n_batch: int) -> torch.Tensor:
-        feat = torch.rand((n_batch, self.n_instances, self.n_features), device=self.W.device)
-        batch = torch.where(
-            torch.rand((n_batch, self.n_instances, self.n_features), device=self.W.device)
-            <= self.feature_probability,
-            feat,
-            torch.zeros((), device=self.W.device),
-        )
-        return batch
 
     def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
         """List of all parameters which will be decomposed with SPD."""
@@ -66,7 +47,6 @@ class TMSSPDModel(SPDModel):
         k: int | None,
         bias_val: float,
         train_bias: bool,
-        feature_probability: float,
         device: str = "cuda",
     ):
         super().__init__()
@@ -76,7 +56,6 @@ class TMSSPDModel(SPDModel):
         self.k = k if k is not None else n_features
         self.bias_val = bias_val
         self.train_bias = train_bias
-        self.feature_probability = feature_probability
 
         self.A = nn.Parameter(torch.empty((n_instances, n_features, self.k), device=device))
         self.B = nn.Parameter(torch.empty((n_instances, self.k, n_hidden), device=device))
@@ -91,8 +70,6 @@ class TMSSPDModel(SPDModel):
         ), "Currently only supports n_features == k if fixing first instance to identity"
         self.A.data[0] = torch.eye(n_features, device=device)
         nn.init.xavier_normal_(self.B)
-
-        self.importance = torch.ones((), device=device)
 
         self.n_param_matrices = 2  # Two W matrices (even though they're tied)
 
@@ -153,17 +130,6 @@ class TMSSPDModel(SPDModel):
         pre_relu = hidden_1 + self.b_final
         out = F.relu(pre_relu)
         return out, [hidden_0, hidden_1], [h_0_topk, h_1_topk]  # out, layer_acts, inner_acts
-
-    def generate_batch(self, n_batch: int) -> torch.Tensor:
-        feat = torch.rand((n_batch, self.n_instances, self.n_features), device=self.A.device)
-
-        batch = torch.where(
-            torch.rand((n_batch, self.n_instances, self.n_features), device=self.A.device)
-            <= self.feature_probability,
-            feat,
-            torch.zeros((), device=self.A.device),
-        )
-        return batch
 
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDModel":  # type: ignore

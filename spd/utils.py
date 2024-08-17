@@ -1,6 +1,7 @@
 import math
 import os
 import random
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -13,6 +14,7 @@ from jaxtyping import Float
 from pydantic import BaseModel
 from pydantic.v1.utils import deep_update
 from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
 
 from spd.settings import REPO_ROOT
 
@@ -177,3 +179,24 @@ def init_wandb(config: T, project: str, sweep_config_path: Path | str | None) ->
 
 def init_param_(param: torch.Tensor) -> None:
     torch.nn.init.kaiming_uniform_(param, a=math.sqrt(5))
+
+
+class BatchedDataLoader(DataLoader[tuple[torch.Tensor, torch.Tensor]]):
+    """DataLoader that generates batches by calling the dataset's `generate_batch` method."""
+
+    def __init__(
+        self,
+        dataset: Dataset[tuple[torch.Tensor, torch.Tensor]],
+        batch_size: int = 1,
+        shuffle: bool = False,
+        num_workers: int = 0,
+    ):
+        # assert that dataset has a generate_batch method
+        assert hasattr(dataset, "generate_batch")
+        super().__init__(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+
+    def __iter__(  # type: ignore
+        self,
+    ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+        for _ in range(len(self)):
+            yield self.dataset.generate_batch(self.batch_size)  # type: ignore

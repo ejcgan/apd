@@ -12,8 +12,9 @@ import yaml
 from spd.log import logger
 from spd.models.linear_models import DeepLinearComponentModel, DeepLinearModel
 from spd.run_spd import Config, DeepLinearConfig, optimize
-from spd.scripts.linear.linear_dataset import DeepLinearDataLoader, DeepLinearDataset
+from spd.scripts.linear.linear_dataset import DeepLinearDataset
 from spd.utils import (
+    BatchedDataLoader,
     init_wandb,
     load_config,
     set_seed,
@@ -96,7 +97,7 @@ def main(
     ).to(device)
 
     dataset = DeepLinearDataset(n_features, n_instances)
-    dataloader = DeepLinearDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     optimize(
         model=dlc_model,
