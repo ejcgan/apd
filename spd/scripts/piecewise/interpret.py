@@ -76,20 +76,18 @@ if __name__ == "__main__":
     out_hardcoded = hardcoded_model(x)
     print(f"out_hardcoded: {out_hardcoded}")
 
-    # Step 3: Backward pass on the spd model.
-    # all_grads: [Float[Tensor, "batch k"], Float[Tensor, "batch k"], ...] # Total = n_param_matrices
-    all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
+    # Step 3: Get attribution scores by doing a backward pass on the spd model
+    attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
     for feature_idx in range(out.shape[-1]):
-        grads = torch.autograd.grad(out[..., feature_idx].sum(), inner_acts, retain_graph=True)
+        feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
+        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+            out[..., feature_idx].sum(), inner_acts, retain_graph=True
+        )
+        assert len(feature_grads) == len(inner_acts) == model.n_param_matrices
         for param_matrix_idx in range(model.n_param_matrices):
-            all_grads[param_matrix_idx] += grads[param_matrix_idx]
+            feature_attributions += feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
 
-    assert len(inner_acts) == len(all_grads) == model.n_param_matrices
-    all_grads_stacked = torch.stack(all_grads, dim=0)
-    inner_acts_stacked = torch.stack(inner_acts, dim=0)
-    attribution_scores: Float[Tensor, "batch k"] = (inner_acts_stacked * all_grads_stacked).sum(
-        dim=0
-    )
+        attribution_scores += feature_attributions**2
     print(f"Attribution scores: {attribution_scores}")
     # Plot a matshow of the attribution scores
     # Each row should have it's own color scale

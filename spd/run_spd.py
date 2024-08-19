@@ -22,7 +22,7 @@ from spd.models.linear_models import DeepLinearComponentModel
 from spd.models.tms_models import TMSSPDModel
 from spd.scripts.tms.tms_utils import plot_A_matrix
 from spd.types import RootPath
-from spd.utils import calculate_closeness_to_identity, permute_to_identity
+from spd.utils import permute_to_identity
 
 
 class TMSConfig(BaseModel):
@@ -233,24 +233,27 @@ def collect_inner_act_data(
         i=model.n_instances,
     )
 
-    # Do forward and backward pass to get the attribution scores
     out, _, test_inner_acts = model(test_batch)
     if topk is not None:
-        all_grads = [torch.zeros_like(test_inner_acts[i]) for i in range(model.n_param_matrices)]
+        attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(test_inner_acts[0])
         for feature_idx in range(out.shape[-1]):
-            grads = torch.autograd.grad(
+            feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(test_inner_acts[0])
+            feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
                 out[..., feature_idx].sum(), test_inner_acts, retain_graph=True
             )
+            assert len(feature_grads) == len(test_inner_acts) == model.n_param_matrices
             for param_matrix_idx in range(model.n_param_matrices):
-                all_grads[param_matrix_idx] += grads[param_matrix_idx]
+                feature_attributions += (
+                    feature_grads[param_matrix_idx] * test_inner_acts[param_matrix_idx]
+                )
 
-        assert len(test_inner_acts) == len(all_grads) == model.n_param_matrices
-        all_grads_stacked = torch.stack(all_grads, dim=0)
-        inner_acts_stacked = torch.stack(test_inner_acts, dim=0)
-        attribution_scores = (inner_acts_stacked * all_grads_stacked).sum(dim=0)
+            attribution_scores += feature_attributions**2
+
         # Get the topk indices of the attribution scores
-        topk_indices = attribution_scores.abs().topk(topk, dim=-1).indices
+        topk_indices = attribution_scores.topk(topk, dim=-1).indices
+
         test_inner_acts = model.forward_topk(test_batch, topk_indices=topk_indices)[-1]
+        assert len(test_inner_acts) == model.n_param_matrices
 
     test_inner_acts_permuted = []
     for layer in range(model.n_layers):
@@ -354,20 +357,22 @@ def optimize(
             # First do a full forward pass and get the gradients w.r.t. inner_acts
             # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
             out, _, inner_acts = model(batch)
-            all_grads = [torch.zeros_like(inner_acts[i]) for i in range(model.n_param_matrices)]
+            attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
             for feature_idx in range(out.shape[-1]):
-                grads = torch.autograd.grad(
+                feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
+                feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
                     out[..., feature_idx].sum(), inner_acts, retain_graph=True
                 )
+                assert len(feature_grads) == len(inner_acts) == model.n_param_matrices
                 for param_matrix_idx in range(model.n_param_matrices):
-                    all_grads[param_matrix_idx] += grads[param_matrix_idx]
+                    feature_attributions += (
+                        feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+                    )
 
-            assert len(inner_acts) == len(all_grads) == model.n_param_matrices
-            all_grads_stacked = torch.stack(all_grads, dim=0)
-            inner_acts_stacked = torch.stack(inner_acts, dim=0)
-            attribution_scores = (inner_acts_stacked * all_grads_stacked).sum(dim=0)
+                attribution_scores += feature_attributions**2
+
             # Get the topk indices of the attribution scores
-            topk_indices = attribution_scores.abs().topk(config.topk, dim=-1).indices
+            topk_indices = attribution_scores.topk(config.topk, dim=-1).indices
 
             out_topk, layer_acts, inner_acts_topk = model.forward_topk(
                 batch, topk_indices=topk_indices
@@ -443,18 +448,14 @@ def optimize(
                 plt.close(fig)
                 tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
             elif isinstance(model, TMSSPDModel):
-                closeness_vals: list[float] = []
                 permuted_A_T_list: list[torch.Tensor] = []
                 for i in range(model.n_instances):
                     normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
                     permuted_matrix = permute_to_identity(normed_A[i].T.abs())
-                    closeness = calculate_closeness_to_identity(permuted_matrix)
-                    closeness_vals.append(closeness)
                     permuted_A_T_list.append(permuted_matrix)
                 permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
 
                 fig = plot_A_matrix(permuted_A_T, pos_only=True)
-
                 fig.savefig(out_dir / f"A_{step}.png")
                 plt.close(fig)
                 tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")

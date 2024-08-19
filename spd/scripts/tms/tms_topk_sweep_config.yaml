@@ -1,4 +1,4 @@
-program: spd/scripts/tms/tms_decomposition_topk.py
+program: spd/scripts/tms/tms_decomposition.py
 method: grid
 metric:
   name: final_closeness
@@ -7,9 +7,9 @@ parameters:
   lr:
     values: [1e-2, 1e-3]
   topk:
-    values: [1, 2, 4, 8]
-  topk_coeff:
-    values: [1, 10]
+    values: [1, 2, 4]
+  max_sparsity_coeff:
+    values: [0.1, 1, 10]
 command:
 - ${env}
 - ${interpreter}
