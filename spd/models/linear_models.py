@@ -129,6 +129,7 @@ class DeepLinearComponentModel(SPDModel):
         layer_acts = []
         inner_acts_topk = []
         for layer in self.layers:
+            assert isinstance(layer, ParamComponent)
             x, inner_act_topk = layer.forward_topk(x, topk_indices)
             layer_acts.append(x)
             inner_acts_topk.append(inner_act_topk)

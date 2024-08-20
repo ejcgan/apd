@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from pydantic import BaseModel, ConfigDict, Field
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -65,6 +65,7 @@ class PiecewiseConfig(BaseModel):
     range_min: float
     range_max: float
     k: int
+    handcoded_AB: bool = False
 
 
 class Config(BaseModel):
@@ -79,6 +80,7 @@ class Config(BaseModel):
     print_freq: int
     save_freq: int | None = None
     lr: float
+    weight_decay: float = 0.01
     max_sparsity_coeff: float
     pnorm: float | None = None
     pnorm_end: float | None = None
@@ -87,6 +89,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
+    topk_l2_coeff: float = 0.0
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -271,7 +274,7 @@ def calc_recon_mse(
     output: Float[Tensor, "... n_features"],
     labels: Float[Tensor, "... n_features"],
     has_instance_dim: bool = False,
-) -> Float[Tensor, ""]:
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     recon_loss = (output - labels) ** 2
     if recon_loss.ndim == 3:
         assert has_instance_dim
@@ -281,6 +284,52 @@ def calc_recon_mse(
     else:
         raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
     return recon_loss
+
+
+def calc_topk_l2(
+    model: SPDModel,
+    topk_indices: Int[Tensor, "... topk"],
+    device: str,
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    """Calculate the L2 of the sum of the topk subnetworks.
+
+    Args:
+        model (SPDModel): The model to calculate the L2 penalty for.
+        topk_indices (Int[Tensor, "batch ... topk"]): The topk indices to use for the L2 penalty.
+            Will contain an n_instances dimension if the model has an n_instances dimension.
+        device (str): The device to run computations on.
+
+    Returns:
+        The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
+            deep linear toy models).
+    """
+    batch_size = topk_indices.shape[0]
+    n_instances = topk_indices.shape[1] if topk_indices.ndim == 3 else None
+    accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
+
+    topk_l2_penalty = torch.zeros(accumulate_shape, device=device)
+    for A, B in zip(model.all_As(), model.all_Bs(), strict=True):
+        n_features = A.shape[-2]
+        n_hidden = B.shape[-1]
+        # normed_A: [n_features, k] or [n_instances, n_features, k]
+        # B: [k, n_hidden] or [n_instances, k, n_hidden]
+        # topk_indices: [batch, topk] or [batch, n_instances, topk]
+        expanded_topk_indices_A = einops.repeat(topk_indices, "b ... t -> b ... f t", f=n_features)
+        expanded_A = einops.repeat(A, "... f k -> b ... f k", b=batch_size)
+        A_topk: Float[Tensor, "batch ... n_features topk"] = expanded_A.gather(
+            dim=-1, index=expanded_topk_indices_A
+        )
+
+        expanded_topk_indices_B = einops.repeat(topk_indices, "b ... t -> b ... h t", h=n_hidden)
+        expanded_B = einops.repeat(B, "... k h -> b ... h k", b=batch_size)
+        B_topk: Float[Tensor, "batch ... n_hidden topk"] = expanded_B.gather(
+            dim=-1, index=expanded_topk_indices_B
+        )
+
+        AB_topk = torch.einsum("...ft,...ht->...fh", A_topk, B_topk)
+        topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
+
+    return topk_l2_penalty.mean(dim=0)  # Mean over batch dim
 
 
 def optimize(
@@ -306,7 +355,7 @@ def optimize(
     else:
         pretrained_weights = None
 
-    opt = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     lr_scale_fn = get_lr_scale_fn(config.lr_scale)
 
@@ -337,8 +386,8 @@ def optimize(
             data_iter = iter(dataloader)
             batch, labels = next(data_iter)
 
-        batch = batch.to(dtype=torch.float32, device=device)
-        labels = labels.to(dtype=torch.float32, device=device)
+        batch = batch.to(device=device)
+        labels = labels.to(device=device)
 
         if pretrained_model is not None:
             labels = pretrained_model(batch)
@@ -353,6 +402,7 @@ def optimize(
         )
 
         out_topk = None
+        topk_l2_loss = None
         if config.topk is not None:
             # First do a full forward pass and get the gradients w.r.t. inner_acts
             # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
@@ -378,6 +428,9 @@ def optimize(
                 batch, topk_indices=topk_indices
             )
             assert len(inner_acts_topk) == model.n_param_matrices
+            if config.topk_l2_coeff > 0:
+                topk_l2_loss = calc_topk_l2(model, topk_indices, device)
+
         else:
             out, layer_acts, inner_acts = model(batch)
 
@@ -432,6 +485,8 @@ def optimize(
             tqdm.write(f"Current pnorm: {current_pnorm}")
             tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
             tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
+            if topk_l2_loss is not None:
+                tqdm.write(f"topk l2 loss: \n{topk_l2_loss}")
             if config.loss_type == "param_match":
                 param_match_loss_repr = (
                     param_match_loss.item() if len(param_match_loss) == 1 else param_match_loss
@@ -469,6 +524,9 @@ def optimize(
                         "sparsity_loss": sparsity_loss.mean().item(),
                         "recon_loss": out_recon_loss.mean().item(),
                         "param_match_loss": param_match_loss.mean().item(),
+                        "topk_l2_loss": topk_l2_loss.mean().item()
+                        if topk_l2_loss is not None
+                        else None,
                         "inner_acts": wandb.Image(fig) if fig else None,
                     },
                     step=step,
@@ -484,11 +542,15 @@ def optimize(
         out_recon_loss = out_recon_loss.mean()
         sparsity_loss = sparsity_loss.mean()
         param_match_loss = param_match_loss.mean()
+        topk_l2_loss = topk_l2_loss.mean() if topk_l2_loss is not None else None
 
         if config.loss_type == "param_match":
             loss = param_match_loss + sparsity_coeff * sparsity_loss
         else:
             loss = out_recon_loss + sparsity_coeff * sparsity_loss
+
+        if topk_l2_loss is not None:
+            loss = loss + config.topk_l2_coeff * topk_l2_loss
 
         loss.backward()
         opt.step()

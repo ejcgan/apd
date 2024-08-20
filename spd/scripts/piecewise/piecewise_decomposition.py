@@ -36,12 +36,15 @@ def get_run_name(config: Config) -> str:
         assert isinstance(config.task_config, PiecewiseConfig)
         run_suffix = (
             f"sp{config.max_sparsity_coeff}_"
+            f"l2{config.topk_l2_coeff}_"
             f"lay{config.task_config.n_layers}_"
             f"lr{config.lr}_"
             f"p{config.pnorm}_"
             f"topk{config.topk}_"
-            f"bs{config.batch_size}_"
+            f"bs{config.batch_size}"
         )
+        if config.task_config.handcoded_AB:
+            run_suffix += "_hAB"
     return config.wandb_run_name_prefix + run_suffix
 
 
@@ -104,7 +107,11 @@ def main(
         n_layers=piecewise_model.n_layers,
         k=config.task_config.k,
         input_biases=input_biases,
-    ).to(device)
+    )
+    if config.task_config.handcoded_AB:
+        logger.info("Setting handcoded A and B matrices (!)")
+        piecewise_model_spd.set_handcoded_AB(piecewise_model)
+    piecewise_model_spd.to(device)
 
     # Set requires_grad to False for all embeddings and all input biases
     for i in range(piecewise_model_spd.n_layers):
@@ -121,16 +128,16 @@ def main(
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
-    # Evaluate the pretrained model on 5 batches to get the labels
+    # Evaluate the hardcoded model on 5 batches to get the labels
     n_batches = 5
     loss = 0
     for i, (batch, labels) in enumerate(dataloader):
         if i >= n_batches:
             break
-        pretrained_out = piecewise_model(batch.to(device))
-        loss += calc_recon_mse(pretrained_out, labels.to(device))
+        hardcoded_out = piecewise_model(batch.to(device))
+        loss += calc_recon_mse(hardcoded_out, labels.to(device))
     loss /= n_batches
-    logger.info(f"Loss of pretrained model on 2 batches: {loss}")
+    logger.info(f"Loss of hardcoded model on 5 batches: {loss}")
 
     optimize(
         model=piecewise_model_spd,
