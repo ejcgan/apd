@@ -9,19 +9,22 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import fire
+import matplotlib.pyplot as plt
 import torch
 import wandb
 import yaml
+from tqdm import tqdm
 
 from spd.log import logger
 from spd.models.tms_models import TMSSPDModel
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.scripts.tms.tms_utils import TMSDataset
+from spd.scripts.tms.tms_utils import TMSDataset, plot_A_matrix
 from spd.scripts.tms.train_tms import TMSModel
 from spd.utils import (
     BatchedDataLoader,
     init_wandb,
     load_config,
+    permute_to_identity,
     set_seed,
 )
 
@@ -36,12 +39,28 @@ def get_run_name(config: Config, task_config: TMSConfig) -> str:
         run_suffix = (
             f"lr{config.lr}_"
             f"topk{config.topk}_"
+            f"topkl2{config.topk_l2_coeff}_"
             f"sp{config.max_sparsity_coeff}_"
             f"bs{config.batch_size}_"
             f"ft{task_config.n_features}_"
             f"hid{task_config.n_hidden}"
         )
     return config.wandb_run_name_prefix + run_suffix
+
+
+def plot_perumated_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
+    permuted_A_T_list: list[torch.Tensor] = []
+    for i in range(model.n_instances):
+        normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
+        permuted_matrix = permute_to_identity(normed_A[i].T.abs())
+        permuted_A_T_list.append(permuted_matrix)
+    permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
+
+    fig = plot_A_matrix(permuted_A_T, pos_only=True)
+    fig.savefig(out_dir / f"A_{step}.png")
+    plt.close(fig)
+    tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
+    return fig
 
 
 def main(
@@ -113,6 +132,7 @@ def main(
         device=device,
         dataloader=dataloader,
         pretrained_model=pretrained_model,
+        plot_results_fn=plot_perumated_A,
     )
 
     if config.wandb_project:

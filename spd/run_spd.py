@@ -18,11 +18,8 @@ from tqdm import tqdm
 
 from spd.log import logger
 from spd.models.base import Model, SPDModel
-from spd.models.linear_models import DeepLinearComponentModel
-from spd.models.tms_models import TMSSPDModel
-from spd.scripts.tms.tms_utils import plot_A_matrix
 from spd.types import RootPath
-from spd.utils import calc_attributions, permute_to_identity
+from spd.utils import calc_attributions
 
 
 class TMSConfig(BaseModel):
@@ -144,119 +141,6 @@ def get_lr_with_warmup(
     return lr * lr_scale_fn(step - warmup_steps, steps - warmup_steps)
 
 
-def plot_inner_acts(
-    batch: Float[Tensor, "batch n_instances n_features"],
-    inner_acts: list[Float[Tensor, "batch n_instances k"]],
-) -> plt.Figure:
-    """Plot the inner acts for the first batch_elements in the batch.
-
-    The first row is the raw batch information, the following rows are the inner acts per layer.
-    """
-    n_layers = len(inner_acts)
-    n_instances = batch.shape[1]
-
-    fig, axs = plt.subplots(
-        n_layers + 1,
-        n_instances,
-        figsize=(2.5 * n_instances, 2.5 * (n_layers + 1)),
-        squeeze=False,
-        sharey=True,
-    )
-
-    cmap = "Blues"
-    # Add the batch data
-    for i in range(n_instances):
-        ax = axs[0, i]
-        data = batch[:, i, :].detach().cpu().float().numpy()
-        ax.matshow(data, vmin=0, vmax=np.max(data), cmap=cmap)
-
-        ax.set_title(f"Instance {i}")
-        if i == 0:
-            ax.set_ylabel("Inputs")
-        elif i == n_instances - 1:
-            ax.set_ylabel("batch_idx", rotation=-90, va="bottom", labelpad=15)
-            ax.yaxis.set_label_position("right")
-
-        # Set an xlabel for each plot
-        ax.set_xlabel("n_features")
-
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-    # Add the inner acts
-    for layer in range(n_layers):
-        for i in range(n_instances):
-            ax = axs[layer + 1, i]
-            instance_data = inner_acts[layer][:, i, :].abs().detach().cpu().float().numpy()
-            ax.matshow(instance_data, vmin=0, vmax=np.max(instance_data), cmap=cmap)
-
-            if i == 0:
-                ax.set_ylabel(f"h_{layer}")
-            elif i == n_instances - 1:
-                ax.set_ylabel("batch_idx", rotation=-90, va="bottom", labelpad=15)
-                ax.yaxis.set_label_position("right")
-
-            if layer == n_layers - 1:
-                ax.set_xlabel("k")
-
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-    plt.tight_layout()
-    return fig
-
-
-def collect_inner_act_data(
-    model: DeepLinearComponentModel,
-    device: str,
-    topk: int | None = None,
-) -> tuple[
-    Float[Tensor, "batch n_instances n_features"], list[Float[Tensor, "batch n_instances k"]]
-]:
-    """
-    Collect inner activation data for visualization.
-
-    This function creates a test batch using an identity matrix, passes it through the model,
-    and collects the inner activations. It then permutes the activations to align with the identity.
-
-    Args:
-        model (DeepLinearComponentModel): The model to collect data from.
-        device (str): The device to run computations on.
-        topk (int): The number of topk indices to use for the forward pass.
-
-    Returns:
-        - The input test batch (identity matrix expanded over instance dimension).
-        - A list of permuted inner activations for each layer.
-
-    """
-    test_batch = einops.repeat(
-        torch.eye(model.n_features, device=device),
-        "b f -> b i f",
-        i=model.n_instances,
-    )
-
-    out, _, test_inner_acts = model(test_batch)
-    if topk is not None:
-        attribution_scores = calc_attributions(out, test_inner_acts)
-
-        # Get the topk indices of the attribution scores
-        topk_indices = attribution_scores.topk(topk, dim=-1).indices
-
-        test_inner_acts = model.forward_topk(test_batch, topk_indices=topk_indices)[-1]
-        assert len(test_inner_acts) == model.n_param_matrices
-
-    test_inner_acts_permuted = []
-    for layer in range(model.n_layers):
-        test_inner_acts_layer_permuted = []
-        for i in range(model.n_instances):
-            test_inner_acts_layer_permuted.append(
-                permute_to_identity(test_inner_acts[layer][:, i, :].abs())
-            )
-        test_inner_acts_permuted.append(torch.stack(test_inner_acts_layer_permuted, dim=1))
-
-    return test_batch, test_inner_acts_permuted
-
-
 def calc_recon_mse(
     output: Float[Tensor, "... n_features"],
     labels: Float[Tensor, "... n_features"],
@@ -326,6 +210,7 @@ def optimize(
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model: Model | None,
+    plot_results_fn: Callable[..., plt.Figure | None] | None = None,
 ) -> None:
     assert (
         (config.pnorm is None and config.pnorm_end is not None)
@@ -452,7 +337,6 @@ def optimize(
             sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
             sparsity_loss = sparsity_loss.mean(dim=0)  # Mean over batch dim
         else:
-            # Assert that out_topk is not unbound
             assert out_topk is not None
             sparsity_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
@@ -470,26 +354,10 @@ def optimize(
                 tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
 
             fig = None
-            # TODO: Instead of isinstance, pass a function that produces the plots
-            if isinstance(model, DeepLinearComponentModel):
-                test_batch, test_inner_acts = collect_inner_act_data(model, device, config.topk)
-
-                fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
-                fig.savefig(out_dir / f"inner_acts_{step}.png")
-                plt.close(fig)
-                tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
-            elif isinstance(model, TMSSPDModel):
-                permuted_A_T_list: list[torch.Tensor] = []
-                for i in range(model.n_instances):
-                    normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
-                    permuted_matrix = permute_to_identity(normed_A[i].T.abs())
-                    permuted_A_T_list.append(permuted_matrix)
-                permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
-
-                fig = plot_A_matrix(permuted_A_T, pos_only=True)
-                fig.savefig(out_dir / f"A_{step}.png")
-                plt.close(fig)
-                tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
+            if plot_results_fn is not None:
+                fig = plot_results_fn(
+                    model=model, device=device, topk=config.topk, step=step, out_dir=out_dir
+                )
 
             if config.wandb_project:
                 wandb.log(
