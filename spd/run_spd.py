@@ -80,7 +80,6 @@ class Config(BaseModel):
     print_freq: int
     save_freq: int | None = None
     lr: float
-    weight_decay: float = 0.01
     max_sparsity_coeff: float
     pnorm: float | None = None
     pnorm_end: float | None = None
@@ -343,7 +342,8 @@ def optimize(
     else:
         pretrained_weights = None
 
-    opt = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    # Note that we expect weight decay to be problematic for spd
+    opt = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=0.0)
 
     lr_scale_fn = get_lr_scale_fn(config.lr_scale)
 

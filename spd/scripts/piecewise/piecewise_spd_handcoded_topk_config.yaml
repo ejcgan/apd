@@ -9,7 +9,6 @@ steps: 20_000
 print_freq: 200
 save_freq: 10_000
 lr: 5e-3
-weight_decay: 0.0
 lr_warmup_pct: 0.01
 loss_type: param_match
 task_config:
