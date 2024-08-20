@@ -13,6 +13,7 @@ from spd.models.piecewise_models import (
 )
 from spd.run_spd import Config, PiecewiseConfig
 from spd.scripts.piecewise.trig_functions import create_trig_function
+from spd.utils import calc_attributions
 
 
 def make_plot(pretrained_path: Path, title: str, plot_all: bool = False) -> None:
@@ -69,17 +70,8 @@ def make_plot(pretrained_path: Path, title: str, plot_all: bool = False) -> None
     out_hardcoded = hardcoded_model(x)
 
     # Step 3: Get attribution scores by doing a backward pass on the spd model
-    attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
-    for feature_idx in range(out.shape[-1]):
-        feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
-        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), inner_acts, retain_graph=True
-        )
-        assert len(feature_grads) == len(inner_acts) == model.n_param_matrices
-        for param_matrix_idx in range(model.n_param_matrices):
-            feature_attributions += feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+    attribution_scores = calc_attributions(out, inner_acts)
 
-        attribution_scores += feature_attributions**2
     print(f"Attribution scores: {attribution_scores}")
     # Plot a matshow of the attribution scores
     # Each row should have it's own color scale

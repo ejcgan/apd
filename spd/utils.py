@@ -200,3 +200,34 @@ class BatchedDataLoader(DataLoader[tuple[torch.Tensor, torch.Tensor]]):
     ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
         for _ in range(len(self)):
             yield self.dataset.generate_batch(self.batch_size)  # type: ignore
+
+
+def calc_attributions(
+    out: Float[Tensor, "... out_dim"], inner_acts: list[Float[Tensor, "... k"]]
+) -> Float[Tensor, "... k"]:
+    """Calculate the sum of the (squared) attributions from each output dimension.
+
+    An attribution is the element-wise product of the gradient of the output dimension w.r.t. the
+    inner acts and the inner acts themselves.
+
+    Args:
+        out: The output of the model.
+        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
+            parameter matrix).
+
+    Returns:
+        The sum of the (squared) attributions from each output dimension.
+    """
+    attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
+    for feature_idx in range(out.shape[-1]):
+        feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
+        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+            out[..., feature_idx].sum(), inner_acts, retain_graph=True
+        )
+        assert len(feature_grads) == len(inner_acts)
+        for param_matrix_idx in range(len(inner_acts)):
+            feature_attributions += feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+
+        attribution_scores += feature_attributions**2
+
+    return attribution_scores

@@ -22,7 +22,7 @@ from spd.models.linear_models import DeepLinearComponentModel
 from spd.models.tms_models import TMSSPDModel
 from spd.scripts.tms.tms_utils import plot_A_matrix
 from spd.types import RootPath
-from spd.utils import permute_to_identity
+from spd.utils import calc_attributions, permute_to_identity
 
 
 class TMSConfig(BaseModel):
@@ -238,19 +238,7 @@ def collect_inner_act_data(
 
     out, _, test_inner_acts = model(test_batch)
     if topk is not None:
-        attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(test_inner_acts[0])
-        for feature_idx in range(out.shape[-1]):
-            feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(test_inner_acts[0])
-            feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-                out[..., feature_idx].sum(), test_inner_acts, retain_graph=True
-            )
-            assert len(feature_grads) == len(test_inner_acts) == model.n_param_matrices
-            for param_matrix_idx in range(model.n_param_matrices):
-                feature_attributions += (
-                    feature_grads[param_matrix_idx] * test_inner_acts[param_matrix_idx]
-                )
-
-            attribution_scores += feature_attributions**2
+        attribution_scores = calc_attributions(out, test_inner_acts)
 
         # Get the topk indices of the attribution scores
         topk_indices = attribution_scores.topk(topk, dim=-1).indices
@@ -405,25 +393,13 @@ def optimize(
         topk_l2_loss = None
         if config.topk is not None:
             # First do a full forward pass and get the gradients w.r.t. inner_acts
-            # Stage 1: Do a full forward pass and get the gradients w.r.t inner_acts
             out, _, inner_acts = model(batch)
-            attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
-            for feature_idx in range(out.shape[-1]):
-                feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
-                feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-                    out[..., feature_idx].sum(), inner_acts, retain_graph=True
-                )
-                assert len(feature_grads) == len(inner_acts) == model.n_param_matrices
-                for param_matrix_idx in range(model.n_param_matrices):
-                    feature_attributions += (
-                        feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
-                    )
-
-                attribution_scores += feature_attributions**2
+            attribution_scores = calc_attributions(out, inner_acts)
 
             # Get the topk indices of the attribution scores
             topk_indices = attribution_scores.topk(config.topk, dim=-1).indices
 
+            # Do a forward pass with only the topk subnetworks
             out_topk, layer_acts, inner_acts_topk = model.forward_topk(
                 batch, topk_indices=topk_indices
             )
