@@ -188,7 +188,8 @@ def calc_topk_l2(
         AB_topk = torch.einsum("...ft,...ht->...fh", A_topk, B_topk)
         topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
 
-    return topk_l2_penalty.mean(dim=0)  # Mean over batch dim
+    # Mean over batch_dim and divide by number of parameter matrices we iterated over
+    return topk_l2_penalty.mean(dim=0) / model.n_param_matrices
 
 
 def optimize(
