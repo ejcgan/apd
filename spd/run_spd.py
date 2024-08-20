@@ -91,27 +91,15 @@ class Config(BaseModel):
     )
 
 
-def linear_lr(step: int, steps: int) -> float:
-    return 1 - (step / steps)
-
-
-def constant_lr(*_: int) -> float:
-    return 1.0
-
-
-def cosine_decay_lr(step: int, steps: int) -> float:
-    return np.cos(0.5 * np.pi * step / (steps - 1))
-
-
 def get_lr_scale_fn(
     lr_scale: Literal["linear", "constant", "cosine"],
 ) -> Callable[[int, int], float]:
     if lr_scale == "linear":
-        return linear_lr
+        return lambda step, steps: 1 - (step / steps)
     elif lr_scale == "constant":
-        return constant_lr
+        return lambda *_: 1.0
     elif lr_scale == "cosine":
-        return cosine_decay_lr
+        return lambda step, steps: np.cos(0.5 * np.pi * step / (steps - 1))
     else:
         raise ValueError(f"Unknown lr_scale: {lr_scale}")
 
@@ -243,12 +231,7 @@ def optimize(
             lr_scale_fn=lr_scale_fn,
             lr_warmup_pct=config.lr_warmup_pct,
         )
-
-        current_pnorm = (
-            get_current_pnorm(step, config.steps, config.pnorm_end)
-            if config.pnorm is None
-            else config.pnorm
-        )
+        step_pnorm = None
 
         for group in opt.param_groups:
             group["lr"] = step_lr
@@ -332,9 +315,15 @@ def optimize(
                 sparsity_loss = sparsity_loss + sparsity_inner**2
             sparsity_loss = sparsity_loss / out.shape[-1] + 1e-16
 
+            step_pnorm = (
+                get_current_pnorm(step, config.steps, config.pnorm_end)
+                if config.pnorm is None
+                else config.pnorm
+            )
+
             # Note the current_pnorm * 0.5 is because we have the squares of the sparsity inner
             # above
-            sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (current_pnorm * 0.5)).sum(dim=-1)
+            sparsity_loss = ((sparsity_loss.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
             sparsity_loss = sparsity_loss.mean(dim=0)  # Mean over batch dim
         else:
             assert out_topk is not None
@@ -342,7 +331,8 @@ def optimize(
 
         if step % config.print_freq == config.print_freq - 1 or step == 0:
             tqdm.write(f"Step {step}")
-            tqdm.write(f"Current pnorm: {current_pnorm}")
+            if step_pnorm is not None:
+                tqdm.write(f"Current pnorm: {step_pnorm}")
             tqdm.write(f"Sparsity loss: \n{sparsity_loss}")
             tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
             if topk_l2_loss is not None:
@@ -363,8 +353,8 @@ def optimize(
                 wandb.log(
                     {
                         "step": step,
-                        "current_pnorm": current_pnorm,
-                        "current_lr": step_lr,
+                        "pnorm": step_pnorm,
+                        "lr": step_lr,
                         "sparsity_loss": sparsity_loss.mean().item(),
                         "recon_loss": out_recon_loss.mean().item(),
                         "param_match_loss": param_match_loss.mean().item(),
