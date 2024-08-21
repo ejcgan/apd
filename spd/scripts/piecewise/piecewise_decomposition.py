@@ -12,11 +12,11 @@ import yaml
 from torch.utils.data import DataLoader
 
 from spd.log import logger
-from spd.models.piecewise_models import (
+from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
+from spd.scripts.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.scripts.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.scripts.piecewise.trig_functions import generate_trig_functions
 from spd.utils import (

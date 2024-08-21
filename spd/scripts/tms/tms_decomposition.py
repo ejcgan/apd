@@ -16,10 +16,10 @@ import yaml
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.tms_models import TMSSPDModel
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.scripts.tms.tms_utils import TMSDataset, plot_A_matrix
+from spd.scripts.tms.models import TMSSPDModel
 from spd.scripts.tms.train_tms import TMSModel
+from spd.scripts.tms.utils import TMSDataset, plot_A_matrix
 from spd.utils import (
     BatchedDataLoader,
     init_wandb,

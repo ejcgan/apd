@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.bool_circuit_models import BoolCircuitTransformer
 from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
 from spd.scripts.bool_circuits.bool_circuit_utils import (
     BooleanOperation,
@@ -24,6 +23,7 @@ from spd.scripts.bool_circuits.bool_circuit_utils import (
     form_circuit_repr,
     generate_circuit,
 )
+from spd.scripts.bool_circuits.models import BoolCircuitTransformer
 from spd.types import RootPath
 from spd.utils import set_seed
 

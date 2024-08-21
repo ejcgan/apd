@@ -12,10 +12,10 @@ import yaml
 from torch.utils.data import DataLoader
 
 from spd.log import logger
-from spd.models.bool_circuit_models import BoolCircuitSPDTransformer, BoolCircuitTransformer
 from spd.run_spd import BoolCircuitConfig, Config, optimize
 from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
 from spd.scripts.bool_circuits.bool_circuit_utils import form_circuit
+from spd.scripts.bool_circuits.models import BoolCircuitSPDTransformer, BoolCircuitTransformer
 from spd.utils import (
     init_wandb,
     load_config,

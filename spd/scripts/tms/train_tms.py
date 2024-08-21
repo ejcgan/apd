@@ -11,8 +11,8 @@ from matplotlib import collections as mc
 from matplotlib import colors as mcolors
 from tqdm import trange
 
-from spd.models.tms_models import TMSModel
-from spd.scripts.tms.tms_utils import TMSDataset
+from spd.scripts.tms.models import TMSModel
+from spd.scripts.tms.utils import TMSDataset
 from spd.utils import BatchedDataLoader
 
 

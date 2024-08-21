@@ -10,7 +10,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 
 from spd.models.base import Model, SPDModel
-from spd.models.bool_circuit_models import MLPComponents
+from spd.models.components import MLPComponents
 
 
 def initialize_embeds(

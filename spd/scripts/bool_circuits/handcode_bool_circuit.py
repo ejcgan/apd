@@ -2,7 +2,6 @@
 
 import torch
 
-from spd.models.bool_circuit_models import BoolCircuitTransformer
 from spd.scripts.bool_circuits.bool_circuit_utils import (
     AndOperation,
     BooleanOperation,
@@ -12,6 +11,7 @@ from spd.scripts.bool_circuits.bool_circuit_utils import (
     evaluate_circuit,
     make_detailed_circuit,
 )
+from spd.scripts.bool_circuits.models import BoolCircuitTransformer
 
 # %%
 num_inputs = 10

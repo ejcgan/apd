@@ -7,11 +7,11 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.models.piecewise_models import (
+from spd.run_spd import Config, PiecewiseConfig
+from spd.scripts.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import Config, PiecewiseConfig
 from spd.scripts.piecewise.trig_functions import create_trig_function
 from spd.utils import calc_attributions
 
