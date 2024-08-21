@@ -3,6 +3,7 @@ wandb_run_name: null
 wandb_run_name_prefix: "topk_"
 seed: 0
 topk: 2
+batch_topk: false
 max_sparsity_coeff: 1
 topk_l2_coeff: 0.01
 batch_size: 2048

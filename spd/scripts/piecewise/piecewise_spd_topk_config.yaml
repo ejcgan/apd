@@ -12,6 +12,7 @@ print_freq: 200
 save_freq: 5_000
 lr_warmup_pct: 0.01
 loss_type: param_match
+batch_topk: true
 task_config:
   task_name: piecewise
   n_functions: 10

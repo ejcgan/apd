@@ -8,7 +8,7 @@ from torch import Tensor, nn
 class SPDModel(ABC, nn.Module):
     @abstractmethod
     def forward_topk(
-        self, x: Float[Tensor, "... dim"], topk_indices: Bool[Tensor, "... k"]
+        self, x: Float[Tensor, "... dim"], topk_mask: Bool[Tensor, "... k"]
     ) -> tuple[
         Float[Tensor, "... dim"],
         list[Float[Tensor, "... dim"]],

@@ -3,15 +3,15 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
-from jaxtyping import Float, Int
-from pydantic import BaseModel, ConfigDict, Field
+from jaxtyping import Bool, Float
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -19,7 +19,7 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.models.base import Model, SPDModel
 from spd.types import RootPath
-from spd.utils import calc_attributions
+from spd.utils import calc_attributions, calc_topk_mask
 
 
 class TMSConfig(BaseModel):
@@ -71,7 +71,8 @@ class Config(BaseModel):
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
     seed: int = 0
-    topk: int | None = None
+    topk: float | None = None
+    batch_topk: bool = True
     batch_size: int
     steps: int
     print_freq: int
@@ -89,6 +90,17 @@ class Config(BaseModel):
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
+
+    @model_validator(mode="after")
+    def validate_topk_batch_size(self) -> Self:
+        if self.topk is not None:
+            if self.batch_topk:
+                if not (self.batch_size * self.topk).is_integer():
+                    raise ValueError("batch_size * topk must be an integer when using batch_topk")
+            else:
+                if not self.topk.is_integer():
+                    raise ValueError("topk must be an integer when not using batch_topk")
+        return self
 
 
 def get_lr_scale_fn(
@@ -147,14 +159,14 @@ def calc_recon_mse(
 
 def calc_topk_l2(
     model: SPDModel,
-    topk_indices: Int[Tensor, "... topk"],
+    topk_mask: Bool[Tensor, "... k"],
     device: str,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the L2 of the sum of the topk subnetworks.
 
     Args:
         model (SPDModel): The model to calculate the L2 penalty for.
-        topk_indices (Int[Tensor, "batch ... topk"]): The topk indices to use for the L2 penalty.
+        topk_mask (Bool[Tensor, "batch ... k"]): The topk mask to use for the L2 penalty.
             Will contain an n_instances dimension if the model has an n_instances dimension.
         device (str): The device to run computations on.
 
@@ -162,30 +174,26 @@ def calc_topk_l2(
         The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
             deep linear toy models).
     """
-    batch_size = topk_indices.shape[0]
-    n_instances = topk_indices.shape[1] if topk_indices.ndim == 3 else None
+    batch_size = topk_mask.shape[0]
+    n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
     accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
 
     topk_l2_penalty = torch.zeros(accumulate_shape, device=device)
     for A, B in zip(model.all_As(), model.all_Bs(), strict=True):
-        n_features = A.shape[-2]
-        n_hidden = B.shape[-1]
-        # normed_A: [n_features, k] or [n_instances, n_features, k]
-        # B: [k, n_hidden] or [n_instances, k, n_hidden]
-        # topk_indices: [batch, topk] or [batch, n_instances, topk]
-        expanded_topk_indices_A = einops.repeat(topk_indices, "b ... t -> b ... f t", f=n_features)
-        expanded_A = einops.repeat(A, "... f k -> b ... f k", b=batch_size)
-        A_topk: Float[Tensor, "batch ... n_features topk"] = expanded_A.gather(
-            dim=-1, index=expanded_topk_indices_A
-        )
+        # A: [d_in, k] or [n_instances, d_in, k]
+        # B: [k, d_in] or [n_instances, k, d_in]
+        # topk_mask: [batch, k] or [batch, n_instances, k]
 
-        expanded_topk_indices_B = einops.repeat(topk_indices, "b ... t -> b ... h t", h=n_hidden)
-        expanded_B = einops.repeat(B, "... k h -> b ... h k", b=batch_size)
-        B_topk: Float[Tensor, "batch ... n_hidden topk"] = expanded_B.gather(
-            dim=-1, index=expanded_topk_indices_B
-        )
+        # We need to match the dimensions of A, B and topk_mask so broadcasting works
+        # The dimensions we need are [batch, n_instances, d_in or d_in, k] where
+        # n_instances is an optional dimension.
+        rearranged_B = einops.rearrange(B, "... k h -> ... h k")
+        rearranged_topk_mask = einops.rearrange(topk_mask, "b ... k -> b ... 1 k")
 
-        AB_topk = torch.einsum("...ft,...ht->...fh", A_topk, B_topk)
+        A_topk = A * rearranged_topk_mask
+        B_topk = rearranged_B * rearranged_topk_mask
+        AB_topk = torch.einsum("...fk,...hk->...fh", A_topk, B_topk)
+
         topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
 
     # Mean over batch_dim and divide by number of parameter matrices we iterated over
@@ -208,7 +216,6 @@ def optimize(
     ), "Exactly one of pnorm and pnorm_end must be set"
 
     has_instance_dim = hasattr(model, "n_instances")
-
     if config.loss_type == "param_match":
         assert pretrained_model is not None, "Need a pretrained model for param_match loss"
         pretrained_model.requires_grad_(False)
@@ -265,16 +272,15 @@ def optimize(
             out, _, inner_acts = model(batch)
             attribution_scores = calc_attributions(out, inner_acts)
 
-            # Get the topk indices of the attribution scores
-            topk_indices = attribution_scores.topk(config.topk, dim=-1).indices
+            topk_mask = calc_topk_mask(
+                attribution_scores, config.topk, batch_topk=config.batch_topk
+            )
 
             # Do a forward pass with only the topk subnetworks
-            out_topk, layer_acts, inner_acts_topk = model.forward_topk(
-                batch, topk_indices=topk_indices
-            )
+            out_topk, layer_acts, inner_acts_topk = model.forward_topk(batch, topk_mask=topk_mask)
             assert len(inner_acts_topk) == model.n_param_matrices
             if config.topk_l2_coeff > 0:
-                topk_l2_loss = calc_topk_l2(model, topk_indices, device)
+                topk_l2_loss = calc_topk_l2(model, topk_mask, device)
 
         else:
             out, layer_acts, inner_acts = model(batch)
@@ -347,7 +353,12 @@ def optimize(
             fig = None
             if plot_results_fn is not None:
                 fig = plot_results_fn(
-                    model=model, device=device, topk=config.topk, step=step, out_dir=out_dir
+                    model=model,
+                    device=device,
+                    topk=config.topk,
+                    step=step,
+                    out_dir=out_dir,
+                    batch_topk=config.batch_topk,
                 )
 
             if config.wandb_project:

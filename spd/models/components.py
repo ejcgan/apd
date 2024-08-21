@@ -1,5 +1,5 @@
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
 from spd.utils import init_param_
@@ -55,28 +55,24 @@ class ParamComponents(nn.Module):
     def forward_topk(
         self,
         x: Float[Tensor, "... dim1"],
-        topk_indices: Int[Tensor, "... topk"],
+        topk_mask: Bool[Tensor, "... k"],
     ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
         """
-        Performs a forward pass using only the top-k components.
+        Performs a forward pass using only the top-k subnetwork activations.
 
         Args:
             x: Input tensor
-            topk_indices: Indices of the top-k components to keep
+            topk_mask: Boolean tensor indicating which subnetwork activations to keep.
 
         Returns:
             out: Output tensor
-            inner_acts: Component activations
+            inner_acts: Subnetwork activations
         """
+
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
         inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
-
-        topk_values = inner_acts.gather(dim=-1, index=topk_indices)
-        inner_acts_topk = torch.zeros_like(inner_acts)
-        inner_acts_topk.scatter_(dim=-1, index=topk_indices, src=topk_values)
-
+        inner_acts_topk = inner_acts * topk_mask
         out = torch.einsum("bk,kg->bg", inner_acts_topk, self.B)
-
         return out, inner_acts_topk
 
 
@@ -134,7 +130,9 @@ class MLPComponents(nn.Module):
         return x, layer_acts, inner_acts
 
     def forward_topk(
-        self, x: Float[Tensor, "... d_embed"], topk_indices: Int[Tensor, "... topk"]
+        self,
+        x: Float[Tensor, "... d_embed"],
+        topk_mask: Bool[Tensor, "... k"],
     ) -> tuple[
         Float[Tensor, "... d_embed"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -145,8 +143,7 @@ class MLPComponents(nn.Module):
 
         Args:
             x: Input tensor
-            topk_indices: Indices of the top-k components to keep
-
+            topk_mask: Boolean tensor indicating which components to keep.
         Returns:
             x: The output of the MLP
             layer_acts: The activations of each linear layer
@@ -156,7 +153,7 @@ class MLPComponents(nn.Module):
         layer_acts = []
 
         # First linear layer
-        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk_indices)
+        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk_mask)
         x += self.bias1
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
@@ -164,7 +161,7 @@ class MLPComponents(nn.Module):
         x = torch.nn.functional.relu(x)
 
         # Second linear layer
-        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_indices)
+        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_mask)
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
 
