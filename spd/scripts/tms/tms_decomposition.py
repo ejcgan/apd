@@ -4,15 +4,12 @@ Note that the first instance index is fixed to the identity matrix. This is done
 the losses of the "correct" solution during training.
 """
 
-import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import fire
 import matplotlib.pyplot as plt
 import torch
 import wandb
-import yaml
 from tqdm import tqdm
 
 from spd.log import logger
@@ -25,6 +22,7 @@ from spd.utils import (
     init_wandb,
     load_config,
     permute_to_identity,
+    save_config_to_wandb,
     set_seed,
 )
 
@@ -72,17 +70,7 @@ def main(
 
     if config.wandb_project:
         config = init_wandb(config, config.wandb_project, sweep_config_path)
-        # Save the config to wandb
-        with TemporaryDirectory() as tmp_dir:
-            config_path = Path(tmp_dir) / "final_config.yaml"
-            with open(config_path, "w") as f:
-                yaml.dump(config.model_dump(mode="json"), f, indent=2)
-            wandb.save(str(config_path), policy="now", base_path=tmp_dir)
-            # Unfortunately wandb.save is async, so we need to wait for it to finish before
-            # continuing, and wandb python api provides no way to do this.
-            # TODO: Find a better way to do this.
-            time.sleep(1)
-
+        save_config_to_wandb(config)
     set_seed(config.seed)
     logger.info(config)
 
