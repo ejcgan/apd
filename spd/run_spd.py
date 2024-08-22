@@ -11,25 +11,33 @@ import numpy as np
 import torch
 import wandb
 from jaxtyping import Bool, Float
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeFloat,
+    PositiveFloat,
+    PositiveInt,
+    model_validator,
+)
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
 from spd.models.base import Model, SPDModel
-from spd.types import RootPath
+from spd.types import Probability, RootPath
 from spd.utils import calc_attributions, calc_topk_mask
 
 
 class TMSConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["tms"] = "tms"
-    n_features: int
-    n_hidden: int
-    n_instances: int
-    k: int
-    feature_probability: float
+    n_features: PositiveInt
+    n_hidden: PositiveInt
+    n_instances: PositiveInt
+    k: PositiveInt
+    feature_probability: Probability
     train_bias: bool
     bias_val: float
     pretrained_model_path: RootPath | None = None
@@ -38,30 +46,30 @@ class TMSConfig(BaseModel):
 class BoolCircuitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["bool_circuit"] = "bool_circuit"
-    k: int
+    k: PositiveInt
     pretrained_model_path: RootPath
 
 
 class DeepLinearConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["deep_linear"] = "deep_linear"
-    n_features: int | None = None
-    n_layers: int | None = None
-    n_instances: int | None = None
-    k: int | None = None
+    n_features: PositiveInt | None = None
+    n_layers: PositiveInt | None = None
+    n_instances: PositiveInt | None = None
+    k: PositiveInt | None = None
     pretrained_model_path: RootPath | None = None
 
 
 class PiecewiseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["piecewise"] = "piecewise"
-    n_functions: int
-    neurons_per_function: int
-    n_layers: int
-    feature_probability: float
+    n_functions: PositiveInt
+    neurons_per_function: PositiveInt
+    n_layers: PositiveInt
+    feature_probability: Probability
     range_min: float
     range_max: float
-    k: int
+    k: PositiveInt
     handcoded_AB: bool = False
 
 
@@ -71,28 +79,29 @@ class Config(BaseModel):
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
     seed: int = 0
-    topk: float | None = None
+    topk: PositiveFloat | None = None
     batch_topk: bool = True
-    batch_size: int
-    steps: int
-    print_freq: int
-    save_freq: int | None = None
-    lr: float
-    max_sparsity_coeff: float
-    pnorm: float | None = None
-    pnorm_end: float | None = None
+    batch_size: PositiveInt
+    steps: PositiveInt
+    print_freq: PositiveInt
+    save_freq: PositiveInt | None = None
+    lr: PositiveFloat
+    max_sparsity_coeff: NonNegativeFloat
+    pnorm: PositiveFloat | None = None
+    pnorm_end: PositiveFloat | None = None
     lr_scale: Literal["linear", "constant", "cosine"] = "constant"
-    lr_warmup_pct: float = 0.0
+    lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
-    sparsity_warmup_pct: float = 0.0
+    sparsity_warmup_pct: Probability = 0.0
     topk_l2_coeff: PositiveFloat | None = None
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
 
     @model_validator(mode="after")
-    def validate_topk_batch_size(self) -> Self:
+    def validate_model(self) -> Self:
+        # Check valid combinations of topk and batch_size
         if self.topk is not None:
             if self.batch_topk:
                 if not (self.batch_size * self.topk).is_integer():
@@ -100,6 +109,15 @@ class Config(BaseModel):
             else:
                 if not self.topk.is_integer():
                     raise ValueError("topk must be an integer when not using batch_topk")
+
+        # Check valid combinations of pnorm, pnorm_end, and topk
+        assert (
+            sum([self.pnorm is not None, self.pnorm_end is not None, self.topk is not None]) == 1
+        ), "Exactly one of pnorm, pnorm_end, or topk must be set"
+
+        # Check that topk_l2_coeff is None if topk is None
+        if self.topk is None:
+            assert self.topk_l2_coeff is None, "topk_l2_coeff must be None if topk is None"
         return self
 
 
@@ -199,12 +217,6 @@ def optimize(
     plot_results_fn: Callable[..., plt.Figure | None] | None = None,
     out_dir: Path | None = None,
 ) -> None:
-    assert (
-        (config.pnorm is None and config.pnorm_end is not None)
-        or (config.pnorm is not None and config.pnorm_end is None)
-        or config.topk is not None
-    ), "Exactly one of pnorm and pnorm_end must be set"
-
     has_instance_dim = hasattr(model, "n_instances")
     if config.loss_type == "param_match":
         assert pretrained_model is not None, "Need a pretrained model for param_match loss"
@@ -218,8 +230,8 @@ def optimize(
 
     lr_scale_fn = get_lr_scale_fn(config.lr_scale)
 
+    epoch = 0
     total_samples = 0
-
     data_iter = iter(dataloader)
     for step in tqdm(range(config.steps)):
         step_lr = get_lr_with_warmup(
@@ -229,14 +241,17 @@ def optimize(
             lr_scale_fn=lr_scale_fn,
             lr_warmup_pct=config.lr_warmup_pct,
         )
-        step_pnorm = None
-
         for group in opt.param_groups:
             group["lr"] = step_lr
+
+        step_pnorm = None
+
         opt.zero_grad(set_to_none=True)
         try:
             batch, labels = next(data_iter)
         except StopIteration:
+            tqdm.write(f"Epoch {epoch} finished, starting new epoch")
+            epoch += 1
             data_iter = iter(dataloader)
             batch, labels = next(data_iter)
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 import wandb
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PositiveFloat, PositiveInt
 from torch.nn import functional as F
 
 from spd.scripts.linear.linear_dataset import DeepLinearDataset
@@ -18,13 +18,13 @@ wandb.require("core")
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     seed: int = 0
-    n_features: int
-    n_layers: int
-    n_instances: int
-    batch_size: int
-    steps: int
-    print_freq: int
-    lr: float
+    n_features: PositiveInt
+    n_layers: PositiveInt
+    n_instances: PositiveInt
+    batch_size: PositiveInt
+    steps: PositiveInt
+    print_freq: PositiveInt
+    lr: PositiveFloat
     out_file: RootPath | None = None
 
 

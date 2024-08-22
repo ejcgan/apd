@@ -1,6 +1,5 @@
 # %%
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import einops
@@ -9,6 +8,7 @@ import numpy as np
 import torch
 from matplotlib import collections as mc
 from matplotlib import colors as mcolors
+from pydantic import BaseModel, PositiveInt
 from tqdm import trange
 
 from spd.scripts.tms.models import TMSModel
@@ -17,19 +17,18 @@ from spd.utils import BatchedDataLoader
 
 
 # %%
-@dataclass
-class TMSTrainConfig:
-    n_features: int
-    n_hidden: int
+class TMSTrainConfig(BaseModel):
+    n_features: PositiveInt
+    n_hidden: PositiveInt
 
     # We optimize n_instances models in a single training loop
     # to let us sweep over sparsity or importance curves
     # efficiently.
 
     # We could potentially use torch.vmap instead.
-    n_instances: int
+    n_instances: PositiveInt
     feature_probability: float
-    batch_size: int
+    batch_size: PositiveInt
 
 
 def linear_lr(step: int, steps: int) -> float:
