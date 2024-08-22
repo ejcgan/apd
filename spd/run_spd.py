@@ -177,10 +177,13 @@ def calc_recon_mse(
 
 def calc_topk_l2(
     model: SPDModel,
-    topk_mask: Bool[Tensor, "... k"],
+    topk_mask: Bool[Tensor, "batch ... k"],
     device: str,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the L2 of the sum of the topk subnetworks.
+
+    Note that we explicitly write the batch dimension to aid understanding. The einsums
+    produce the same operation without it. The ... indicates an optional n_instances dimension.
 
     Args:
         model (SPDModel): The model to calculate the L2 penalty for.
@@ -201,8 +204,8 @@ def calc_topk_l2(
         # A: [d_in, k] or [n_instances, d_in, k]
         # B: [k, d_in] or [n_instances, k, d_in]
         # topk_mask: [batch, k] or [batch, n_instances, k]
-        A_topk = torch.einsum("...fk,...k ->...fk", A, topk_mask)
-        AB_topk = torch.einsum("...fk,...kh->...fh", A_topk, B)
+        A_topk = torch.einsum("...fk,b...k ->b...fk", A, topk_mask)
+        AB_topk = torch.einsum("b...fk,...kh->b...fh", A_topk, B)
         topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
     # Mean over batch_dim and divide by number of parameter matrices we iterated over
     return topk_l2_penalty.mean(dim=0) / model.n_param_matrices
