@@ -183,19 +183,9 @@ def calc_topk_l2(
         # A: [d_in, k] or [n_instances, d_in, k]
         # B: [k, d_in] or [n_instances, k, d_in]
         # topk_mask: [batch, k] or [batch, n_instances, k]
-
-        # We need to match the dimensions of A, B and topk_mask so broadcasting works
-        # The dimensions we need are [batch, n_instances, d_in or d_in, k] where
-        # n_instances is an optional dimension.
-        rearranged_B = einops.rearrange(B, "... k h -> ... h k")
-        rearranged_topk_mask = einops.rearrange(topk_mask, "b ... k -> b ... 1 k")
-
-        A_topk = A * rearranged_topk_mask
-        B_topk = rearranged_B * rearranged_topk_mask
-        AB_topk = torch.einsum("...fk,...hk->...fh", A_topk, B_topk)
-
+        A_topk = torch.einsum("...fk,...k ->...fk", A, topk_mask)
+        AB_topk = torch.einsum("...fk,...kh->...fh", A_topk, B)
         topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
-
     # Mean over batch_dim and divide by number of parameter matrices we iterated over
     return topk_l2_penalty.mean(dim=0) / model.n_param_matrices
 
