@@ -18,7 +18,7 @@ from spd.utils import BatchedDataLoader
 
 # %%
 @dataclass
-class Config:
+class TMSTrainConfig:
     n_features: int
     n_hidden: int
 
@@ -118,7 +118,7 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # %%
-    config = Config(
+    config = TMSTrainConfig(
         n_features=5,
         n_hidden=2,
         n_instances=12,
