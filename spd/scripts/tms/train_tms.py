@@ -44,7 +44,7 @@ def cosine_decay_lr(step: int, steps: int) -> float:
     return np.cos(0.5 * np.pi * step / (steps - 1))
 
 
-def optimize(
+def train(
     model: TMSModel,
     dataloader: BatchedDataLoader,
     importance: float = 1.0,
@@ -140,7 +140,7 @@ if __name__ == "__main__":
         device=device,
     )
     dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
-    optimize(model, dataloader=dataloader)
+    train(model, dataloader=dataloader)
 
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(parents=True, exist_ok=True)

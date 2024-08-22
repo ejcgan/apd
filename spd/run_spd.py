@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import wandb
 from jaxtyping import Bool, Float
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, model_validator
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -32,7 +32,7 @@ class TMSConfig(BaseModel):
     feature_probability: float
     train_bias: bool
     bias_val: float
-    pretrained_model_path: RootPath
+    pretrained_model_path: RootPath | None = None
 
 
 class BoolCircuitConfig(BaseModel):
@@ -86,7 +86,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: float = 0.0
-    topk_l2_coeff: float = 0.0
+    topk_l2_coeff: PositiveFloat | None = None
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -203,11 +203,11 @@ def calc_topk_l2(
 def optimize(
     model: SPDModel,
     config: Config,
-    out_dir: Path,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model: Model | None,
     plot_results_fn: Callable[..., plt.Figure | None] | None = None,
+    out_dir: Path | None = None,
 ) -> None:
     assert (
         (config.pnorm is None and config.pnorm_end is not None)
@@ -279,7 +279,7 @@ def optimize(
             # Do a forward pass with only the topk subnetworks
             out_topk, layer_acts, inner_acts_topk = model.forward_topk(batch, topk_mask=topk_mask)
             assert len(inner_acts_topk) == model.n_param_matrices
-            if config.topk_l2_coeff > 0:
+            if config.topk_l2_coeff is not None:
                 topk_l2_loss = calc_topk_l2(model, topk_mask, device)
 
         else:
@@ -378,7 +378,11 @@ def optimize(
                     step=step,
                 )
 
-        if config.save_freq is not None and step % config.save_freq == config.save_freq - 1:
+        if (
+            config.save_freq is not None
+            and step % config.save_freq == config.save_freq - 1
+            and out_dir is not None
+        ):
             torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
             tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
             with open(out_dir / "config.json", "w") as f:
@@ -400,8 +404,8 @@ def optimize(
 
         loss.backward()
         opt.step()
-
-    torch.save(model.state_dict(), out_dir / f"model_{config.steps}.pth")
-    logger.info(f"Saved model to {out_dir / f'model_{config.steps}.pth'}")
-    if config.wandb_project:
-        wandb.save(str(out_dir / f"model_{config.steps}.pth"))
+    if out_dir is not None:
+        torch.save(model.state_dict(), out_dir / f"model_{config.steps}.pth")
+        logger.info(f"Saved model to {out_dir / f'model_{config.steps}.pth'}")
+        if config.wandb_project:
+            wandb.save(str(out_dir / f"model_{config.steps}.pth"))

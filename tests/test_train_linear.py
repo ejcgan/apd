@@ -6,14 +6,14 @@ from spd.scripts.linear.train_linear import Config, train
 from spd.utils import BatchedDataLoader
 
 
-def test_linear_training() -> None:
+def test_train_linear_happy_path() -> None:
     device = "cpu"
     config = Config(
         n_features=2,
         n_layers=2,
         n_instances=2,
         batch_size=2,
-        steps=1,  # Run only a few steps
+        steps=3,  # Run only a few steps
         print_freq=100,
         lr=0.01,
         out_file=None,

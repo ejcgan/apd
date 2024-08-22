@@ -1,11 +1,17 @@
 import torch
 
-from spd.scripts.tms.train_tms import BatchedDataLoader, Config, TMSDataset, TMSModel, optimize
+from spd.scripts.tms.models import TMSModel
+from spd.scripts.tms.train_tms import Config as TMSTrainConfig
+from spd.scripts.tms.train_tms import train
+from spd.scripts.tms.utils import TMSDataset
+from spd.utils import BatchedDataLoader
 
 
-def test_tms_training():
+def test_train_tms_happy_path():
     # Set up a small configuration
-    config = Config(n_features=3, n_hidden=2, n_instances=2, feature_probability=0.1, batch_size=32)
+    config = TMSTrainConfig(
+        n_features=3, n_hidden=2, n_instances=2, feature_probability=0.1, batch_size=32
+    )
 
     # Initialize model, dataset, and dataloader
     device = "cpu"
@@ -29,7 +35,7 @@ def test_tms_training():
     initial_loss = torch.mean((labels.abs() - initial_out) ** 2)
 
     # Run optimize function
-    optimize(model, dataloader, steps=10, print_freq=1000)
+    train(model, dataloader, steps=5, print_freq=1000)
 
     # Calculate final loss
     final_out = model(batch)
