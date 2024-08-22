@@ -60,4 +60,4 @@ jobs:
         run: ruff format .
 
       - name: Run tests
-        run: python -m pytest --runslow --durations=10
+        run: python -m pytest tests/ --runslow --durations=10
