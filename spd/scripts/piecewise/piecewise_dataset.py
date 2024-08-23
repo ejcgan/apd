@@ -41,8 +41,23 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         data[:, 0] = (
             torch.rand(self.buffer_size) * (self.range_max - self.range_min) + self.range_min
         )
-        control_bits = torch.empty((self.buffer_size, self.n_inputs - 1))
-        control_bits.bernoulli_(self.feature_probability)
+        original_control_bits = torch.empty((self.buffer_size, self.n_inputs - 1))
+        original_control_bits.bernoulli_(self.feature_probability)
+        # Ensure at least one control bit is on by removing all the rows with all zeros, then
+        # generating new control bits for those rows and repeating until all rows have at least one
+        # bit on.
+        i = 0
+        target_length = original_control_bits.shape[0]
+        current_control_bits = original_control_bits[original_control_bits.any(dim=1)]
+        while current_control_bits.shape[0] < target_length:
+            new_control_bits = torch.empty((self.buffer_size, self.n_inputs - 1))
+            new_control_bits.bernoulli_(self.feature_probability)
+            new_nonzero_control_bits = new_control_bits[new_control_bits.any(dim=1)]
+            current_control_bits = torch.cat(
+                (current_control_bits, new_nonzero_control_bits), dim=0
+            )
+            i += 1
+        control_bits = current_control_bits[:target_length]
         data[:, 1:] = control_bits
 
         x = data[:, 0].unsqueeze(1).expand(-1, len(self.functions))
@@ -61,3 +76,24 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         item = (self.buffer[0][self.buffer_index], self.buffer[1][self.buffer_index])
         self.buffer_index += 1
         return item
+
+
+def test_removing_zeros():
+    n_inputs = 5
+    functions = [lambda x: x, lambda x: x**2, lambda x: x**3, lambda x: x**4]
+    feature_probability = 0.1
+    range_min = -1
+    range_max = 1
+    buffer_size = 1000
+
+    dataset = PiecewiseDataset(
+        n_inputs, functions, feature_probability, range_min, range_max, buffer_size
+    )
+
+    for i in range(10):
+        x, y = dataset[i]
+        print(x, y)
+
+
+if __name__ == "__main__":
+    test_removing_zeros()

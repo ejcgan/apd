@@ -1,4 +1,3 @@
-import pytest
 import torch
 from jaxtyping import Float
 from torch.utils.data import DataLoader
@@ -175,6 +174,10 @@ def test_piecewise_dataset():
     control_bits = batch_x[:-1, 1:]
     assert torch.all((control_bits == 0) | (control_bits == 1))
 
-    # Check mean of control bits
+    # Check that there is a non-zero input for each batch element
+    assert torch.all(control_bits.any(dim=1))
+
+    # The mean of the control bits should be >= feature_probability (greater because we remove
+    # all rows with all zeros). We allow a small difference as we're only using batch_size=10.
     mean_control_bits = control_bits.float().mean()
-    assert pytest.approx(mean_control_bits.item(), abs=0.1) == feature_probability
+    assert mean_control_bits >= (feature_probability - 0.1)
