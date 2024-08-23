@@ -41,9 +41,8 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         data[:, 0] = (
             torch.rand(self.buffer_size) * (self.range_max - self.range_min) + self.range_min
         )
-        control_bits = torch.bernoulli(
-            torch.full((self.buffer_size, self.n_inputs - 1), self.feature_probability)
-        )
+        control_bits = torch.empty((self.buffer_size, self.n_inputs - 1))
+        control_bits.bernoulli_(self.feature_probability)
         data[:, 1:] = control_bits
 
         x = data[:, 0].unsqueeze(1).expand(-1, len(self.functions))
