@@ -57,7 +57,7 @@ def train(
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
 
     data_iter = iter(dataloader)
-    with trange(steps) as t:
+    with trange(steps, ncols=50) as t:
         for step in t:
             step_lr = lr * lr_schedule(step, steps)
             for group in opt.param_groups:

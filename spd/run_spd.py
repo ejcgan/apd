@@ -240,7 +240,7 @@ def optimize(
     epoch = 0
     total_samples = 0
     data_iter = iter(dataloader)
-    for step in tqdm(range(config.steps)):
+    for step in tqdm(range(config.steps), ncols=50):
         step_lr = get_lr_with_warmup(
             step=step,
             steps=config.steps,
