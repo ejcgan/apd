@@ -10,14 +10,14 @@ from jaxtyping import Float
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from spd.log import logger
-from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
-from spd.scripts.piecewise.models import (
+from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.scripts.piecewise.piecewise_dataset import PiecewiseDataset
-from spd.scripts.piecewise.trig_functions import generate_trig_functions
+from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
+from spd.experiments.piecewise.trig_functions import generate_trig_functions
+from spd.log import logger
+from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.utils import (
     init_wandb,
     load_config,

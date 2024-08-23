@@ -11,8 +11,8 @@ from matplotlib import colors as mcolors
 from pydantic import BaseModel, PositiveInt
 from tqdm import trange
 
-from spd.scripts.tms.models import TMSModel
-from spd.scripts.tms.utils import TMSDataset
+from spd.experiments.tms.models import TMSModel
+from spd.experiments.tms.utils import TMSDataset
 from spd.utils import BatchedDataLoader
 
 

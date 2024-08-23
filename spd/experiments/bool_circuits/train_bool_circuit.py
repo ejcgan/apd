@@ -13,9 +13,8 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from spd.log import logger
-from spd.scripts.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
-from spd.scripts.bool_circuits.bool_circuit_utils import (
+from spd.experiments.bool_circuits.bool_circuit_dataset import BooleanCircuitDataset
+from spd.experiments.bool_circuits.bool_circuit_utils import (
     BooleanOperation,
     create_circuit_str,
     create_truth_table,
@@ -23,7 +22,8 @@ from spd.scripts.bool_circuits.bool_circuit_utils import (
     form_circuit_repr,
     generate_circuit,
 )
-from spd.scripts.bool_circuits.models import BoolCircuitTransformer
+from spd.experiments.bool_circuits.models import BoolCircuitTransformer
+from spd.log import logger
 from spd.types import RootPath
 from spd.utils import set_seed
 

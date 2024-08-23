@@ -3,8 +3,8 @@ from collections.abc import Callable
 import numpy as np
 import torch
 
-from spd.scripts.piecewise.models import PiecewiseFunctionTransformer
-from spd.scripts.piecewise.piecewise_decomposition import (
+from spd.experiments.piecewise.models import PiecewiseFunctionTransformer
+from spd.experiments.piecewise.piecewise_decomposition import (
     generate_trig_functions,
 )
 
@@ -75,7 +75,7 @@ test.plot_multiple(start=-0, end=5.1, num_points=200, functions=functions, prob=
 # %%
 from torch.utils.data import DataLoader
 
-from spd.scripts.piecewise.piecewise_decomposition import PiecewiseDataset
+from spd.experiments.piecewise.piecewise_decomposition import PiecewiseDataset
 
 ds = PiecewiseDataset(4, functions, feature_probability=0.5, range_min=0, range_max=5)
 dl = DataLoader(ds, batch_size=1, shuffle=False)

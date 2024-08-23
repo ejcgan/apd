@@ -7,10 +7,10 @@ import torch.nn.functional as F
 from jaxtyping import Bool, Float
 from torch import Tensor
 
+from spd.experiments.bool_circuits.bool_circuit_utils import BooleanOperation, make_detailed_circuit
 from spd.log import logger
 from spd.models.base import Model, SPDModel
 from spd.models.components import MLPComponents
-from spd.scripts.bool_circuits.bool_circuit_utils import BooleanOperation, make_detailed_circuit
 
 
 class MLP(nn.Module):

@@ -2,7 +2,7 @@ from jaxtyping import Float
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from spd.scripts.bool_circuits.bool_circuit_utils import (
+from spd.experiments.bool_circuits.bool_circuit_utils import (
     BooleanOperation,
     create_truth_table,
 )

@@ -1,4 +1,4 @@
-program: spd/scripts/linear/linear_decomposition.py
+program: spd/experiments/linear/linear_decomposition.py
 method: grid
 metric:
   name: final_closeness
@@ -16,5 +16,5 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-# - spd/scripts/linear/linear_config.yaml
-- spd/scripts/linear/linear_match_param_config.yaml
+# - spd/experiments/linear/linear_config.yaml
+- spd/experiments/linear/linear_match_param_config.yaml

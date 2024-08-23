@@ -4,20 +4,20 @@ from pathlib import Path
 
 import torch
 
-from spd.log import logger
-from spd.scripts.bool_circuits.bool_circuit_utils import (
+from spd.experiments.bool_circuits.bool_circuit_utils import (
     create_circuit_str,
     create_truth_table,
     make_detailed_circuit,
     plot_circuit,
 )
-from spd.scripts.bool_circuits.models import BoolCircuitTransformer
-from spd.scripts.bool_circuits.train_bool_circuit import (
+from spd.experiments.bool_circuits.models import BoolCircuitTransformer
+from spd.experiments.bool_circuits.train_bool_circuit import (
     Config,
     evaluate_model,
     get_circuit,
     get_train_test_dataloaders,
 )
+from spd.log import logger
 from spd.types import RootPath
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -1,10 +1,10 @@
 import torch
 
+from spd.experiments.linear.linear_dataset import DeepLinearDataset
+from spd.experiments.linear.models import DeepLinearComponentModel, DeepLinearModel
+from spd.experiments.linear.train_linear import Config as TrainConfig
+from spd.experiments.linear.train_linear import train
 from spd.run_spd import Config, DeepLinearConfig, optimize
-from spd.scripts.linear.linear_dataset import DeepLinearDataset
-from spd.scripts.linear.models import DeepLinearComponentModel, DeepLinearModel
-from spd.scripts.linear.train_linear import Config as TrainConfig
-from spd.scripts.linear.train_linear import train
 from spd.utils import BatchedDataLoader, set_seed
 
 # Create a simple DeepLinear config that we can use in multiple tests

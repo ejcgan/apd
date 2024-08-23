@@ -2,9 +2,9 @@ import torch
 from jaxtyping import Float
 from torch.utils.data import DataLoader
 
+from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
+from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.run_spd import Config, PiecewiseConfig, optimize
-from spd.scripts.piecewise.piecewise_dataset import PiecewiseDataset
-from spd.scripts.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.utils import set_seed
 
 

@@ -12,11 +12,11 @@ import torch
 import wandb
 from tqdm import tqdm
 
+from spd.experiments.tms.models import TMSSPDModel
+from spd.experiments.tms.train_tms import TMSModel
+from spd.experiments.tms.utils import TMSDataset, plot_A_matrix
 from spd.log import logger
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.scripts.tms.models import TMSSPDModel
-from spd.scripts.tms.train_tms import TMSModel
-from spd.scripts.tms.utils import TMSDataset, plot_A_matrix
 from spd.utils import (
     BatchedDataLoader,
     init_wandb,

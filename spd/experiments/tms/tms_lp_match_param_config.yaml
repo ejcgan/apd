@@ -22,4 +22,4 @@ task_config:
   bias_val: 0.0
   train_bias: true
   feature_probability: 0.05
-  pretrained_model_path: spd/scripts/tms/out/tms_n-features5_n-hidden2_n-instances12.pth
+  pretrained_model_path: spd/experiments/tms/out/tms_n-features5_n-hidden2_n-instances12.pth

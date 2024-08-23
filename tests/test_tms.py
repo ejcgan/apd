@@ -1,9 +1,9 @@
 import torch
 
+from spd.experiments.tms.models import TMSModel, TMSSPDModel
+from spd.experiments.tms.train_tms import TMSTrainConfig, train
+from spd.experiments.tms.utils import TMSDataset
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.scripts.tms.models import TMSModel, TMSSPDModel
-from spd.scripts.tms.train_tms import TMSTrainConfig, train
-from spd.scripts.tms.utils import TMSDataset
 from spd.utils import BatchedDataLoader, set_seed
 
 # Create a simple TMS config that we can use in multiple tests

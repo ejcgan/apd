@@ -12,10 +12,10 @@ from jaxtyping import Float
 from torch import Tensor
 from tqdm import tqdm
 
+from spd.experiments.linear.linear_dataset import DeepLinearDataset
+from spd.experiments.linear.models import DeepLinearComponentModel, DeepLinearModel
 from spd.log import logger
 from spd.run_spd import Config, DeepLinearConfig, optimize
-from spd.scripts.linear.linear_dataset import DeepLinearDataset
-from spd.scripts.linear.models import DeepLinearComponentModel, DeepLinearModel
 from spd.utils import (
     BatchedDataLoader,
     calc_attributions,

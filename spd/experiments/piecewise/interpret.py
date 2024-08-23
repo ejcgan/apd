@@ -7,12 +7,12 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.run_spd import Config, PiecewiseConfig
-from spd.scripts.piecewise.models import (
+from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.scripts.piecewise.trig_functions import create_trig_function
+from spd.experiments.piecewise.trig_functions import create_trig_function
+from spd.run_spd import Config, PiecewiseConfig
 from spd.utils import calc_attributions
 
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     pretrained_paths = Path("out/").rglob("reproduce_good*/model_19999.pth")
     for pretrained_path in pretrained_paths:
         pretrained_path = Path(
-            "/data/stefan_heimersheim/projects/SPD/spd/spd/scripts/piecewise/" / pretrained_path
+            "/data/stefan_heimersheim/projects/SPD/spd/spd/experiments/piecewise/" / pretrained_path
         )
         print(f"Processing {pretrained_path}")
         try:

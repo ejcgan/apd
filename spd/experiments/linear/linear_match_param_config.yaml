@@ -1,4 +1,4 @@
-# wandb_project: spd-linear
+wandb_project: spd-linear
 wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0
@@ -20,4 +20,4 @@ task_config:
   # n_features: 5
   # n_layers: 3
   # n_instances: 2
-  pretrained_model_path: spd/scripts/linear/out/linear.pt
+  pretrained_model_path: spd/experiments/linear/out/linear.pt

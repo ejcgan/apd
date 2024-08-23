@@ -7,8 +7,8 @@ import wandb
 from pydantic import BaseModel, ConfigDict, PositiveFloat, PositiveInt
 from torch.nn import functional as F
 
-from spd.scripts.linear.linear_dataset import DeepLinearDataset
-from spd.scripts.linear.models import DeepLinearModel
+from spd.experiments.linear.linear_dataset import DeepLinearDataset
+from spd.experiments.linear.models import DeepLinearModel
 from spd.types import RootPath
 from spd.utils import BatchedDataLoader, set_seed
 
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         steps=1000,
         print_freq=100,
         lr=0.01,
-        out_file="spd/scripts/linear/out/linear.pt",  # pyright: ignore [reportArgumentType]
+        out_file="spd/experiments/linear/out/linear.pt",  # pyright: ignore [reportArgumentType]
     )
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
