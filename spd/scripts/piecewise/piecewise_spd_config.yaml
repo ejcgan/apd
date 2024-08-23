@@ -10,7 +10,7 @@ steps: 10_000
 print_freq: 500
 save_freq: 10_000
 lr: 1e-2
-lr_scale: constant
+lr_schedule: constant
 lr_warmup_pct: 0.1
 loss_type: behavioral
 task_config:

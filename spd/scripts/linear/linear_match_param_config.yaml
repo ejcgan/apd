@@ -10,7 +10,7 @@ lr: 1e-2
 max_sparsity_coeff: 1e-1
 pnorm: 0.9
 pnorm_end: null
-lr_scale: constant
+lr_schedule: constant
 lr_warmup_pct: 0.1
 sparsity_loss_type: jacobian
 sparsity_warmup_pct: 0.0

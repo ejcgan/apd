@@ -50,7 +50,7 @@ def train(
     steps: int = 10_000,
     print_freq: int = 100,
     lr: float = 5e-3,
-    lr_scale: Callable[[int, int], float] = linear_lr,
+    lr_schedule: Callable[[int, int], float] = linear_lr,
 ) -> None:
     hooks = []
 
@@ -59,7 +59,7 @@ def train(
     data_iter = iter(dataloader)
     with trange(steps) as t:
         for step in t:
-            step_lr = lr * lr_scale(step, steps)
+            step_lr = lr * lr_schedule(step, steps)
             for group in opt.param_groups:
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)

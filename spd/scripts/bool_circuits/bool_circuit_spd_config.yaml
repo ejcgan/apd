@@ -9,7 +9,7 @@ steps: 20_000
 print_freq: 4000
 save_freq: 10_000
 lr: 1e-1
-lr_scale: constant
+lr_schedule: constant
 lr_warmup_pct: 0.1
 loss_type: param_match
 task_config:

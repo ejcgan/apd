@@ -89,7 +89,7 @@ class Config(BaseModel):
     max_sparsity_coeff: NonNegativeFloat
     pnorm: PositiveFloat | None = None
     pnorm_end: PositiveFloat | None = None
-    lr_scale: Literal["linear", "constant", "cosine"] = "constant"
+    lr_schedule: Literal["linear", "constant", "cosine"] = "constant"
     lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
@@ -121,17 +121,17 @@ class Config(BaseModel):
         return self
 
 
-def get_lr_scale_fn(
-    lr_scale: Literal["linear", "constant", "cosine"],
+def get_lr_schedule_fn(
+    lr_schedule: Literal["linear", "constant", "cosine"],
 ) -> Callable[[int, int], float]:
-    if lr_scale == "linear":
+    if lr_schedule == "linear":
         return lambda step, steps: 1 - (step / steps)
-    elif lr_scale == "constant":
+    elif lr_schedule == "constant":
         return lambda *_: 1.0
-    elif lr_scale == "cosine":
+    elif lr_schedule == "cosine":
         return lambda step, steps: np.cos(0.5 * np.pi * step / (steps - 1))
     else:
-        raise ValueError(f"Unknown lr_scale: {lr_scale}")
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
 
 
 def get_current_pnorm(step: int, total_steps: int, pnorm_end: float | None = None) -> float:
@@ -151,12 +151,16 @@ def get_sparsity_coeff_linear_warmup(
 
 
 def get_lr_with_warmup(
-    step: int, steps: int, lr: float, lr_scale_fn: Callable[[int, int], float], lr_warmup_pct: float
+    step: int,
+    steps: int,
+    lr: float,
+    lr_schedule_fn: Callable[[int, int], float],
+    lr_warmup_pct: float,
 ) -> float:
     warmup_steps = int(steps * lr_warmup_pct)
     if step < warmup_steps:
         return lr * (step / warmup_steps)
-    return lr * lr_scale_fn(step - warmup_steps, steps - warmup_steps)
+    return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
 
 
 def calc_recon_mse(
@@ -231,7 +235,7 @@ def optimize(
     # Note that we expect weight decay to be problematic for spd
     opt = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=0.0)
 
-    lr_scale_fn = get_lr_scale_fn(config.lr_scale)
+    lr_schedule_fn = get_lr_schedule_fn(config.lr_schedule)
 
     epoch = 0
     total_samples = 0
@@ -241,7 +245,7 @@ def optimize(
             step=step,
             steps=config.steps,
             lr=config.lr,
-            lr_scale_fn=lr_scale_fn,
+            lr_schedule_fn=lr_schedule_fn,
             lr_warmup_pct=config.lr_warmup_pct,
         )
         for group in opt.param_groups:

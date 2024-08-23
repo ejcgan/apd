@@ -10,7 +10,7 @@ batch_size: 2048
 steps: 40_000
 print_freq: 5000
 lr: 8e-4
-lr_scale: constant
+lr_schedule: constant
 lr_warmup_pct: 0.1
 loss_type: param_match
 task_config:
