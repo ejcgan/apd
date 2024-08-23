@@ -11,4 +11,4 @@ RootPath = Annotated[Path, BeforeValidator(to_root_path), PlainSerializer(lambda
 
 TrigParams = tuple[float, float, float, float, float, float, float]
 
-Probability = Annotated[float, Field(strict=True, gt=0, lt=1)]
+Probability = Annotated[float, Field(strict=True, ge=0, le=1)]
