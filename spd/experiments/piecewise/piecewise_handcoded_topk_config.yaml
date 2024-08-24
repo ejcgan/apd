@@ -3,16 +3,14 @@ wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0
 topk: 4
-max_sparsity_coeff: 1
-topk_l2_coeff: 0.01
-lr: 5e-2
+topk_recon_coeff: 1e-5
 batch_size: 2048
 steps: 20_000
 print_freq: 200
-save_freq: 5_000
+save_freq: 10_000
+lr: 5e-3
 lr_warmup_pct: 0.01
 loss_type: param_match
-batch_topk: true
 task_config:
   task_name: piecewise
   n_functions: 10
@@ -22,4 +20,4 @@ task_config:
   range_min: 0
   range_max: 5
   k: 11
-  handcoded_AB: false
+  handcoded_AB: true

@@ -29,10 +29,11 @@ def get_run_name(config: Config) -> str:
         run_suffix = config.wandb_run_name
     else:
         run_suffix = (
-            f"sp{config.max_sparsity_coeff}_"
             f"lr{config.lr}_"
             f"p{config.pnorm}_"
             f"topk{config.topk}_"
+            f"topkrecon{config.topk_recon_coeff}_"
+            f"lpsp{config.lp_sparsity_coeff}_"
             f"topkl2{config.topk_l2_coeff}_"
             f"bs{config.batch_size}_"
         )

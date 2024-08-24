@@ -8,7 +8,7 @@ parameters:
     values: [1e-2, 1e-4]
   pnorm:
     values: [0.9]
-  max_sparsity_coeff:
+  topk_recon_coeff:
     values: [10, 1, 0.1, 0.01]
   steps:
     values: [20_000]
@@ -16,5 +16,4 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-# - spd/experiments/linear/linear_config.yaml
-- spd/experiments/linear/linear_match_param_config.yaml
+- spd/experiments/linear/linear_topk_config.yaml

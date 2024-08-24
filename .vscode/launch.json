@@ -14,11 +14,11 @@
             },
         },
         {
-            "name": "tms",
+            "name": "tms_lp",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/tms/tms_lp_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -26,11 +26,11 @@
             }
         },
         {
-            "name": "tms_lp_match_param",
+            "name": "tms_topk",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_lp_match_param_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -38,23 +38,11 @@
             }
         },
         {
-            "name": "tms_topk_match_param",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_match_param_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "linear",
+            "name": "linear_lp",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/linear/linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/linear/linear_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/linear/linear_lp_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -62,11 +50,11 @@
             }
         },
         {
-            "name": "linear_match_param_topk",
+            "name": "linear_topk",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/linear/linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/linear/linear_topk_match_param_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/linear/linear_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -78,7 +66,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/bool_circuits/bool_circuit_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/bool_circuits/bool_circuit_spd_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/bool_circuits/bool_circuit_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -86,12 +74,12 @@
             }
         },
         {
-            "name": "piecewise_spd",
+            "name": "piecewise_lp_spd",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_spd_config.yaml",
-            "console": "integratedTerminal",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_lp_config.yaml",
+           "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
                 "PYDEVD_DISABLE_FILE_VALIDATION": "1"
@@ -102,7 +90,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_spd_topk_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -114,7 +102,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_spd_handcoded_topk_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_handcoded_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

@@ -70,7 +70,7 @@ def test_piecewise_batch_tokp_no_l2_handcoded_AB() -> None:
         print_freq=2,
         save_freq=None,
         lr=1e-3,
-        max_sparsity_coeff=1,
+        topk_recon_coeff=1,
         topk_l2_coeff=None,
         task_config=get_piecewise_config(handcoded_AB=True, n_layers=1),
     )
@@ -86,7 +86,7 @@ def test_piecewise_batch_topk_no_l2() -> None:
         print_freq=2,
         save_freq=None,
         lr=1e-3,
-        max_sparsity_coeff=1,
+        topk_recon_coeff=1,
         topk_l2_coeff=None,
         task_config=get_piecewise_config(),
     )
@@ -102,7 +102,7 @@ def test_piecewise_batch_topk_and_l2() -> None:
         print_freq=2,
         save_freq=None,
         lr=1e-3,
-        max_sparsity_coeff=1,
+        topk_recon_coeff=1,
         topk_l2_coeff=0.1,
         task_config=get_piecewise_config(),
     )
@@ -118,7 +118,7 @@ def test_piecewise_topk_and_l2() -> None:
         print_freq=2,
         save_freq=None,
         lr=1e-3,
-        max_sparsity_coeff=1,
+        topk_recon_coeff=1,
         topk_l2_coeff=0.1,
         task_config=get_piecewise_config(),
     )
@@ -134,7 +134,7 @@ def test_piecewise_lp() -> None:
         print_freq=2,
         save_freq=None,
         lr=1e-3,
-        max_sparsity_coeff=0.01,
+        lp_sparsity_coeff=0.01,
         pnorm=0.9,
         topk_l2_coeff=None,
         task_config=get_piecewise_config(),
