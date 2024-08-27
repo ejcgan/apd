@@ -2,15 +2,16 @@ from collections.abc import Callable
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
 from spd.experiments.piecewise.models import PiecewiseFunctionTransformer
 from spd.experiments.piecewise.piecewise_decomposition import (
+    PiecewiseDataset,
     generate_trig_functions,
 )
 
+
 # %%
-
-
 # test
 # make a list of 50 different cubic functions
 def generate_cubics(num_cubics: int) -> list[Callable[[float], float]]:
@@ -55,8 +56,7 @@ def generate_regular_simplex(num_vertices: int) -> torch.Tensor:
     return simplex / simplex.norm(dim=1).unsqueeze(1)
 
 
-# %% Do it with the new class
-
+# %%
 num_functions = 5
 neurons_per_function = 100
 feature_probability = 0.2
@@ -73,10 +73,6 @@ test = PiecewiseFunctionTransformer.from_handcoded(
 test.plot_multiple(start=-0, end=5.1, num_points=200, functions=functions, prob=feature_probability)
 
 # %%
-from torch.utils.data import DataLoader
-
-from spd.experiments.piecewise.piecewise_decomposition import PiecewiseDataset
-
 ds = PiecewiseDataset(4, functions, feature_probability=0.5, range_min=0, range_max=5)
 dl = DataLoader(ds, batch_size=1, shuffle=False)
 for i, (batch, labels) in enumerate(dl):

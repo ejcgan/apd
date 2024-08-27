@@ -13,7 +13,7 @@ import torch
 import wandb
 import yaml
 from dotenv import load_dotenv
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from pydantic import BaseModel
 from pydantic.v1.utils import deep_update
 from torch import Tensor
@@ -277,3 +277,42 @@ def calc_topk_mask(
     if batch_topk:
         topk_mask = einops.rearrange(topk_mask, "... (b k) -> b ... k", b=batch_size)
     return topk_mask
+
+
+def find_key_for_value(dictionary: dict[Any, Any], target_value: Any):
+    for key, value_list in dictionary.items():
+        if target_value in value_list:
+            return key
+    return None  # Return None if the value is not found in any list
+
+
+def calc_neuron_indices(
+    neuron_permutations: tuple[Int[Tensor, "..."], ...],
+    num_neurons: int,
+    num_functions: int,
+):
+    """Create a list of length n_layers, where each element is a list of length num_functions.
+    The ith element of this list is a list of the indices of the neurons in the corresponding
+    layer of the controlled piecewise linear that connect to the ith function."""
+    all_neurons = torch.concatenate(neuron_permutations)
+    assert torch.all(all_neurons.sort().values == torch.arange(len(all_neurons)))
+
+    n_layers = len(neuron_permutations)
+    ordered_neurons_dict = {
+        i: torch.arange(i * num_neurons, (i + 1) * num_neurons) for i in range(num_functions)
+    }
+    neuron_indices = [
+        [
+            torch.tensor(
+                [
+                    index
+                    for index, neuron in enumerate(neuron_permutations[layer].numpy())
+                    if find_key_for_value(ordered_neurons_dict, neuron) == function
+                ],
+                dtype=torch.int64,
+            )
+            for function in range(num_functions)
+        ]
+        for layer in range(n_layers)
+    ]
+    return neuron_indices

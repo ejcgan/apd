@@ -69,6 +69,7 @@ class PiecewiseConfig(BaseModel):
     range_min: float
     range_max: float
     k: PositiveInt
+    simple_bias: bool = False
     handcoded_AB: bool = False
 
 
@@ -370,7 +371,8 @@ def optimize(
         if pretrained_model is not None:
             pretrained_model.requires_grad_(False)
             pretrained_model.to(device=device)
-            labels = pretrained_model(batch)
+            with torch.inference_mode():
+                labels = pretrained_model(batch)
 
         total_samples += batch.shape[0]
 
@@ -459,7 +461,7 @@ def optimize(
             if lp_sparsity_loss is not None:
                 tqdm.write(f"LP sparsity loss: \n{lp_sparsity_loss}")
             if topk_recon_loss is not None:
-                tqdm.write(f"Topk sparsity loss: \n{topk_recon_loss}")
+                tqdm.write(f"Topk recon loss: \n{topk_recon_loss}")
             tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
             if topk_l2_loss is not None:
                 tqdm.write(f"topk l2 loss: \n{topk_l2_loss}")
