@@ -473,14 +473,15 @@ def optimize(
 
             fig = None
             if plot_results_fn is not None:
-                fig = plot_results_fn(
-                    model=model,
-                    device=device,
-                    topk=config.topk,
-                    step=step,
-                    out_dir=out_dir,
-                    batch_topk=config.batch_topk,
-                )
+                with torch.inference_mode():
+                    fig = plot_results_fn(
+                        model=model,
+                        device=device,
+                        topk=config.topk,
+                        step=step,
+                        out_dir=out_dir,
+                        batch_topk=config.batch_topk,
+                    )
 
             if config.wandb_project:
                 wandb.log(
