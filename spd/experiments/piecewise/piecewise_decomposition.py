@@ -8,7 +8,6 @@ import torch
 import wandb
 from jaxtyping import Float
 from torch import Tensor
-from torch.utils.data import DataLoader
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
@@ -19,6 +18,7 @@ from spd.experiments.piecewise.trig_functions import generate_trig_functions
 from spd.log import logger
 from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.utils import (
+    BatchedDataLoader,
     init_wandb,
     load_config,
     save_config_to_wandb,
@@ -56,7 +56,8 @@ def get_model_and_dataloader(
 ) -> tuple[
     PiecewiseFunctionTransformer,
     PiecewiseFunctionSPDTransformer,
-    DataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
+    BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
+    BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
 ]:
     """Set up the piecewise models and dataset."""
     assert isinstance(config.task_config, PiecewiseConfig)
@@ -106,10 +107,23 @@ def get_model_and_dataloader(
         feature_probability=config.task_config.feature_probability,
         range_min=config.task_config.range_min,
         range_max=config.task_config.range_max,
+        batch_size=config.batch_size,
+        return_labels=False,
     )
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = BatchedDataLoader(dataset)
 
-    return piecewise_model, piecewise_model_spd, dataloader
+    test_dataset = PiecewiseDataset(
+        n_inputs=piecewise_model.n_inputs,
+        functions=functions,
+        feature_probability=config.task_config.feature_probability,
+        range_min=config.task_config.range_min,
+        range_max=config.task_config.range_max,
+        batch_size=config.batch_size,
+        return_labels=True,
+    )
+    test_dataloader = BatchedDataLoader(test_dataset)
+
+    return piecewise_model, piecewise_model_spd, dataloader, test_dataloader
 
 
 def main(
@@ -137,14 +151,15 @@ def main(
     out_dir = Path(__file__).parent / "out" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(
+    piecewise_model, piecewise_model_spd, dataloader, test_dataloader = get_model_and_dataloader(
         config, device, out_dir
     )
 
     # Evaluate the hardcoded model on 5 batches to get the labels
     n_batches = 5
     loss = 0
-    for i, (batch, labels) in enumerate(dataloader):
+
+    for i, (batch, labels) in enumerate(test_dataloader):
         if i >= n_batches:
             break
         hardcoded_out = piecewise_model(batch.to(device))

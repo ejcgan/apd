@@ -13,7 +13,7 @@ from tqdm import trange
 
 from spd.experiments.tms.models import TMSModel
 from spd.experiments.tms.utils import TMSDataset
-from spd.utils import BatchedDataLoader
+from spd.utils import DatasetGeneratedDataLoader
 
 
 # %%
@@ -45,7 +45,7 @@ def cosine_decay_lr(step: int, steps: int) -> float:
 
 def train(
     model: TMSModel,
-    dataloader: BatchedDataLoader,
+    dataloader: DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]],
     importance: float = 1.0,
     steps: int = 10_000,
     print_freq: int = 100,
@@ -138,7 +138,7 @@ if __name__ == "__main__":
         feature_probability=config.feature_probability,
         device=device,
     )
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
     train(model, dataloader=dataloader)
 
     out_dir = Path(__file__).parent / "out"

@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
 from spd.experiments.linear.models import DeepLinearModel
 from spd.types import RootPath
-from spd.utils import BatchedDataLoader, set_seed
+from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 wandb.require("core")
 
@@ -29,7 +29,10 @@ class Config(BaseModel):
 
 
 def train(
-    config: Config, model: DeepLinearModel, dataloader: BatchedDataLoader, device: str
+    config: Config,
+    model: DeepLinearModel,
+    dataloader: DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]],
+    device: str,
 ) -> float | None:
     if config.out_file is not None:
         Path(config.out_file).parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +76,7 @@ if __name__ == "__main__":
     )
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
     train(config, model, dataloader, device)
 
     # Assert that, for each instance, the multiplication of the params is approximately the identity

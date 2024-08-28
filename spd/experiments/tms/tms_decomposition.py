@@ -18,7 +18,7 @@ from spd.experiments.tms.utils import TMSDataset, plot_A_matrix
 from spd.log import logger
 from spd.run_spd import Config, TMSConfig, optimize
 from spd.utils import (
-    BatchedDataLoader,
+    DatasetGeneratedDataLoader,
     init_wandb,
     load_config,
     permute_to_identity,
@@ -113,7 +113,7 @@ def main(
         feature_probability=task_config.feature_probability,
         device=device,
     )
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 
     optimize(
         model=model,

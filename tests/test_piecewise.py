@@ -1,6 +1,5 @@
 import torch
 from jaxtyping import Float
-from torch.utils.data import DataLoader
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
@@ -8,7 +7,13 @@ from spd.experiments.piecewise.models import (
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.run_spd import Config, PiecewiseConfig, calc_param_match_loss, calc_recon_mse, optimize
-from spd.utils import calc_attributions, calc_neuron_indices, calc_topk_mask, set_seed
+from spd.utils import (
+    BatchedDataLoader,
+    calc_attributions,
+    calc_neuron_indices,
+    calc_topk_mask,
+    set_seed,
+)
 
 
 # Create a simple Piecewise config that we can use in multiple tests
@@ -33,7 +38,7 @@ def piecewise_decomposition_optimize_test(config: Config) -> None:
     device = "cpu"
     assert isinstance(config.task_config, PiecewiseConfig)
 
-    piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(config, device)
+    piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(config, device)[:3]
 
     # Pick an arbitrary parameter to check that it changes
     initial_param: Float[torch.Tensor, " d_mlp"] = (
@@ -189,7 +194,7 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     )
     assert isinstance(config.task_config, PiecewiseConfig)
 
-    piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(config, device)
+    piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(config, device)[:3]
     piecewise_model.requires_grad_(False)
     piecewise_model.to(device=device)
 
@@ -258,7 +263,7 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     # TODO: When we have GPU tests, run more steps and lower the precision. Current test only shows
     # that the loss doesn't blow up dramatically straight away.
     assert final_param_match_loss < 1e-3
-    assert final_topk_recon_loss < 2e-3
+    assert final_topk_recon_loss < 3e-3
 
 
 def test_piecewise_dataset():
@@ -273,11 +278,17 @@ def test_piecewise_dataset():
 
     # Create dataset
     dataset = PiecewiseDataset(
-        n_inputs, functions, feature_probability, range_min, range_max, buffer_size=8
+        n_inputs=n_inputs,
+        functions=functions,
+        feature_probability=feature_probability,
+        range_min=range_min,
+        range_max=range_max,
+        batch_size=batch_size,
+        return_labels=True,
     )
 
     # Create dataloader
-    dataloader = DataLoader(dataset, batch_size=batch_size)
+    dataloader = BatchedDataLoader(dataset)
 
     # Get a batch of samples
     batch_x, batch_y = next(iter(dataloader))

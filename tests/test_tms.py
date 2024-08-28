@@ -4,7 +4,7 @@ from spd.experiments.tms.models import TMSModel, TMSSPDModel
 from spd.experiments.tms.train_tms import TMSTrainConfig, train
 from spd.experiments.tms.utils import TMSDataset
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.utils import BatchedDataLoader, set_seed
+from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 # Create a simple TMS config that we can use in multiple tests
 TMS_TASK_CONFIG = TMSConfig(
@@ -47,7 +47,7 @@ def tms_decomposition_optimize_test(config: Config):
         feature_probability=config.task_config.feature_probability,
         device=device,
     )
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 
     # Pick an arbitrary parameter to check that it changes
     initial_param = model.A.clone().detach()
@@ -171,7 +171,7 @@ def test_train_tms_happy_path():
         feature_probability=config.feature_probability,
         device=device,
     )
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 
     # Calculate initial loss
     batch, labels = next(iter(dataloader))

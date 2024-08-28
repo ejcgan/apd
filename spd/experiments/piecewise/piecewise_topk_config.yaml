@@ -9,9 +9,9 @@ pnorm: 0.9
 lp_sparsity_coeff: 1e-30
 lr: 1e-4
 batch_size: 2048
-steps: 1
+steps: 20_000
 print_freq: 400
-save_freq: 0001
+save_freq: 20_000
 lr_warmup_pct: 0.01
 loss_type: param_match
 batch_topk: true

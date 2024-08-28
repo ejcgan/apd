@@ -5,7 +5,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 import einops
 import numpy as np
@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader, Dataset
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
+Q = TypeVar("Q")
 
 
 def to_root_path(path: str | Path):
@@ -197,12 +198,12 @@ def init_param_(param: torch.Tensor) -> None:
     torch.nn.init.kaiming_uniform_(param, a=math.sqrt(5))
 
 
-class BatchedDataLoader(DataLoader[tuple[torch.Tensor, torch.Tensor]]):
+class DatasetGeneratedDataLoader(DataLoader[Q], Generic[Q]):
     """DataLoader that generates batches by calling the dataset's `generate_batch` method."""
 
     def __init__(
         self,
-        dataset: Dataset[tuple[torch.Tensor, torch.Tensor]],
+        dataset: Dataset[Q],
         batch_size: int = 1,
         shuffle: bool = False,
         num_workers: int = 0,
@@ -213,9 +214,27 @@ class BatchedDataLoader(DataLoader[tuple[torch.Tensor, torch.Tensor]]):
 
     def __iter__(  # type: ignore
         self,
-    ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[Q]:
         for _ in range(len(self)):
             yield self.dataset.generate_batch(self.batch_size)  # type: ignore
+
+
+class BatchedDataLoader(DataLoader[Q], Generic[Q]):
+    """DataLoader that unpacks the batch in __getitem__.
+
+    This is used for datasets which generate a whole batch in one call to __getitem__.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset[Q],
+        num_workers: int = 0,
+    ):
+        super().__init__(dataset, num_workers=num_workers)
+
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:  # type: ignore
+        for batch, label in super().__iter__():
+            yield batch[0], label[0]
 
 
 def calc_attributions(

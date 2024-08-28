@@ -5,7 +5,7 @@ from spd.experiments.linear.models import DeepLinearComponentModel, DeepLinearMo
 from spd.experiments.linear.train_linear import Config as TrainConfig
 from spd.experiments.linear.train_linear import train
 from spd.run_spd import Config, DeepLinearConfig, optimize
-from spd.utils import BatchedDataLoader, set_seed
+from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 # Create a simple DeepLinear config that we can use in multiple tests
 DEEP_LINEAR_TASK_CONFIG = DeepLinearConfig(
@@ -41,7 +41,7 @@ def deep_linear_decomposition_optimize_test(config: Config) -> None:
     ).to(device)
 
     dataset = DeepLinearDataset(config.task_config.n_features, config.task_config.n_instances)
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 
     # Pick an arbitrary parameter to check that it changes
     initial_param = model.layers[0].A.clone().detach()
@@ -160,7 +160,7 @@ def test_train_linear_happy_path() -> None:
 
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
-    dataloader = BatchedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # Calculate initial loss
     batch, labels = next(iter(dataloader))
