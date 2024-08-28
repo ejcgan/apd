@@ -15,6 +15,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
     model_validator,
@@ -87,8 +88,9 @@ class Config(BaseModel):
     image_freq: PositiveInt | None = None
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
-    topk_recon_coeff: PositiveFloat | None = None
-    lp_sparsity_coeff: PositiveFloat | None = None
+    topk_recon_coeff: NonNegativeFloat | None = None
+    topk_l2_coeff: NonNegativeFloat | None = None
+    lp_sparsity_coeff: NonNegativeFloat | None = None
     pnorm: PositiveFloat | None = None
     pnorm_end: PositiveFloat | None = None
     lr_schedule: Literal["linear", "constant", "cosine"] = "constant"
@@ -96,7 +98,6 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: Probability = 0.0
-    topk_l2_coeff: PositiveFloat | None = None
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -113,7 +114,7 @@ class Config(BaseModel):
                     raise ValueError("topk must be an integer when not using batch_topk")
 
         # Warn if neither topk_recon_coeff nor lp_sparsity_coeff is set
-        if self.topk_recon_coeff is None and self.lp_sparsity_coeff is None:
+        if not self.topk_recon_coeff and not self.lp_sparsity_coeff:
             logger.warning("Neither topk_recon_coeff nor lp_sparsity_coeff is set")
 
         # If topk_recon_coeff is set, topk must be set
@@ -130,6 +131,16 @@ class Config(BaseModel):
         if self.topk is None:
             assert self.topk_l2_coeff is None, "topk_l2_coeff is not None but topk is"
             assert self.topk_recon_coeff is None, "topk_recon_coeff is not None but topk is"
+
+        # If any of the coeffs are 0, raise a warning
+        msg = "is 0, you may wish to instead set it to null to avoid calculating the loss"
+        if self.topk_l2_coeff == 0:
+            logger.warning(f"topk_l2_coeff {msg}")
+        if self.topk_recon_coeff == 0:
+            logger.warning(f"topk_recon_coeff {msg}")
+        if self.lp_sparsity_coeff == 0:
+            logger.warning(f"lp_sparsity_coeff {msg}")
+
         return self
 
 
