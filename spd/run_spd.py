@@ -485,6 +485,7 @@ def optimize(
                         "step": step,
                         "pnorm": step_pnorm,
                         "lr": step_lr,
+                        "total_loss": loss.mean().item(),
                         "lp_sparsity_coeff": step_lp_sparsity_coeff,
                         "topk_recon_coeff": step_topk_recon_coeff,
                         "lp_sparsity_loss": lp_sparsity_loss.mean().item()
