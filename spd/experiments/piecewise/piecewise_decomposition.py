@@ -4,10 +4,16 @@ import json
 from pathlib import Path
 
 import fire
+import matplotlib.pyplot as plt
+import matplotlib.ticker as tkr
+import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
+from matplotlib.colors import CenteredNorm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
+from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
@@ -19,6 +25,7 @@ from spd.log import logger
 from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.utils import (
     BatchedDataLoader,
+    calc_attributions,
     init_wandb,
     load_config,
     save_config_to_wandb,
@@ -26,6 +33,153 @@ from spd.utils import (
 )
 
 wandb.require("core")
+
+
+def plot_components(
+    model: PiecewiseFunctionSPDTransformer,
+    device: str,
+    topk: float | None,
+    step: int,
+    out_dir: Path | None,
+    batch_topk: bool,
+) -> plt.Figure:
+    # Get number of layers
+    n_layers = model.n_layers
+
+    # Create a batch of inputs with different control bits active
+    x_val = torch.tensor(2.5, device=device)
+    batch_size = model.n_inputs - 1  # Assuming first input is for x_val and rest are control bits
+    x = torch.zeros(batch_size, model.n_inputs, device=device)
+    x[:, 0] = x_val
+    x[torch.arange(batch_size), torch.arange(1, batch_size + 1)] = 1
+
+    # Forward pass
+    out, layer_acts, inner_acts = model(x)
+
+    # Calculate attribution scores
+    attribution_scores = calc_attributions(out, inner_acts, retain_graph=False)
+    n_functions = attribution_scores.shape[0]
+
+    # Create figure with subplots
+    fig, axes_ = plt.subplots(2 * n_layers, 4, figsize=(40, 10), constrained_layout=True)
+    axes: np.ndarray[plt.Axes] = axes_  # type: ignore
+    plt.suptitle(f"Subnetwork Analysis (Step {step})")
+
+    # Plot attribution scores
+    im1 = axes[0, 0].matshow(
+        attribution_scores.detach().cpu().numpy(),
+        cmap="coolwarm",
+        norm=CenteredNorm(),
+    )
+    axes[0, 0].set_yticks(range(n_functions))
+    axes[0, 0].set_yticklabels(range(1, n_functions + 1))
+    axes[0, 0].set_ylabel("Function index")
+    axes[0, 0].set_xlabel("Subnetwork index")
+    axes[0, 0].set_title("Raw attribution Scores")
+    divider = make_axes_locatable(axes[0, 0])
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im1, cax=cax, format=tkr.FormatStrFormatter("%.0f"))
+
+    # Plot normalized attribution scores
+    attribution_scores_normed = attribution_scores / attribution_scores.std(dim=1, keepdim=True)
+    im2 = axes[0, 1].matshow(
+        attribution_scores_normed.detach().cpu().numpy(),
+        cmap="coolwarm",
+        norm=CenteredNorm(),
+    )
+    axes[0, 1].set_yticks(range(n_functions))
+    axes[0, 1].set_yticklabels(range(1, n_functions + 1))
+    axes[0, 1].set_ylabel("Function index")
+    axes[0, 1].set_xlabel("Subnetwork index")
+    axes[0, 1].set_title("Normalized attribution Scores")
+    divider = make_axes_locatable(axes[0, 1])
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im2, cax=cax, format=tkr.FormatStrFormatter("%.0f"))
+
+    assert len(model.all_As()) == len(model.all_Bs()), "A and B matrices must have the same length"
+    assert len(model.all_As()) % 2 == 0, "A and B matrices must have an even length (MLP in + out)"
+    assert len(model.all_As()) // 2 == n_layers, "Number of A and B matrices must be 2*n_layers"
+
+    As = model.all_As()
+    normed_As = [A / A.norm(p=2, dim=-2, keepdim=True) for A in As]
+    Bs = model.all_Bs()
+    ABs = [torch.einsum("...fk,...kg->...fg", normed_As[i], Bs[i]) for i in range(len(normed_As))]
+    for n in range(n_layers):
+        s_row = 2 * n  # the row where we put the small plots
+        l_row = s_row + 1  # the row where we put the large plots
+        assert n_layers == 1, "Current implementation only supports 1 layer"
+
+        # Plot A of W_in
+        im1 = axes[s_row, 2].matshow(
+            normed_As[2 * n].detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[s_row, 2].set_ylabel("Embedding index")
+        axes[s_row, 2].set_xlabel("Subnetwork index")
+        axes[s_row, 2].set_title(f"Normed A (W_in, layer {n})")
+        divider = make_axes_locatable(axes[s_row, 2])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im1, cax=cax, format=tkr.FormatStrFormatter("%.1f"))
+
+        # Plot B of W_out
+        im2 = axes[s_row, 3].matshow(
+            Bs[2 * n + 1].T.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[s_row, 3].set_ylabel("Embedding index")
+        axes[s_row, 3].set_xlabel("Subnetwork index")
+        axes[s_row, 3].set_title(f"B (W_out, layer {n})")
+        divider = make_axes_locatable(axes[s_row, 3])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im2, cax=cax, format=tkr.FormatStrFormatter("%.1f"))
+
+        # Plot B of W_in in 2nd row
+        im3 = axes[l_row, 2].matshow(
+            Bs[2 * n].detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[l_row, 2].set_ylabel("Subnetwork index")
+        axes[l_row, 2].set_xlabel("Neuron index")
+        axes[l_row, 2].set_title(f"B (W_in, layer {n})")
+        divider = make_axes_locatable(axes[l_row, 2])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im3, cax=cax, format=tkr.FormatStrFormatter("%.2f"))
+
+        # Plot A of W_out in 2nd row
+        im4 = axes[l_row, 3].matshow(
+            normed_As[2 * n + 1].T.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[l_row, 3].set_ylabel("Subnetwork index")
+        axes[l_row, 3].set_xlabel("Neuron index")
+        axes[l_row, 3].set_title(f"Normed A (W_out, layer {n})")
+        divider = make_axes_locatable(axes[l_row, 3])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im4, cax=cax, format=tkr.FormatStrFormatter("%.2f"))
+
+        # Plot AB product in 2nd row pos 1 and 2
+        im5 = axes[l_row, 0].matshow(
+            ABs[n].detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[l_row, 0].set_ylabel("Embedding index")
+        axes[l_row, 0].set_xlabel("Neuron index")
+        axes[l_row, 0].set_title(f"AB Product (W_in, layer {n})")
+        divider = make_axes_locatable(axes[l_row, 0])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im5, cax=cax, format=tkr.FormatStrFormatter("%.2f"))
+
+        im6 = axes[l_row, 1].matshow(
+            ABs[n + 1].detach().cpu().numpy().T, cmap="coolwarm", norm=CenteredNorm()
+        )
+        axes[l_row, 1].set_ylabel("Embedding index")
+        axes[l_row, 1].set_xlabel("Neuron index")
+        axes[l_row, 1].set_title(f"AB Product Transposed (W_out.T, layer {n})")
+        divider = make_axes_locatable(axes[l_row, 1])
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(im6, cax=cax, format=tkr.FormatStrFormatter("%.2f"))
+
+    if out_dir:
+        fig.savefig(out_dir / f"subnetwork_analysis_{step}.png")
+        plt.close(fig)
+        tqdm.write(f"Saved subnetwork analysis to {out_dir / f'subnetwork_analysis_{step}.png'}\n")
+
+    return fig
 
 
 def get_run_name(config: Config) -> str:
@@ -174,6 +328,7 @@ def main(
         device=device,
         pretrained_model=piecewise_model,
         dataloader=dataloader,
+        plot_results_fn=plot_components,
     )
 
     if config.wandb_project:

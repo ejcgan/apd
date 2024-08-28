@@ -84,6 +84,7 @@ class Config(BaseModel):
     batch_size: PositiveInt
     steps: PositiveInt
     print_freq: PositiveInt
+    image_freq: PositiveInt | None = None
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
     topk_recon_coeff: PositiveFloat | None = None
@@ -326,7 +327,7 @@ def optimize(
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model: Model | None,
-    plot_results_fn: Callable[..., plt.Figure | None] | None = None,
+    plot_results_fn: Callable[..., plt.Figure] | None = None,
     out_dir: Path | None = None,
 ) -> None:
     model.to(device=device)
@@ -343,7 +344,7 @@ def optimize(
     epoch = 0
     total_samples = 0
     data_iter = iter(dataloader)
-    for step in tqdm(range(config.steps), ncols=0):
+    for step in tqdm(range(config.steps + 1), ncols=0):
         step_lr = get_lr_with_warmup(
             step=step,
             steps=config.steps,
@@ -417,7 +418,7 @@ def optimize(
 
         out_topk, topk_l2_loss, topk_recon_loss = None, None, None
         if config.topk is not None:
-            attribution_scores = calc_attributions(out, inner_acts)
+            attribution_scores = calc_attributions(out, inner_acts, retain_graph=True)
 
             topk_mask = calc_topk_mask(
                 attribution_scores, config.topk, batch_topk=config.batch_topk
@@ -450,11 +451,8 @@ def optimize(
             assert config.topk_l2_coeff is not None
             loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()
 
-        loss.backward()
-        opt.step()
-
         # Logging
-        if step % config.print_freq == config.print_freq - 1 or step == 0:
+        if step % config.print_freq == 0:
             tqdm.write(f"Step {step}")
             if step_pnorm is not None:
                 tqdm.write(f"Current pnorm: {step_pnorm}")
@@ -467,23 +465,9 @@ def optimize(
                 tqdm.write(f"topk l2 loss: \n{topk_l2_loss}")
             if param_match_loss is not None:
                 param_match_loss_repr = (
-                    param_match_loss.item() if param_match_loss.ndim == 0 else param_match_loss
+                    param_match_loss.item() if param_match_loss.numel() == 1 else param_match_loss
                 )
                 tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
-
-            fig = None
-            if plot_results_fn is not None:
-                model.zero_grad()
-                fig = plot_results_fn(
-                    model=model,
-                    device=device,
-                    topk=config.topk,
-                    step=step,
-                    out_dir=out_dir,
-                    batch_topk=config.batch_topk,
-                )
-                model.zero_grad()
-
             if config.wandb_project:
                 wandb.log(
                     {
@@ -505,14 +489,33 @@ def optimize(
                         "topk_l2_loss": topk_l2_loss.mean().item()
                         if topk_l2_loss is not None
                         else None,
-                        "inner_acts": wandb.Image(fig) if fig else None,
                     },
                     step=step,
                 )
 
         if (
+            plot_results_fn is not None
+            and config.image_freq is not None
+            and step % config.image_freq == 0
+        ):
+            fig = plot_results_fn(
+                model=model,
+                device=device,
+                topk=config.topk,
+                step=step,
+                out_dir=out_dir,
+                batch_topk=config.batch_topk,
+            )
+            if config.wandb_project:
+                wandb.log(
+                    {"plots": wandb.Image(fig)},
+                    step=step,
+                )
+
+        if (
             config.save_freq is not None
-            and step % config.save_freq == config.save_freq - 1
+            and step % config.save_freq == 0
+            and step > 0
             and out_dir is not None
         ):
             torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
@@ -521,8 +524,7 @@ def optimize(
                 json.dump(config.model_dump(), f, indent=4)
             tqdm.write(f"Saved config to {out_dir / 'config.json'}")
 
-    if out_dir is not None:
-        torch.save(model.state_dict(), out_dir / f"model_{config.steps}.pth")
-        logger.info(f"Saved model to {out_dir / f'model_{config.steps}.pth'}")
-        if config.wandb_project:
-            wandb.save(str(out_dir / f"model_{config.steps}.pth"))
+        # Skip gradient step if we are at the last step (last step just for plotting and logging)
+        if step != config.steps:
+            loss.backward()
+            opt.step()
