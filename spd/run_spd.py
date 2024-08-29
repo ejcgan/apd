@@ -478,21 +478,24 @@ def optimize(
 
         # Logging
         if step % config.print_freq == 0:
+            # If using multiple instances, print the losses as tensors in new lines
+            nl = "\n" if has_instance_dim else " "
             tqdm.write(f"Step {step}")
+            tqdm.write(f"Total loss: {loss.mean().item()}")
             if step_pnorm is not None:
-                tqdm.write(f"Current pnorm: {step_pnorm}")
+                tqdm.write(f"Current pnorm:{nl}{step_pnorm}")
             if lp_sparsity_loss is not None:
-                tqdm.write(f"LP sparsity loss: \n{lp_sparsity_loss}")
+                tqdm.write(f"LP sparsity loss:{nl}{lp_sparsity_loss}")
             if topk_recon_loss is not None:
-                tqdm.write(f"Topk recon loss: \n{topk_recon_loss}")
-            tqdm.write(f"Reconstruction loss: \n{out_recon_loss}")
+                tqdm.write(f"Topk recon loss:{nl}{topk_recon_loss}")
+            tqdm.write(f"Reconstruction loss:{nl}{out_recon_loss}")
             if topk_l2_loss is not None:
-                tqdm.write(f"topk l2 loss: \n{topk_l2_loss}")
+                tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
             if param_match_loss is not None:
                 param_match_loss_repr = (
                     param_match_loss.item() if param_match_loss.numel() == 1 else param_match_loss
                 )
-                tqdm.write(f"Param match loss: \n{param_match_loss_repr}\n")
+                tqdm.write(f"Param match loss:{nl}{param_match_loss_repr}\n")
             if config.wandb_project:
                 wandb.log(
                     {
