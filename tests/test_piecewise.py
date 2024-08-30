@@ -225,7 +225,9 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     # Initial param match loss
     pretrained_weights = piecewise_model.all_decomposable_params()
     initial_param_match_loss = calc_param_match_loss(
-        model=piecewise_model_spd, pretrained_weights=pretrained_weights, device=device
+        pretrained_weights=pretrained_weights,
+        layer_in_params=piecewise_model_spd.all_As(),
+        layer_out_params=piecewise_model_spd.all_Bs(),
     )
 
     attribution_scores = calc_attributions(out, inner_acts)
@@ -250,7 +252,9 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
 
     # Check that the losses have not reduced
     final_param_match_loss = calc_param_match_loss(
-        model=piecewise_model_spd, pretrained_weights=pretrained_weights, device=device
+        pretrained_weights=pretrained_weights,
+        layer_in_params=piecewise_model_spd.all_As(),
+        layer_out_params=piecewise_model_spd.all_Bs(),
     )
 
     out, _, inner_acts = piecewise_model_spd(batch)

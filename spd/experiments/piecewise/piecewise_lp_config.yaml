@@ -5,7 +5,7 @@ seed: 0
 topk: null
 pnorm: 0.9
 lp_sparsity_coeff: 1e-2
-batch_size: 256
+batch_size: 2048
 steps: 20_000
 print_freq: 500
 image_freq: 500
