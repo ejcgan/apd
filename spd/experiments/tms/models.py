@@ -90,17 +90,17 @@ class TMSSPDModel(SPDModel):
         Float[Tensor, "... i f"], list[Float[Tensor, "... i f"]], list[Float[Tensor, "... i k"]]
     ]:
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        h_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
-        hidden_0 = torch.einsum("...ik,ikh->...ih", h_0, self.B)
+        inner_act_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
+        layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0, self.B)
 
-        h_1 = torch.einsum("...ih,ikh->...ik", hidden_0, self.B)
-        hidden_1 = torch.einsum("...ik,ifk->...if", h_1, normed_A)
-        pre_relu = hidden_1 + self.b_final
+        inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
+        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, normed_A)
+        pre_relu = layer_act_1 + self.b_final
 
         out = F.relu(pre_relu)
-        # Can pass hidden_1 or pre_relu to layer_acts[1] as they're the same for the gradient
-        # operations we care about (dout/d(h_1)).
-        return out, [hidden_0, hidden_1], [h_0, h_1]  # out, layer_acts, inner_acts
+        # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
+        # operations we care about (dout/d(inner_act_1)).
+        return out, [layer_act_0, layer_act_1], [inner_act_0, inner_act_1]
 
     def forward_topk(
         self,
@@ -114,19 +114,19 @@ class TMSSPDModel(SPDModel):
         """Performs a forward pass using only the top-k subnetwork activations."""
         normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
 
-        h_0 = torch.einsum("...if,ifk->...ik", x, normed_A)
-        assert topk_mask.shape == h_0.shape
-        h_0_topk = h_0 * topk_mask
-        hidden_0 = torch.einsum("...ik,ikh->...ih", h_0_topk, self.B)
+        inner_act_0 = torch.einsum("...if,ifk->...ik", x, normed_A)
+        assert topk_mask.shape == inner_act_0.shape
+        inner_act_0_topk = inner_act_0 * topk_mask
+        layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0_topk, self.B)
 
-        h_1 = torch.einsum("...ih,ikh->...ik", hidden_0, self.B)
-        assert topk_mask.shape == h_1.shape
-        h_1_topk = h_1 * topk_mask
-        hidden_1 = torch.einsum("...ik,ifk->...if", h_1_topk, normed_A)
+        inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
+        assert topk_mask.shape == inner_act_1.shape
+        inner_act_1_topk = inner_act_1 * topk_mask
+        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1_topk, normed_A)
 
-        pre_relu = hidden_1 + self.b_final
+        pre_relu = layer_act_1 + self.b_final
         out = F.relu(pre_relu)
-        return out, [hidden_0, hidden_1], [h_0_topk, h_1_topk]  # out, layer_acts, inner_acts
+        return out, [layer_act_0, layer_act_1], [inner_act_0_topk, inner_act_1_topk]
 
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDModel":  # type: ignore
