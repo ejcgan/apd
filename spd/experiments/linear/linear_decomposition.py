@@ -141,7 +141,7 @@ def collect_inner_act_data(
 
     out, _, test_inner_acts = model(test_batch)
     if topk is not None:
-        attribution_scores = calc_attributions(out, test_inner_acts, retain_graph=False)
+        attribution_scores = calc_attributions(out, test_inner_acts)
         topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
 
         test_inner_acts = model.forward_topk(test_batch, topk_mask=topk_mask)[-1]

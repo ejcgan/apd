@@ -240,7 +240,6 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
 def calc_attributions(
     out: Float[Tensor, "... out_dim"],
     inner_acts: list[Float[Tensor, "... k"]],
-    retain_graph: bool = True,
 ) -> Float[Tensor, "... k"]:
     """Calculate the sum of the (squared) attributions from each output dimension.
 
@@ -257,9 +256,6 @@ def calc_attributions(
         out: The output of the model.
         inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
             parameter matrix).
-        retain_graph: retain_graph argument for autograd.grad. In the model forward pass we use
-            the out variable multiple times, and thus require retain_graph. In the plotting function
-            we don't, and thus don't require retain_graph.
 
     Returns:
         The sum of the (squared) attributions from each output dimension.
@@ -268,7 +264,7 @@ def calc_attributions(
     for feature_idx in range(out.shape[-1]):
         feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
         feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), inner_acts, retain_graph=retain_graph
+            out[..., feature_idx].sum(), inner_acts, retain_graph=True
         )
         assert len(feature_grads) == len(inner_acts)
         for param_matrix_idx in range(len(inner_acts)):
