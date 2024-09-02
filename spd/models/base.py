@@ -30,6 +30,16 @@ class SPDModel(ABC, nn.Module):
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         pass
 
+    @abstractmethod
+    def set_matrices_to_unit_norm(self) -> None:
+        """Set the matrices that need to be normalized to unit norm."""
+        pass
+
+    @abstractmethod
+    def fix_normalized_adam_gradients(self) -> None:
+        """Modify the gradient by subtracting it's component parallel to the activation."""
+        pass
+
 
 class Model(ABC, nn.Module):
     @abstractmethod

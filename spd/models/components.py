@@ -47,8 +47,7 @@ class ParamComponents(nn.Module):
         self,
         x: Float[Tensor, "... dim1"],
     ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
+        inner_acts = torch.einsum("bf,fk->bk", x, self.A)
         out = torch.einsum("bk,kg->bg", inner_acts, self.B)
         return out, inner_acts
 
@@ -69,8 +68,7 @@ class ParamComponents(nn.Module):
             inner_acts: Subnetwork activations
         """
 
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bf,fk->bk", x, normed_A)
+        inner_acts = torch.einsum("bf,fk->bk", x, self.A)
         inner_acts_topk = inner_acts * topk_mask
         out = torch.einsum("bk,kg->bg", inner_acts_topk, self.B)
         return out, inner_acts_topk

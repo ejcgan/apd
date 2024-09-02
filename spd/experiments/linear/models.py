@@ -5,6 +5,7 @@ from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
 from spd.models.base import Model, SPDModel
+from spd.utils import remove_grad_parallel_to_subnetwork_vecs
 
 
 class DeepLinearModel(Model):
@@ -54,8 +55,7 @@ class DeepLinearParamComponents(nn.Module):
         self,
         x: Float[Tensor, "... n_instances n_features"],
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
+        inner_acts = torch.einsum("bif,ifk->bik", x, self.A)
         out = torch.einsum("bik,ikg->big", inner_acts, self.B)
         return out, inner_acts
 
@@ -65,8 +65,7 @@ class DeepLinearParamComponents(nn.Module):
         topk_mask: Bool[Tensor, "... n_instances k"],
     ) -> tuple[Float[Tensor, "... n_instances n_features"], Float[Tensor, "... n_instances k"]]:
         """Performs a forward pass using only the top-k subnetwork activations."""
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_acts = torch.einsum("bif,ifk->bik", x, normed_A)
+        inner_acts = torch.einsum("bif,ifk->bik", x, self.A)
         inner_acts_topk = inner_acts * topk_mask
         out = torch.einsum("bik,ikg->big", inner_acts_topk, self.B)
         return out, inner_acts_topk
@@ -96,10 +95,10 @@ class DeepLinearComponentModel(SPDModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        return [layer.A / layer.A.norm(p=2, dim=-2, keepdim=True) for layer in self.layers]
+    def all_As(self) -> list[Float[Tensor, "n_instances n_features k"]]:
+        return [layer.A for layer in self.layers]
 
-    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
+    def all_Bs(self) -> list[Float[Tensor, "n_instances k n_features"]]:
         return [layer.B for layer in self.layers]
 
     def forward(
@@ -144,3 +143,11 @@ class DeepLinearComponentModel(SPDModel):
         model = cls(n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=k)
         model.load_state_dict(params)
         return model
+
+    def set_matrices_to_unit_norm(self):
+        for layer in self.layers:
+            layer.A.data /= layer.A.data.norm(p=2, dim=-2, keepdim=True)
+
+    def fix_normalized_adam_gradients(self):
+        for layer in self.layers:
+            remove_grad_parallel_to_subnetwork_vecs(layer.A.data, layer.A.grad)

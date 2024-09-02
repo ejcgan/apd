@@ -99,6 +99,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: Probability = 0.0
+    unit_norm_matrices: bool = True
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -364,6 +365,9 @@ def optimize(
     total_samples = 0
     data_iter = iter(dataloader)
     for step in tqdm(range(config.steps + 1), ncols=0):
+        if config.unit_norm_matrices:
+            model.set_matrices_to_unit_norm()
+
         step_lr = get_lr_with_warmup(
             step=step,
             steps=config.steps,
@@ -441,7 +445,7 @@ def optimize(
 
         out_topk, topk_l2_loss, topk_recon_loss = None, None, None
         if config.topk is not None:
-            attribution_scores = calc_attributions(out, inner_acts, retain_graph=True)
+            attribution_scores = calc_attributions(out, inner_acts)
 
             topk_mask = calc_topk_mask(
                 attribution_scores, config.topk, batch_topk=config.batch_topk
@@ -558,4 +562,6 @@ def optimize(
         # Skip gradient step if we are at the last step (last step just for plotting and logging)
         if step != config.steps:
             loss.backward()
+            if config.unit_norm_matrices:
+                model.fix_normalized_adam_gradients()
             opt.step()

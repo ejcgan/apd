@@ -342,3 +342,19 @@ def calc_neuron_indices(
         for layer in range(n_layers)
     ]
     return neuron_indices
+
+
+@torch.inference_mode()
+def remove_grad_parallel_to_subnetwork_vecs(
+    A: Float[Tensor, "... d_in k"], A_grad: Float[Tensor, "... d_in k"]
+) -> None:
+    """Modify the gradient by subtracting it's component parallel to the activation.
+
+    I.e. subtract the projection of the gradient vector onto the activation vector.
+
+    This is to stop Adam from changing the norm of A. Note that this will not completely prevent
+    Adam from changing the norm due to Adam's (m/(sqrt(v) + eps)) term not preserving the norm
+    direction.
+    """
+    parallel_component = einops.einsum(A_grad, A, "... d_in k, ... d_in k -> ... k")
+    A_grad -= einops.einsum(parallel_component, A, "... k, ... d_in k -> ... d_in k")

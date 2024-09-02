@@ -11,6 +11,7 @@ from spd.experiments.bool_circuits.bool_circuit_utils import BooleanOperation, m
 from spd.log import logger
 from spd.models.base import Model, SPDModel
 from spd.models.components import MLPComponents
+from spd.utils import remove_grad_parallel_to_subnetwork_vecs
 
 
 class MLP(nn.Module):
@@ -160,7 +161,7 @@ class BoolCircuitSPDTransformer(SPDModel):
         all_A_pairs = [
             (self.layers[i].linear1.A, self.layers[i].linear2.A) for i in range(self.n_layers)
         ]
-        As = [A / A.norm(p=2, dim=-2, keepdim=True) for A_pair in all_A_pairs for A in A_pair]
+        As = [A for A_pair in all_A_pairs for A in A_pair]
         assert len(As) == self.n_param_matrices
         return As
 
@@ -245,3 +246,13 @@ class BoolCircuitSPDTransformer(SPDModel):
         )
         model.load_state_dict(params)
         return model
+
+    def set_matrices_to_unit_norm(self):
+        for mlp in self.layers:
+            mlp.linear1.A.data /= mlp.linear1.A.data.norm(p=2, dim=-2, keepdim=True)
+            mlp.linear2.A.data /= mlp.linear2.A.data.norm(p=2, dim=-2, keepdim=True)
+
+    def fix_normalized_adam_gradients(self):
+        for mlp in self.layers:
+            remove_grad_parallel_to_subnetwork_vecs(mlp.linear1.A.data, mlp.linear1.A.grad)
+            remove_grad_parallel_to_subnetwork_vecs(mlp.linear2.A.data, mlp.linear2.A.grad)

@@ -11,7 +11,7 @@ from torch import Tensor
 
 from spd.models.base import Model, SPDModel
 from spd.models.components import MLPComponents
-from spd.utils import calc_neuron_indices
+from spd.utils import calc_neuron_indices, remove_grad_parallel_to_subnetwork_vecs
 
 
 def initialize_embeds(
@@ -706,7 +706,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         all_A_pairs = [
             (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.n_layers)
         ]
-        As = [A / A.norm(p=2, dim=-2, keepdim=True) for A_pair in all_A_pairs for A in A_pair]
+        As = [A for A_pair in all_A_pairs for A in A_pair]
         assert len(As) == self.n_param_matrices
         return As
 
@@ -875,3 +875,13 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         )
         model.load_state_dict(params)
         return model
+
+    def set_matrices_to_unit_norm(self):
+        for mlp in self.mlps:
+            mlp.linear1.A.data /= mlp.linear1.A.data.norm(p=2, dim=-2, keepdim=True)
+            mlp.linear2.A.data /= mlp.linear2.A.data.norm(p=2, dim=-2, keepdim=True)
+
+    def fix_normalized_adam_gradients(self):
+        for mlp in self.mlps:
+            remove_grad_parallel_to_subnetwork_vecs(mlp.linear1.A.data, mlp.linear1.A.grad)
+            remove_grad_parallel_to_subnetwork_vecs(mlp.linear2.A.data, mlp.linear2.A.grad)

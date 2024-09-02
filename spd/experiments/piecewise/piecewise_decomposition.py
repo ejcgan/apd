@@ -101,9 +101,8 @@ def plot_components(
     assert len(model.all_As()) // 2 == n_layers, "Number of A and B matrices must be 2*n_layers"
 
     As = model.all_As()
-    normed_As = [A / A.norm(p=2, dim=-2, keepdim=True) for A in As]
     Bs = model.all_Bs()
-    ABs = [torch.einsum("...fk,...kg->...fg", normed_As[i], Bs[i]) for i in range(len(normed_As))]
+    ABs = [torch.einsum("...fk,...kg->...fg", As[i], Bs[i]) for i in range(len(As))]
     for n in range(n_layers):
         s_row = 2 * n  # the row where we put the small plots
         l_row = s_row + 1  # the row where we put the large plots
@@ -111,11 +110,11 @@ def plot_components(
 
         # Plot A of W_in
         im1 = axes[s_row, 2].matshow(
-            normed_As[2 * n].detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+            As[2 * n].detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
         )
         axes[s_row, 2].set_ylabel("Embedding index")
         axes[s_row, 2].set_xlabel("Subnetwork index")
-        axes[s_row, 2].set_title(f"Normed A (W_in, layer {n})")
+        axes[s_row, 2].set_title(f"A (W_in, layer {n})")
         divider = make_axes_locatable(axes[s_row, 2])
         cax = divider.append_axes("right", size="5%", pad=0.05)
         fig.colorbar(im1, cax=cax, format=tkr.FormatStrFormatter("%.1f"))
@@ -144,11 +143,11 @@ def plot_components(
 
         # Plot A of W_out in 2nd row
         im4 = axes[l_row, 3].matshow(
-            normed_As[2 * n + 1].T.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
+            As[2 * n + 1].T.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm()
         )
         axes[l_row, 3].set_ylabel("Subnetwork index")
         axes[l_row, 3].set_xlabel("Neuron index")
-        axes[l_row, 3].set_title(f"Normed A (W_out, layer {n})")
+        axes[l_row, 3].set_title(f"A (W_out, layer {n})")
         divider = make_axes_locatable(axes[l_row, 3])
         cax = divider.append_axes("right", size="5%", pad=0.05)
         fig.colorbar(im4, cax=cax, format=tkr.FormatStrFormatter("%.2f"))

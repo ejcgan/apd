@@ -51,8 +51,7 @@ def get_run_name(config: Config, task_config: TMSConfig) -> str:
 def plot_perumated_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
     permuted_A_T_list: list[torch.Tensor] = []
     for i in range(model.n_instances):
-        normed_A = model.A / model.A.norm(p=2, dim=-2, keepdim=True)
-        permuted_matrix = permute_to_identity(normed_A[i].T.abs())
+        permuted_matrix = permute_to_identity(model.A[i].T.abs())
         permuted_A_T_list.append(permuted_matrix)
     permuted_A_T = torch.stack(permuted_A_T_list, dim=0)
 

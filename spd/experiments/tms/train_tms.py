@@ -1,4 +1,3 @@
-# %%
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,14 +8,13 @@ import torch
 from matplotlib import collections as mc
 from matplotlib import colors as mcolors
 from pydantic import BaseModel, PositiveInt
-from tqdm import trange
+from tqdm import tqdm, trange
 
 from spd.experiments.tms.models import TMSModel
 from spd.experiments.tms.utils import TMSDataset
 from spd.utils import DatasetGeneratedDataLoader
 
 
-# %%
 class TMSTrainConfig(BaseModel):
     n_features: PositiveInt
     n_hidden: PositiveInt
@@ -47,7 +45,7 @@ def train(
     model: TMSModel,
     dataloader: DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]],
     importance: float = 1.0,
-    steps: int = 10_000,
+    steps: int = 5_000,
     print_freq: int = 100,
     lr: float = 5e-3,
     lr_schedule: Callable[[int, int], float] = linear_lr,
@@ -57,7 +55,7 @@ def train(
     opt = torch.optim.AdamW(list(model.parameters()), lr=lr)
 
     data_iter = iter(dataloader)
-    with trange(steps, ncols=50) as t:
+    with trange(steps, ncols=0) as t:
         for step in t:
             step_lr = lr * lr_schedule(step, steps)
             for group in opt.param_groups:
@@ -77,6 +75,7 @@ def train(
                 for h in hooks:
                     h(hook_data)
             if step % print_freq == 0 or (step + 1 == steps):
+                tqdm.write(f"Step {step} Loss: {loss.item() / model.n_instances}")
                 t.set_postfix(
                     loss=loss.item() / model.n_instances,
                     lr=step_lr,
@@ -116,7 +115,6 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # %%
     config = TMSTrainConfig(
         n_features=5,
         n_hidden=2,
@@ -149,8 +147,7 @@ if __name__ == "__main__":
     )
     torch.save(model.state_dict(), out_dir / run_name)
     print(f"Saved model to {out_dir / run_name}")
-    # %%
-    plot_intro_diagram(model, filepath=out_dir / run_name.replace(".pth", ".png"))
-    print(f"Saved diagram to {out_dir / run_name.replace('.pth', '.png')}")
 
-# %%
+    if config.n_hidden == 2:
+        plot_intro_diagram(model, filepath=out_dir / run_name.replace(".pth", ".png"))
+        print(f"Saved diagram to {out_dir / run_name.replace('.pth', '.png')}")

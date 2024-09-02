@@ -2,19 +2,21 @@ wandb_project: spd-piecewise
 wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0
-topk: 1.25
-topk_recon_coeff: 1
-topk_l2_coeff: 0.01
-lp_sparsity_coeff: null
-lr: 5e-2
+topk: 0.625
+batch_topk: true
+topk_recon_coeff: 0.1
+topk_l2_coeff: 0.0003
+lp_sparsity_coeff: 0.00003
+pnorm: 0.9
+lr: 0.01
 batch_size: 2048
 steps: 20_000
 print_freq: 500
-image_freq: 500
+image_freq: 1000
 save_freq: 20_000
-lr_warmup_pct: 0.01
+lr_warmup_pct: 0.1
+lr_schedule: cosine
 loss_type: param_match
-batch_topk: true
 task_config:
   task_name: piecewise
   n_functions: 10
@@ -23,5 +25,6 @@ task_config:
   feature_probability: 0.05
   range_min: 0
   range_max: 5
-  k: 11
+  k: 10
+  simple_bias: false
   handcoded_AB: false

@@ -22,6 +22,6 @@ task_config:
   feature_probability: 0.05
   range_min: 0
   range_max: 5
-  k: 20
+  k: 10
   handcoded_AB: true
   simple_bias: false

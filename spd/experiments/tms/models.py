@@ -6,6 +6,7 @@ from torch.nn import functional as F
 
 from spd.models.base import Model, SPDModel
 from spd.types import RootPath
+from spd.utils import remove_grad_parallel_to_subnetwork_vecs
 
 
 class TMSModel(Model):
@@ -77,24 +78,21 @@ class TMSSPDModel(SPDModel):
         # Note that A is defined as the matrix which mutliplies the activations
         # to get the inner_acts. In TMS, because we tie the W matrices, our second A matrix
         # is actually the B matrix
-        A_1 = einops.rearrange(self.B, "i k h -> i h k")
-        return [self.A / self.A.norm(p=2, dim=-2, keepdim=True), A_1]
+        return [self.A, einops.rearrange(self.B, "i k h -> i h k")]
 
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        B_1 = einops.rearrange(self.A / self.A.norm(p=2, dim=-2, keepdim=True), "i f k -> i k f")
-        return [self.B, B_1]
+        return [self.B, einops.rearrange(self.A, "i f k -> i k f")]
 
     def forward(
         self, features: Float[Tensor, "... i f"]
     ) -> tuple[
         Float[Tensor, "... i f"], list[Float[Tensor, "... i f"]], list[Float[Tensor, "... i k"]]
     ]:
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-        inner_act_0 = torch.einsum("...if,ifk->...ik", features, normed_A)
+        inner_act_0 = torch.einsum("...if,ifk->...ik", features, self.A)
         layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0, self.B)
 
         inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
-        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, normed_A)
+        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, self.A)
         pre_relu = layer_act_1 + self.b_final
 
         out = F.relu(pre_relu)
@@ -112,9 +110,7 @@ class TMSSPDModel(SPDModel):
         list[Float[Tensor, "... i k"]],
     ]:
         """Performs a forward pass using only the top-k subnetwork activations."""
-        normed_A = self.A / self.A.norm(p=2, dim=-2, keepdim=True)
-
-        inner_act_0 = torch.einsum("...if,ifk->...ik", x, normed_A)
+        inner_act_0 = torch.einsum("...if,ifk->...ik", x, self.A)
         assert topk_mask.shape == inner_act_0.shape
         inner_act_0_topk = inner_act_0 * topk_mask
         layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0_topk, self.B)
@@ -122,7 +118,7 @@ class TMSSPDModel(SPDModel):
         inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
         assert topk_mask.shape == inner_act_1.shape
         inner_act_1_topk = inner_act_1 * topk_mask
-        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1_topk, normed_A)
+        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1_topk, self.A)
 
         pre_relu = layer_act_1 + self.b_final
         out = F.relu(pre_relu)
@@ -131,3 +127,10 @@ class TMSSPDModel(SPDModel):
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDModel":  # type: ignore
         pass
+
+    def set_matrices_to_unit_norm(self):
+        self.A.data /= self.A.data.norm(p=2, dim=-2, keepdim=True)
+
+    def fix_normalized_adam_gradients(self):
+        assert self.A.grad is not None
+        remove_grad_parallel_to_subnetwork_vecs(self.A.data, self.A.grad)
