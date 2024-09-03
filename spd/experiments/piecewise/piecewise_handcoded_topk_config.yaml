@@ -4,6 +4,7 @@ wandb_run_name_prefix: ""
 seed: 0
 topk: 1.25
 batch_topk: true
+param_match_coeff: 1.0
 topk_recon_coeff: 1e-1
 topk_l2_coeff: 1e-1
 lr: 1e-4
@@ -13,7 +14,6 @@ print_freq: 500
 image_freq: 500
 save_freq: 20_000
 lr_warmup_pct: 0.01
-loss_type: param_match
 task_config:
   task_name: piecewise
   n_functions: 10

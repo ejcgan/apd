@@ -4,6 +4,7 @@ wandb_run_name_prefix: ""
 seed: 0
 topk: 0.625
 batch_topk: true
+param_match_coeff: 1.0
 topk_recon_coeff: 1
 topk_l2_coeff: 0.01 #0.01, 0.02
 lp_sparsity_coeff: null
@@ -18,8 +19,6 @@ save_freq: 25_000
 lr_warmup_pct: 0.004
 unit_norm_matrices: false
 lr_schedule: cosine
-loss_type: param_match
-
 task_config:
   task_name: piecewise
   n_functions: 10

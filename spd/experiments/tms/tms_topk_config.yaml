@@ -4,6 +4,7 @@ wandb_run_name_prefix: "topk_"
 seed: 0
 topk: 0.25
 batch_topk: true
+param_match_coeff: 1.0
 topk_recon_coeff: 1
 topk_l2_coeff: 0.1
 batch_size: 2048
@@ -13,7 +14,6 @@ print_freq: 1000
 lr: 1e-3
 lr_schedule: constant
 lr_warmup_pct: 0.1
-loss_type: param_match
 task_config:
   task_name: tms
   k: 5

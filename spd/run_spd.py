@@ -89,6 +89,8 @@ class Config(BaseModel):
     slow_images: bool = False
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
+    out_recon_coeff: NonNegativeFloat | None = None
+    param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
     topk_l2_coeff: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
@@ -98,7 +100,6 @@ class Config(BaseModel):
     lr_exponential_halflife: PositiveFloat | None = None
     lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
-    loss_type: Literal["param_match", "behavioral"] = "param_match"
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
     task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
@@ -135,6 +136,17 @@ class Config(BaseModel):
             assert self.topk_l2_coeff is None, "topk_l2_coeff is not None but topk is"
             assert self.topk_recon_coeff is None, "topk_recon_coeff is not None but topk is"
 
+        # Give a warning if both out_recon_coeff and param_match_coeff are > 0
+        if (
+            self.param_match_coeff is not None
+            and self.param_match_coeff > 0
+            and self.out_recon_coeff is not None
+            and self.out_recon_coeff > 0
+        ):
+            logger.warning(
+                "Both param_match_coeff and out_recon_coeff are > 0. It's typical to only set one."
+            )
+
         # If any of the coeffs are 0, raise a warning
         msg = "is 0, you may wish to instead set it to null to avoid calculating the loss"
         if self.topk_l2_coeff == 0:
@@ -143,6 +155,8 @@ class Config(BaseModel):
             logger.warning(f"topk_recon_coeff {msg}")
         if self.lp_sparsity_coeff == 0:
             logger.warning(f"lp_sparsity_coeff {msg}")
+        if self.param_match_coeff == 0:
+            logger.warning(f"param_match_coeff {msg}")
 
         # Check that lr_exponential_halflife is not None if lr_schedule is "exponential"
         if self.lr_schedule == "exponential":
@@ -273,7 +287,7 @@ def calc_param_match_loss(
         The parameter match loss of shape [n_instances] if the model has an n_instances dimension,
         otherwise of shape [].
     """
-    param_match_loss = torch.zeros(1, device=layer_in_params[0].device)
+    param_match_loss = torch.tensor(0.0, device=layer_in_params[0].device)
     for i, (A, B) in enumerate(zip(layer_in_params, layer_out_params, strict=True)):
         AB = torch.einsum("...fk,...kg->...fg", A, B)
         param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).mean(dim=(-2, -1))
@@ -424,7 +438,7 @@ def optimize(
         out_recon_loss = calc_recon_mse(out, labels, has_instance_dim)
 
         param_match_loss = None
-        if config.loss_type == "param_match":
+        if config.param_match_coeff is not None:
             assert pretrained_model is not None, "Need a pretrained model for param_match loss"
             pretrained_weights = pretrained_model.all_decomposable_params()
             param_match_loss = calc_param_match_loss(
@@ -468,11 +482,12 @@ def optimize(
                 topk_recon_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
         # Add up the loss terms
-        if config.loss_type == "param_match":
-            assert param_match_loss is not None
-            loss = param_match_loss.mean()
-        else:
-            loss = out_recon_loss.mean()
+        loss = torch.tensor(0.0, device=device)
+        if param_match_loss is not None:
+            assert config.param_match_coeff is not None
+            loss = loss + config.param_match_coeff * param_match_loss.mean()
+        if config.out_recon_coeff is not None:
+            loss = loss + config.out_recon_coeff * out_recon_loss.mean()
         if lp_sparsity_loss is not None:
             assert step_lp_sparsity_coeff is not None
             loss = loss + step_lp_sparsity_coeff * lp_sparsity_loss.mean()
@@ -488,21 +503,18 @@ def optimize(
             # If using multiple instances, print the losses as tensors in new lines
             nl = "\n" if has_instance_dim else " "
             tqdm.write(f"Step {step}")
-            tqdm.write(f"Total loss: {loss.mean().item()}")
+            tqdm.write(f"Total loss: {loss.item()}")
             if step_pnorm is not None:
                 tqdm.write(f"Current pnorm:{nl}{step_pnorm}")
             if lp_sparsity_loss is not None:
                 tqdm.write(f"LP sparsity loss:{nl}{lp_sparsity_loss}")
             if topk_recon_loss is not None:
                 tqdm.write(f"Topk recon loss:{nl}{topk_recon_loss}")
-            tqdm.write(f"Reconstruction loss:{nl}{out_recon_loss}")
+            tqdm.write(f"Out recon loss:{nl}{out_recon_loss}")
             if topk_l2_loss is not None:
                 tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
             if param_match_loss is not None:
-                param_match_loss_repr = (
-                    param_match_loss.item() if param_match_loss.numel() == 1 else param_match_loss
-                )
-                tqdm.write(f"Param match loss:{nl}{param_match_loss_repr}\n")
+                tqdm.write(f"Param match loss:{nl}{param_match_loss}")
             if config.wandb_project:
                 wandb.log(
                     {

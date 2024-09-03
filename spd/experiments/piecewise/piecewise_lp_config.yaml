@@ -4,6 +4,7 @@ wandb_run_name_prefix: ""
 seed: 0
 topk: null
 pnorm: 0.9
+param_match_coeff: 1.0
 lp_sparsity_coeff: 1e-2
 batch_size: 2048
 steps: 20_000
@@ -13,7 +14,6 @@ save_freq: 10_000
 lr: 1e-2
 lr_schedule: constant
 lr_warmup_pct: 0.1
-loss_type: param_match
 task_config:
   task_name: piecewise
   n_functions: 10

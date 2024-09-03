@@ -215,7 +215,7 @@ def main(
         n_layers = dl_model.n_layers
         n_instances = dl_model.n_instances
     else:
-        assert config.loss_type == "behavioral", "Only behavioral loss allows no pretrained model"
+        assert config.out_recon_coeff is not None, "Only out recon loss allows no pretrained model"
         dl_model = None
         n_features = config.task_config.n_features
         n_layers = config.task_config.n_layers

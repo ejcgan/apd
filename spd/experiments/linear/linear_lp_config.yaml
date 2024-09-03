@@ -8,6 +8,7 @@ print_freq: 500
 image_freq: 1000
 save_freq: 10_000
 lr: 1e-2
+param_match_coeff: 1.0
 lp_sparsity_coeff: 1e-2
 pnorm: 0.9
 pnorm_end: null
@@ -15,7 +16,6 @@ lr_schedule: constant
 lr_warmup_pct: 0.1
 sparsity_loss_type: jacobian
 sparsity_warmup_pct: 0.0
-loss_type: param_match
 task_config:
   task_name: deep_linear
   pretrained_model_path: spd/experiments/linear/out/linear.pt

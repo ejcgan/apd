@@ -3,6 +3,7 @@ wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0
 topk: null
+param_match_coeff: 1.0
 lp_sparsity_coeff: 3
 pnorm: 0.9
 pnorm_end: null
@@ -13,7 +14,6 @@ print_freq: 1000
 lr: 0.06
 lr_schedule: constant
 lr_warmup_pct: 0.1
-loss_type: param_match
 task_config:
   task_name: tms
   k: 5
