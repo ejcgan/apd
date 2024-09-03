@@ -19,7 +19,7 @@ dependencies = [
     "matplotlib==3.9.1",  # Avoid frequent pyright errors with new matplotlib versions
     "numpy",
     "python-dotenv",
-    "wandb",
+    "wandb<=0.17.7", # due to https://github.com/wandb/wandb/issues/8248
     "sympy",
 ]
 
