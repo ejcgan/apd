@@ -4,23 +4,26 @@ wandb_run_name_prefix: ""
 seed: 0
 topk: 0.625
 batch_topk: true
-topk_recon_coeff: 0.1
-topk_l2_coeff: 0.0003
-lp_sparsity_coeff: 0.00003
+topk_recon_coeff: 1
+topk_l2_coeff: 0.01 #0.01, 0.02
+lp_sparsity_coeff: null
 pnorm: 0.9
-lr: 0.01
+lr: 0.001
 batch_size: 2048
-steps: 20_000
+steps: 500_00
 print_freq: 500
-image_freq: 1000
-save_freq: 20_000
-lr_warmup_pct: 0.1
+image_freq: 25_000
+slow_images: true
+save_freq: 25_000
+lr_warmup_pct: 0.004
+unit_norm_matrices: false
 lr_schedule: cosine
 loss_type: param_match
+
 task_config:
   task_name: piecewise
   n_functions: 10
-  neurons_per_function: 10
+  neurons_per_function: 10 #todo
   n_layers: 1
   feature_probability: 0.05
   range_min: 0

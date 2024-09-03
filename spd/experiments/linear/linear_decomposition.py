@@ -161,11 +161,11 @@ def collect_inner_act_data(
 
 def plot_subnetwork_activations(
     model: DeepLinearComponentModel,
+    step: int,
+    out_dir: Path | None,
     device: str,
     topk: float | None,
-    step: int,
     batch_topk: bool,
-    out_dir: Path | None = None,
     **_,
 ) -> plt.Figure:
     test_batch, test_inner_acts = collect_inner_act_data(model, device, topk, batch_topk=batch_topk)

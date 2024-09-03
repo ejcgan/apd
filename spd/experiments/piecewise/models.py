@@ -335,7 +335,6 @@ class ControlledResNet(nn.Module):
             torch_gen = torch.Generator()
 
         if self.d_control == self.num_functions:
-            print("control_W_E is identity")
             self.control_W_E = torch.eye(self.d_control)
         else:
             random_matrix = torch.randn(self.d_control, self.num_functions, generator=torch_gen)
