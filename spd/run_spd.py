@@ -176,7 +176,7 @@ def get_lr_schedule_fn(
     elif lr_schedule == "constant":
         return lambda *_: 1.0
     elif lr_schedule == "cosine":
-        return lambda step, steps: np.cos(0.5 * np.pi * step / (steps - 1))
+        return lambda step, steps: 1.0 if steps == 1 else np.cos(0.5 * np.pi * step / (steps - 1))
     elif lr_schedule == "exponential":
         assert lr_exponential_halflife is not None  # Should have been caught by model validator
         halflife = lr_exponential_halflife
