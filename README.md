@@ -50,6 +50,3 @@ wandb sweep spd/experiments/tms/tms_topk_match_param_sweep.yaml
 ```
 
 All experiments call the `optimize` function in `spd/run_spd.py`, which contains the main SPD logic.
-
-**Note, as of writing, the bool_circuits experiment is not currently supported (we had conceptual
-issues trying to create a suitable boolean circuit dataset).**

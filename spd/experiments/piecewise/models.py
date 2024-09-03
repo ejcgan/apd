@@ -543,8 +543,7 @@ class PiecewiseFunctionTransformer(Model):
         d_mlp = neurons_per_function * len(functions) // n_layers
         d_embed = n_inputs + 1
         model = cls(n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers)
-        # Note that our MLP differs from the bool_circuit_models.MLP in having b_out
-        # Also different names
+
         assert len(functions) == d_embed - 2
         assert len(functions) == n_inputs - 1
         handcoded_model = ControlledResNet(

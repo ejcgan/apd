@@ -43,13 +43,6 @@ class TMSConfig(BaseModel):
     pretrained_model_path: RootPath | None = None
 
 
-class BoolCircuitConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["bool_circuit"] = "bool_circuit"
-    k: PositiveInt
-    pretrained_model_path: RootPath
-
-
 class DeepLinearConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["deep_linear"] = "deep_linear"
@@ -102,7 +95,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
-    task_config: DeepLinearConfig | BoolCircuitConfig | PiecewiseConfig | TMSConfig = Field(
+    task_config: DeepLinearConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
 
