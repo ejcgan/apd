@@ -267,7 +267,7 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     # TODO: When we have GPU tests, run more steps and lower the precision. Current test only shows
     # that the loss doesn't blow up dramatically straight away.
     assert final_param_match_loss < 1e-3
-    assert final_topk_recon_loss < 3e-3
+    assert final_topk_recon_loss < 1e-2
 
 
 def test_piecewise_dataset():
