@@ -42,7 +42,7 @@ def plot_components(
     device: str,
     slow_images: bool,
     **_,
-) -> plt.Figure:
+) -> dict[str, plt.Figure]:
     # Create a batch of inputs with different control bits active
     x_val = torch.tensor(2.5, device=device)
     batch_size = model.n_inputs - 1  # Assuming first input is for x_val and rest are control bits
@@ -83,41 +83,41 @@ def plot_components(
         ax.set_title(title)
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="1%", pad=0.05)
+        fig = ax.get_figure()
+        assert fig is not None
         fig.colorbar(im, cax=cax, format=tkr.FormatStrFormatter(colorbar_format))
         if ylabel == "Function index":
             n_functions = matrix.shape[0]
             ax.set_yticks(range(n_functions))
             ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])
 
-    # Create figure with subplots using gridspec
-    n_rows = 3 + model.k if slow_images else 3
-    n_cols = 4
-    figsize = (8 * n_cols, 4 + 4 * n_rows)
-    fig = plt.figure(figsize=figsize, constrained_layout=True)
-    gs = fig.add_gridspec(n_rows, n_cols)
-    plt.suptitle(f"Subnetwork Analysis (Step {step})")
-
-    # Plot attribution scores
+    # Figure for attribution scores
+    fig_a, ax = plt.subplots(1, 1, figsize=(4, 4), constrained_layout=True)
+    fig_a.suptitle(f"Subnetwork Analysis (Step {step})")
     plot_matrix(
-        fig.add_subplot(gs[0, 0]),
-        attribution_scores,
-        "Raw attribution Scores",
-        "Subnetwork index",
-        "Function index",
-    )
-    # Plot normalized attribution scores
-    plot_matrix(
-        fig.add_subplot(gs[0, 1]),
+        ax,
         attribution_scores_normed,
         "Normalized attribution Scores",
         "Subnetwork index",
         "Function index",
     )
+    if out_dir:
+        fig_a.savefig(out_dir / f"attribution_scores_s{step}.png", dpi=300)
+        plt.close(fig_a)
+        tqdm.write(f"Saved attribution scores to {out_dir / f'attribution_scores_s{step}.png'}")
 
-    assert n_layers == 1, "Current implementation only supports 1 layer"
+    # Figures for A, B, AB of each layer
+    n_rows = 3 + model.k if slow_images else 3
+    n_cols = 4
+    figsize = (8 * n_cols, 4 + 4 * n_rows)
+    figs = [plt.figure(figsize=figsize, constrained_layout=True) for _ in range(n_layers)]
+    # Plot normalized attribution scores
+
     for n in range(n_layers):
+        fig = figs[n]
+        gs = fig.add_gridspec(n_rows, n_cols)
         plot_matrix(
-            fig.add_subplot(gs[0, 2]),
+            fig.add_subplot(gs[0, 0]),
             As[2 * n],
             f"A (W_in, layer {n})",
             "Subnetwork index",
@@ -125,15 +125,7 @@ def plot_components(
             "%.1f",
         )
         plot_matrix(
-            fig.add_subplot(gs[0, 3]),
-            Bs[2 * n + 1].T,
-            f"B (W_out, layer {n})",
-            "Subnetwork index",
-            "Embedding index",
-            "%.1f",
-        )
-        plot_matrix(
-            fig.add_subplot(gs[1, :2]),
+            fig.add_subplot(gs[0, 1:]),
             Bs[2 * n],
             f"B (W_in, layer {n})",
             "Neuron index",
@@ -141,7 +133,15 @@ def plot_components(
             "%.2f",
         )
         plot_matrix(
-            fig.add_subplot(gs[1, 2:]),
+            fig.add_subplot(gs[1, 0]),
+            Bs[2 * n + 1].T,
+            f"B (W_out, layer {n})",
+            "Subnetwork index",
+            "Embedding index",
+            "%.1f",
+        )
+        plot_matrix(
+            fig.add_subplot(gs[1, 1:]),
             As[2 * n + 1].T,
             f"A (W_out, layer {n})",
             "Neuron index",
@@ -150,7 +150,7 @@ def plot_components(
         )
         plot_matrix(
             fig.add_subplot(gs[2, :2]),
-            ABs[n],
+            ABs[2 * n],
             f"AB summed (W_in, layer {n})",
             "Neuron index",
             "Embedding index",
@@ -158,7 +158,7 @@ def plot_components(
         )
         plot_matrix(
             fig.add_subplot(gs[2, 2:]),
-            ABs[n + 1].T,
+            ABs[2 * n + 1].T,
             f"AB.T  summed (W_out.T, layer {n})",
             "Neuron index",
             "",
@@ -168,7 +168,7 @@ def plot_components(
             for k in range(model.k):
                 plot_matrix(
                     fig.add_subplot(gs[3 + k, :2]),
-                    ABs_by_k[n][k],
+                    ABs_by_k[2 * n][k],
                     f"AB k={k} (W_in, layer {n})",
                     "Neuron index",
                     "Embedding index",
@@ -176,19 +176,19 @@ def plot_components(
                 )
                 plot_matrix(
                     fig.add_subplot(gs[3 + k, 2:]),
-                    ABs_by_k[n + 1][k].T,
+                    ABs_by_k[2 * n + 1][k].T,
                     f"AB.T k={k} (W_out.T, layer {n})",
                     "Neuron index",
                     "Embedding index",
                     "%.2f",
                 )
 
-    if out_dir:
-        fig.savefig(out_dir / f"subnetwork_analysis_{step}.png", dpi=300)
-        plt.close(fig)
-        tqdm.write(f"Saved subnetwork analysis to {out_dir / f'subnetwork_analysis_{step}.png'}\n")
+        if out_dir:
+            fig.savefig(out_dir / f"matrices_l{n}_s{step}.png", dpi=300)
+            plt.close(fig_a)
+            tqdm.write(f"Saved matrix analysis to {out_dir / f'matrices_l{n}_s{step}.png'}")
 
-    return fig
+    return {"attrib_scores": fig_a, **{f"matrices_l{n}_s{step}": fig for n, fig in enumerate(figs)}}
 
 
 def get_run_name(config: Config) -> str:

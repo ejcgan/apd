@@ -45,10 +45,11 @@ model.to(device)
 
 topk = config.topk
 batch_topk = config.batch_topk
-fig = plot_components(model=model, step=-1, out_dir=None, device=device, slow_images=True)
+fig_dict = plot_components(model=model, step=-1, out_dir=None, device=device, slow_images=True)
 
 out_path = Path(__file__).parent / "out/attribution_scores" / pretrained_path.parent.name
 out_path.mkdir(parents=True, exist_ok=True)
-out_file = out_path / "attribution_scores.png"
-fig.savefig(out_file)
-print(f"Saved plot to {out_file}")
+for k, v in fig_dict.items():
+    out_file = out_path / f"{k}.png"
+    v.savefig(out_file)
+    print(f"Saved plot to {out_file}")

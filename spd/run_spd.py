@@ -355,7 +355,7 @@ def optimize(
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model: Model | None,
-    plot_results_fn: Callable[..., plt.Figure] | None = None,
+    plot_results_fn: Callable[..., dict[str, plt.Figure]] | None = None,
     out_dir: Path | None = None,
 ) -> None:
     model.to(device=device)
@@ -540,7 +540,7 @@ def optimize(
             and step % config.image_freq == 0
             and (step > 0 or not config.slow_images)
         ):
-            fig = plot_results_fn(
+            fig_dict = plot_results_fn(
                 model=model,
                 step=step,
                 out_dir=out_dir,
@@ -551,7 +551,7 @@ def optimize(
             )
             if config.wandb_project:
                 wandb.log(
-                    {"plots": wandb.Image(fig)},
+                    {k: wandb.Image(v) for k, v in fig_dict.items()},
                     step=step,
                 )
 

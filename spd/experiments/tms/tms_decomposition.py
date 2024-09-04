@@ -48,7 +48,7 @@ def get_run_name(config: Config, task_config: TMSConfig) -> str:
     return config.wandb_run_name_prefix + run_suffix
 
 
-def plot_perumated_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
+def plot_perumated_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> dict[str, plt.Figure]:
     permuted_A_T_list: list[torch.Tensor] = []
     for i in range(model.n_instances):
         permuted_matrix = permute_to_identity(model.A[i].T.abs())
@@ -59,7 +59,7 @@ def plot_perumated_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.F
     fig.savefig(out_dir / f"A_{step}.png")
     plt.close(fig)
     tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
-    return fig
+    return {"A": fig}
 
 
 def main(

@@ -167,7 +167,7 @@ def plot_subnetwork_activations(
     topk: float | None,
     batch_topk: bool,
     **_,
-) -> plt.Figure:
+) -> dict[str, plt.Figure]:
     test_batch, test_inner_acts = collect_inner_act_data(model, device, topk, batch_topk=batch_topk)
 
     fig = plot_inner_acts(batch=test_batch, inner_acts=test_inner_acts)
@@ -176,7 +176,7 @@ def plot_subnetwork_activations(
     plt.close(fig)
     if out_dir is not None:
         tqdm.write(f"Saved inner_acts to {out_dir / f'inner_acts_{step}.png'}")
-    return fig
+    return {"inner_acts": fig}
 
 
 def main(
