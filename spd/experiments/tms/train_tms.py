@@ -12,7 +12,7 @@ from tqdm import tqdm, trange
 
 from spd.experiments.tms.models import TMSModel
 from spd.experiments.tms.utils import TMSDataset
-from spd.utils import DatasetGeneratedDataLoader
+from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 
 class TMSTrainConfig(BaseModel):
@@ -27,6 +27,8 @@ class TMSTrainConfig(BaseModel):
     n_instances: PositiveInt
     feature_probability: float
     batch_size: PositiveInt
+    steps: PositiveInt
+    seed: int
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -121,7 +123,11 @@ if __name__ == "__main__":
         n_instances=12,
         feature_probability=0.05,
         batch_size=1024,
+        steps=5_000,
+        seed=0,
     )
+
+    set_seed(config.seed)
 
     model = TMSModel(
         n_instances=config.n_instances,
@@ -137,13 +143,13 @@ if __name__ == "__main__":
         device=device,
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
-    train(model, dataloader=dataloader)
+    train(model, dataloader=dataloader, steps=config.steps)
 
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
     run_name = (
         f"tms_n-features{config.n_features}_n-hidden{config.n_hidden}_"
-        f"n-instances{config.n_instances}.pth"
+        f"n-instances{config.n_instances}_seed{config.seed}.pth"
     )
     torch.save(model.state_dict(), out_dir / run_name)
     print(f"Saved model to {out_dir / run_name}")
