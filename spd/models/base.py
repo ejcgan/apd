@@ -7,12 +7,22 @@ from torch import Tensor, nn
 
 class SPDModel(ABC, nn.Module):
     @abstractmethod
-    def forward_topk(
-        self, x: Float[Tensor, "... dim"], topk_mask: Bool[Tensor, "... k"]
+    def forward(
+        self, x: Float[Tensor, "... d_model_in"]
     ) -> tuple[
-        Float[Tensor, "... dim"],
-        list[Float[Tensor, "... dim"]],
-        list[Float[Tensor, "... k"]],
+        Float[Tensor, "... d_model_out"],  # output
+        list[Float[Tensor, "... d_layer_out"]],  # layer activations
+        list[Float[Tensor, "... k"]],  # inner activations
+    ]:
+        pass
+
+    @abstractmethod
+    def forward_topk(
+        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
+    ) -> tuple[
+        Float[Tensor, "... d_model_out"],  # output
+        list[Float[Tensor, "... d_layer_out"]],  # layer activations
+        list[Float[Tensor, "... k"]],  # inner activations
     ]:
         pass
 
@@ -22,12 +32,12 @@ class SPDModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_As(self) -> list[Float[Tensor, "dim k"]]:
+    def all_As(self) -> list[Float[Tensor, "... d_layer_in k"]]:
         """Pre-normalized A matrices."""
         pass
 
     @abstractmethod
-    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
+    def all_Bs(self) -> list[Float[Tensor, "... k d_layer_out"]]:
         pass
 
     @abstractmethod
@@ -38,6 +48,37 @@ class SPDModel(ABC, nn.Module):
     @abstractmethod
     def fix_normalized_adam_gradients(self) -> None:
         """Modify the gradient by subtracting it's component parallel to the activation."""
+        pass
+
+
+class SPDFullRankModel(ABC, nn.Module):
+    @abstractmethod
+    def forward(
+        self, x: Float[Tensor, "... d_model_in"]
+    ) -> tuple[
+        Float[Tensor, "... d_model_out"],  # output
+        list[Float[Tensor, "... d_layer_out"]],  # layer activations
+        list[Float[Tensor, "... k d_layer_out"]],  # inner activations
+    ]:
+        pass
+
+    @abstractmethod
+    def forward_topk(
+        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
+    ) -> tuple[
+        Float[Tensor, "... d_model_out"],  # output
+        list[Float[Tensor, "... d_layer_out"]],  # layer activations
+        list[Float[Tensor, "... k d_layer_out"]],  # inner activations
+    ]:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":
+        pass
+
+    @abstractmethod
+    def all_subnetwork_params(self) -> list[Float[Tensor, "... k d_layer_in d_layer_out"]]:
         pass
 
 

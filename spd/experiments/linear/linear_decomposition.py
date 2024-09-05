@@ -13,12 +13,16 @@ from torch import Tensor
 from tqdm import tqdm
 
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
-from spd.experiments.linear.models import DeepLinearComponentModel, DeepLinearModel
+from spd.experiments.linear.models import (
+    DeepLinearComponentFullRankModel,
+    DeepLinearComponentModel,
+    DeepLinearModel,
+)
 from spd.log import logger
 from spd.run_spd import Config, DeepLinearConfig, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
-    calc_attributions,
+    calc_attributions_rank_one,
     calc_topk_mask,
     init_wandb,
     load_config,
@@ -141,7 +145,7 @@ def collect_inner_act_data(
 
     out, _, test_inner_acts = model(test_batch)
     if topk is not None:
-        attribution_scores = calc_attributions(out, test_inner_acts)
+        attribution_scores = calc_attributions_rank_one(out=out, inner_acts=test_inner_acts)
         topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
 
         test_inner_acts = model.forward_topk(test_batch, topk_mask=topk_mask)[-1]
@@ -224,9 +228,20 @@ def main(
             n_features is not None and n_layers is not None and n_instances is not None
         ), "n_features, n_layers, and n_instances must be set"
 
-    dlc_model = DeepLinearComponentModel(
-        n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=config.task_config.k
-    ).to(device)
+    if config.full_rank:
+        dlc_model = DeepLinearComponentFullRankModel(
+            n_features=n_features,
+            n_layers=n_layers,
+            n_instances=n_instances,
+            k=config.task_config.k,
+        ).to(device)
+    else:
+        dlc_model = DeepLinearComponentModel(
+            n_features=n_features,
+            n_layers=n_layers,
+            n_instances=n_instances,
+            k=config.task_config.k,
+        ).to(device)
 
     dataset = DeepLinearDataset(n_features, n_instances)
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
@@ -238,7 +253,9 @@ def main(
         device=device,
         dataloader=dataloader,
         pretrained_model=dl_model,
-        plot_results_fn=plot_subnetwork_activations,
+        plot_results_fn=plot_subnetwork_activations
+        if isinstance(dlc_model, DeepLinearComponentModel)
+        else None,
     )
 
     if config.wandb_project:

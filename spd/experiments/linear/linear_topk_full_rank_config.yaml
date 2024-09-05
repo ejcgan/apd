@@ -1,0 +1,25 @@
+wandb_project: spd-linear
+wandb_run_name: null
+wandb_run_name_prefix: "fr_"
+full_rank: true
+unit_norm_matrices: false
+seed: 0
+topk: 1
+batch_topk: true
+param_match_coeff: 1.0
+topk_recon_coeff: 1
+batch_size: 1024
+steps: 20_000
+print_freq: 500
+image_freq: 1000
+save_freq: 10_000
+lr: 1e-1
+lr_schedule: constant
+lr_warmup_pct: 0.1
+task_config:
+  task_name: deep_linear
+  # n_features: 5
+  # n_layers: 3
+  # n_instances: 2
+  k: 5
+  pretrained_model_path: spd/experiments/linear/out/linear.pt

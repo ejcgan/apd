@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from spd.utils import (
-    calc_attributions,
+    calc_attributions_rank_one,
     calc_topk_mask,
     calculate_closeness_to_identity,
     permute_to_identity,
@@ -56,7 +56,7 @@ def test_closeness_to_identity(A: torch.Tensor, expected_closeness_max: float):
     assert closeness <= expected_closeness_max
 
 
-def test_calc_attributions_one_inner_act():
+def test_calc_attributions_rank_one_one_inner_act():
     # Set up a simple linear model with known gradients
     inner_acts = [torch.tensor([2.0, 3.0], requires_grad=True)]
 
@@ -72,7 +72,7 @@ def test_calc_attributions_one_inner_act():
     out = torch.matmul(weights, inner_acts[0])
 
     # Calculate attributions
-    attributions = calc_attributions(out, inner_acts)
+    attributions = calc_attributions_rank_one(out, inner_acts)
 
     # Expected attributions
     expected_attributions = torch.zeros_like(inner_acts[0])
@@ -87,7 +87,7 @@ def test_calc_attributions_one_inner_act():
     assert attributions.shape == inner_acts[0].shape
 
 
-def test_calc_attributions_two_inner_acts():
+def test_calc_attributions_rank_one_two_inner_acts():
     # Set up a simple linear model with known gradients
     inner_acts = [
         torch.tensor([1.0, 2.0, 3.0], requires_grad=True),
@@ -110,7 +110,7 @@ def test_calc_attributions_two_inner_acts():
     )
 
     # Calculate attributions
-    attributions = calc_attributions(out, inner_acts)
+    attributions = calc_attributions_rank_one(out, inner_acts)
 
     # Expected attributions
     expected_attributions = torch.zeros_like(inner_acts[0])

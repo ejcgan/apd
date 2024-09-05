@@ -6,10 +6,16 @@ from spd.experiments.piecewise.models import (
 )
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
-from spd.run_spd import Config, PiecewiseConfig, calc_param_match_loss, calc_recon_mse, optimize
+from spd.run_spd import (
+    Config,
+    PiecewiseConfig,
+    calc_param_match_loss_rank_one,
+    calc_recon_mse,
+    optimize,
+)
 from spd.utils import (
     BatchedDataLoader,
-    calc_attributions,
+    calc_attributions_rank_one,
     calc_neuron_indices,
     calc_topk_mask,
     set_seed,
@@ -170,11 +176,12 @@ def test_piecewise_lp_simple_bias_false() -> None:
     piecewise_decomposition_optimize_test(config)
 
 
-def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
+def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
     """After training for a few steps, the topk_recon_loss and param_match_loss should stay at 0."""
     set_seed(0)
     device = "cpu"
     config = Config(
+        full_rank=False,
         topk=2,
         batch_topk=True,
         batch_size=256,
@@ -195,6 +202,8 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     assert isinstance(config.task_config, PiecewiseConfig)
 
     piecewise_model, piecewise_model_spd, dataloader = get_model_and_dataloader(config, device)[:3]
+    # Rank 1 case
+    assert isinstance(piecewise_model_spd, PiecewiseFunctionSPDTransformer)
     piecewise_model.requires_grad_(False)
     piecewise_model.to(device=device)
 
@@ -224,13 +233,14 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     # Get initial losses (param_match_loss and topk_recon_loss)
     # Initial param match loss
     pretrained_weights = piecewise_model.all_decomposable_params()
-    initial_param_match_loss = calc_param_match_loss(
+    initial_param_match_loss = calc_param_match_loss_rank_one(
         pretrained_weights=pretrained_weights,
         layer_in_params=piecewise_model_spd.all_As(),
         layer_out_params=piecewise_model_spd.all_Bs(),
     )
 
-    attribution_scores = calc_attributions(out, inner_acts)
+    # Rank 1 so layer_acts is None
+    attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
     initial_topk_recon_loss = get_topk_recon_on_batch(
         batch, labels, attribution_scores, piecewise_model_spd
     )
@@ -251,14 +261,14 @@ def test_piecewise_batch_topk_simple_bias_false_loss_stable() -> None:
     )
 
     # Check that the losses have not reduced
-    final_param_match_loss = calc_param_match_loss(
+    final_param_match_loss = calc_param_match_loss_rank_one(
         pretrained_weights=pretrained_weights,
         layer_in_params=piecewise_model_spd.all_As(),
         layer_out_params=piecewise_model_spd.all_Bs(),
     )
 
     out, _, inner_acts = piecewise_model_spd(batch)
-    attribution_scores = calc_attributions(out, inner_acts)
+    attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
     final_topk_recon_loss = get_topk_recon_on_batch(
         batch, labels, attribution_scores, piecewise_model_spd
     )

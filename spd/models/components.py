@@ -1,3 +1,4 @@
+import einops
 import torch
 from jaxtyping import Bool, Float
 from torch import Tensor, nn
@@ -45,17 +46,17 @@ class ParamComponents(nn.Module):
 
     def forward(
         self,
-        x: Float[Tensor, "... dim1"],
-    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
+        x: Float[Tensor, "batch dim1"],
+    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k"]]:
         inner_acts = torch.einsum("bf,fk->bk", x, self.A)
         out = torch.einsum("bk,kg->bg", inner_acts, self.B)
         return out, inner_acts
 
     def forward_topk(
         self,
-        x: Float[Tensor, "... dim1"],
-        topk_mask: Bool[Tensor, "... k"],
-    ) -> tuple[Float[Tensor, "... dim2"], Float[Tensor, "... k"]]:
+        x: Float[Tensor, "batch dim1"],
+        topk_mask: Bool[Tensor, "batch k"],
+    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k"]]:
         """
         Performs a forward pass using only the top-k subnetwork activations.
 
@@ -74,9 +75,55 @@ class ParamComponents(nn.Module):
         return out, inner_acts_topk
 
 
+class ParamComponentsFullRank(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int, k: int):
+        super().__init__()
+
+        self.subnetwork_params = nn.Parameter(torch.empty(k, in_dim, out_dim))
+        init_param_(self.subnetwork_params)
+
+    def forward(
+        self,
+        x: Float[Tensor, "batch dim1"],
+    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k dim2"]]:
+        inner_acts = einops.einsum(
+            x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
+        )
+        out = einops.einsum(inner_acts, "batch k dim2 -> batch dim2")
+        return out, inner_acts
+
+    def forward_topk(
+        self,
+        x: Float[Tensor, "batch dim1"],
+        topk_mask: Bool[Tensor, "batch k"],
+    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k dim2"]]:
+        """
+        Performs a forward pass using only the top-k subnetwork activations.
+
+        Args:
+            x: Input tensor
+            topk_mask: Boolean tensor indicating which subnetwork activations to keep.
+
+        Returns:
+            out: Output tensor
+            inner_acts: Subnetwork activations
+        """
+
+        inner_acts = einops.einsum(
+            x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
+        )
+        inner_acts_topk = einops.einsum(
+            inner_acts, topk_mask, "batch k dim2, batch k -> batch k dim2"
+        )
+        out = einops.einsum(inner_acts_topk, "batch k dim2 -> batch dim2")
+        return out, inner_acts_topk
+
+
 class MLPComponents(nn.Module):
     """
     A module that contains two linear layers with a ReLU activation in between.
+
+    Handles both full rank and rank one versions.
 
     Note that the first linear layer has a bias that is not decomposed, and the second linear layer
     has no bias.
@@ -90,24 +137,30 @@ class MLPComponents(nn.Module):
         input_bias: Float[Tensor, " d_mlp"] | None = None,
         input_component: nn.Parameter | None = None,
         output_component: nn.Parameter | None = None,
+        full_rank: bool = False,
     ):
         super().__init__()
-        self.linear1 = ParamComponents(
-            d_embed, d_mlp, k, resid_component=input_component, resid_dim=0
-        )
+        if full_rank:
+            self.linear1 = ParamComponentsFullRank(in_dim=d_embed, out_dim=d_mlp, k=k)
+            self.linear2 = ParamComponentsFullRank(in_dim=d_mlp, out_dim=d_embed, k=k)
+        else:
+            self.linear1 = ParamComponents(
+                in_dim=d_embed, out_dim=d_mlp, k=k, resid_component=input_component, resid_dim=0
+            )
+            self.linear2 = ParamComponents(
+                in_dim=d_mlp, out_dim=d_embed, k=k, resid_component=output_component, resid_dim=1
+            )
+
         self.bias1 = nn.Parameter(torch.zeros(d_mlp))
         if input_bias is not None:
             self.bias1.data = input_bias.detach().clone()
-        self.linear2 = ParamComponents(
-            d_mlp, d_embed, k, resid_component=output_component, resid_dim=1
-        )
 
     def forward(
         self, x: Float[Tensor, "... d_embed"]
     ) -> tuple[
         Float[Tensor, "... d_embed"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
+        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
     ]:
         """
         Returns:
@@ -134,7 +187,7 @@ class MLPComponents(nn.Module):
     ) -> tuple[
         Float[Tensor, "... d_embed"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
+        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
     ]:
         """
         Performs a forward pass using only the top-k components for each linear layer.

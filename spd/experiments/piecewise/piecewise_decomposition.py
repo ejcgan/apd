@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import einops
 import fire
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tkr
@@ -16,6 +17,7 @@ from torch import Tensor
 from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
+    PiecewiseFunctionSPDFullRankTransformer,
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
@@ -25,7 +27,7 @@ from spd.log import logger
 from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
 from spd.utils import (
     BatchedDataLoader,
-    calc_attributions,
+    calc_attributions_rank_one,
     init_wandb,
     load_config,
     save_config_to_wandb,
@@ -33,6 +35,77 @@ from spd.utils import (
 )
 
 wandb.require("core")
+
+
+def plot_matrix(
+    ax: plt.Axes,
+    matrix: torch.Tensor,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    colorbar_format: str = "%.0f",
+) -> None:
+    im = ax.matshow(matrix.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm())
+    for (j, i), label in np.ndenumerate(matrix.detach().cpu().numpy()):
+        ax.text(i, j, f"{label:.2f}", ha="center", va="center", fontsize=4)
+    ax.set_xlabel(xlabel)
+    if ylabel != "":
+        ax.set_ylabel(ylabel)
+    else:
+        ax.set_yticklabels([])
+    ax.set_title(title)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="1%", pad=0.05)
+    fig = ax.get_figure()
+    assert fig is not None
+    fig.colorbar(im, cax=cax, format=tkr.FormatStrFormatter(colorbar_format))
+    if ylabel == "Function index":
+        n_functions = matrix.shape[0]
+        ax.set_yticks(range(n_functions))
+        ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])
+
+
+def plot_components_fullrank(
+    model: PiecewiseFunctionSPDTransformer,
+    step: int,
+    out_dir: Path | None,
+    device: str,
+    slow_images: bool,
+    **_,
+) -> dict[str, plt.Figure]:
+    # Not implemented attribution score plots, or multi-layer plots, yet.
+    assert model.n_layers == 1
+    ncols = 2
+    nrows = model.k + 1
+    fig, axs = plt.subplots(nrows, ncols, figsize=(16 * ncols, 3 * nrows), constrained_layout=True)
+    assert isinstance(axs, np.ndarray)
+    plot_matrix(
+        axs[0, 0],
+        einops.einsum(model.mlps[0].linear1.subnetwork_params, "k ... -> ..."),
+        "W_in, sum over k",
+        "Neuron index",
+        "Embedding index",
+    )
+    plot_matrix(
+        axs[0, 1],
+        einops.einsum(model.mlps[0].linear2.subnetwork_params, "k ... -> ...").T,
+        "W_out.T, sum over k",
+        "Neuron index",
+        "",
+    )
+
+    for k in range(model.k):
+        mlp = model.mlps[0]
+        W_in_k = mlp.linear1.subnetwork_params[k]
+        ax = axs[k + 1, 0]  # type: ignore
+        plot_matrix(ax, W_in_k, f"W_in_k, k={k}", "Neuron index", "Embedding index")
+        W_out_k = mlp.linear2.subnetwork_params[k].T
+        ax = axs[k + 1, 1]  # type: ignore
+        plot_matrix(ax, W_out_k, f"W_out_k.T, k={k}", "Neuron index", "")
+    if out_dir is not None:
+        fig.savefig(out_dir / f"matrices_l0_s{step}.png", dpi=300)
+        print(f"saved to {out_dir / f'matrices_l0_s{step}.png'}")
+    return {"matrices_l0_s{step}": fig}
 
 
 def plot_components(
@@ -52,7 +125,7 @@ def plot_components(
     # Forward pass to get the output and inner activations
     out, layer_acts, inner_acts = model(x)
     # Calculate attribution scores
-    attribution_scores = calc_attributions(out, inner_acts)
+    attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
     attribution_scores_normed = attribution_scores / attribution_scores.std(dim=1, keepdim=True)
     # Get As and Bs and ABs
     n_layers = model.n_layers
@@ -63,33 +136,6 @@ def plot_components(
     Bs = model.all_Bs()
     ABs = [torch.einsum("...fk,...kg->...fg", As[i], Bs[i]) for i in range(len(As))]
     ABs_by_k = [torch.einsum("...fk,...kg->...kfg", As[i], Bs[i]) for i in range(len(As))]
-
-    def plot_matrix(
-        ax: plt.Axes,
-        matrix: torch.Tensor,
-        title: str,
-        xlabel: str,
-        ylabel: str,
-        colorbar_format: str = "%.0f",
-    ) -> None:
-        im = ax.matshow(matrix.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm())
-        for (j, i), label in np.ndenumerate(matrix.detach().cpu().numpy()):
-            ax.text(i, j, f"{label:.2f}", ha="center", va="center", fontsize=4)
-        ax.set_xlabel(xlabel)
-        if ylabel != "":
-            ax.set_ylabel(ylabel)
-        else:
-            ax.set_yticklabels([])
-        ax.set_title(title)
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="1%", pad=0.05)
-        fig = ax.get_figure()
-        assert fig is not None
-        fig.colorbar(im, cax=cax, format=tkr.FormatStrFormatter(colorbar_format))
-        if ylabel == "Function index":
-            n_functions = matrix.shape[0]
-            ax.set_yticks(range(n_functions))
-            ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])
 
     # Figure for attribution scores
     fig_a, ax = plt.subplots(1, 1, figsize=(4, 4), constrained_layout=True)
@@ -218,7 +264,7 @@ def get_model_and_dataloader(
     out_dir: Path | None = None,
 ) -> tuple[
     PiecewiseFunctionTransformer,
-    PiecewiseFunctionSPDTransformer,
+    PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
 ]:
@@ -246,16 +292,37 @@ def get_model_and_dataloader(
         piecewise_model.mlps[i].input_layer.bias.detach().clone()
         for i in range(piecewise_model.n_layers)
     ]
-    piecewise_model_spd = PiecewiseFunctionSPDTransformer(
-        n_inputs=piecewise_model.n_inputs,
-        d_mlp=piecewise_model.d_mlp,
-        n_layers=piecewise_model.n_layers,
-        k=config.task_config.k,
-        input_biases=input_biases,
-    )
-    if config.task_config.handcoded_AB:
-        logger.info("Setting handcoded A and B matrices (!)")
-        piecewise_model_spd.set_handcoded_AB(piecewise_model)
+    if config.full_rank:
+        piecewise_model_spd = PiecewiseFunctionSPDFullRankTransformer(
+            n_inputs=piecewise_model.n_inputs,
+            d_mlp=piecewise_model.d_mlp,
+            n_layers=piecewise_model.n_layers,
+            k=config.task_config.k,
+            input_biases=input_biases,
+        )
+        if config.task_config.handcoded_AB:
+            logger.info("Setting handcoded A and B matrices (!)")
+            non_full_rank_spd_model = PiecewiseFunctionSPDTransformer(
+                n_inputs=piecewise_model.n_inputs,
+                d_mlp=piecewise_model.d_mlp,
+                n_layers=piecewise_model.n_layers,
+                k=config.task_config.k,
+                input_biases=input_biases,
+            )
+            non_full_rank_spd_model.set_handcoded_AB(piecewise_model)
+            piecewise_model_spd.set_handcoded_AB(non_full_rank_spd_model)
+    else:
+        piecewise_model_spd = PiecewiseFunctionSPDTransformer(
+            n_inputs=piecewise_model.n_inputs,
+            d_mlp=piecewise_model.d_mlp,
+            n_layers=piecewise_model.n_layers,
+            k=config.task_config.k,
+            input_biases=input_biases,
+        )
+        if config.task_config.handcoded_AB:
+            logger.info("Setting handcoded A and B matrices (!)")
+            piecewise_model_spd.set_handcoded_AB(piecewise_model)
+
     piecewise_model_spd.to(device)
 
     # Set requires_grad to False for all embeddings and all input biases
@@ -337,7 +404,7 @@ def main(
         device=device,
         pretrained_model=piecewise_model,
         dataloader=dataloader,
-        plot_results_fn=plot_components,
+        plot_results_fn=plot_components_fullrank if config.full_rank else plot_components,
     )
 
     if config.wandb_project:

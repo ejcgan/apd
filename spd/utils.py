@@ -237,8 +237,8 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
             yield batch[0], label[0]
 
 
-def calc_attributions(
-    out: Float[Tensor, "... out_dim"],
+def calc_attributions_rank_one(
+    out: Float[Tensor, "... d_out"],
     inner_acts: list[Float[Tensor, "... k"]],
 ) -> Float[Tensor, "... k"]:
     """Calculate the sum of the (squared) attributions from each output dimension.
@@ -269,6 +269,55 @@ def calc_attributions(
         assert len(feature_grads) == len(inner_acts)
         for param_matrix_idx in range(len(inner_acts)):
             feature_attributions += feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+
+        attribution_scores += feature_attributions**2
+
+    return attribution_scores
+
+
+def calc_attributions_full_rank(
+    out: Float[Tensor, "... out_dim"],
+    inner_acts: list[Float[Tensor, "... k d_out"]],
+    layer_acts: list[Float[Tensor, "... d_out"]],
+) -> Float[Tensor, "... k"]:
+    """Calculate the sum of the (squared) attributions from each output dimension.
+
+    An attribution is the element-wise product of the gradient of the output dimension w.r.t. the
+    layer acts and the inner acts.
+
+    Note: This code may be run in between the training forward pass, and the loss.backward() and
+    opt.step() calls; it must not mess with the training. The reason the current implementation is
+    fine to run anywhere is that we just use autograd rather than backward which does not
+    populate the .grad attributes. Unrelatedly, we use retain_graph=True in a bunch of cases
+    where we want to later use the `out` variable in e.g. the loss function.
+
+    Args:
+        out: The output of the model.
+        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
+            parameter matrix).
+        layer_acts: The activations of the layer that we are attributing to.
+
+    Returns:
+        The sum of the (squared) attributions from each output dimension.
+    """
+    attribution_scores: Float[Tensor, "... k"] = torch.zeros(
+        inner_acts[0].shape[:-1], device=inner_acts[0].device
+    )
+    out_dim = out.shape[-1]
+    for feature_idx in range(out_dim):
+        feature_attributions: Float[Tensor, "... k"] = torch.zeros(
+            inner_acts[0].shape[:-1], device=inner_acts[0].device
+        )
+        grad_layer_acts: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+            out[..., feature_idx].sum(), layer_acts, retain_graph=True
+        )
+        assert len(grad_layer_acts) == len(inner_acts)
+        for param_matrix_idx in range(len(inner_acts)):
+            feature_attributions += einops.einsum(
+                grad_layer_acts[param_matrix_idx].detach(),
+                inner_acts[param_matrix_idx],
+                "... d_out ,... k d_out -> ... k",
+            )
 
         attribution_scores += feature_attributions**2
 
