@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -145,15 +146,19 @@ if __name__ == "__main__":
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
     train(model, dataloader=dataloader, steps=config.steps)
 
-    out_dir = Path(__file__).parent / "out"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     run_name = (
         f"tms_n-features{config.n_features}_n-hidden{config.n_hidden}_"
         f"n-instances{config.n_instances}_seed{config.seed}.pth"
     )
-    torch.save(model.state_dict(), out_dir / run_name)
-    print(f"Saved model to {out_dir / run_name}")
+    out_dir = Path(__file__).parent / "out" / run_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    torch.save(model.state_dict(), out_dir / "model.pth")
+    print(f"Saved model to {out_dir / 'model.pth'}")
+
+    with open(out_dir / "config.json", "w") as f:
+        json.dump(config.model_dump(), f, indent=4)
+    print(f"Saved config to {out_dir / 'config.json'}")
 
     if config.n_hidden == 2:
         plot_intro_diagram(model, filepath=out_dir / run_name.replace(".pth", ".png"))
