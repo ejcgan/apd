@@ -1,5 +1,6 @@
 """Trains a deep linear model on one-hot input vectors."""
 
+import json
 from pathlib import Path
 
 import torch
@@ -9,7 +10,6 @@ from torch.nn import functional as F
 
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
 from spd.experiments.linear.models import DeepLinearModel
-from spd.types import RootPath
 from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 wandb.require("core")
@@ -25,7 +25,6 @@ class Config(BaseModel):
     steps: PositiveInt
     print_freq: PositiveInt
     lr: PositiveFloat
-    out_file: RootPath | None = None
 
 
 def train(
@@ -33,11 +32,10 @@ def train(
     model: DeepLinearModel,
     dataloader: DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]],
     device: str,
+    out_dir: Path | None = None,
 ) -> float | None:
-    if config.out_file is not None:
-        Path(config.out_file).parent.mkdir(parents=True, exist_ok=True)
-
-    set_seed(config.seed)
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=0.0)
 
@@ -55,14 +53,20 @@ def train(
         if step % config.print_freq == 0:
             print(f"Step {step}: loss={final_loss}")
 
-    if config.out_file is not None:
-        torch.save(model.state_dict(), config.out_file)
-        print(f"Saved model to {config.out_file}")
+    if out_dir is not None:
+        model_path = out_dir / "model.pth"
+        torch.save(model.state_dict(), model_path)
+        print(f"Saved model to {model_path}")
+
+        config_path = out_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(config.model_dump(), f, indent=4)
+        print(f"Saved config to {config_path}")
+
     return final_loss
 
 
 if __name__ == "__main__":
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
     device = "cpu"
     config = Config(
         n_features=5,
@@ -72,12 +76,20 @@ if __name__ == "__main__":
         steps=1000,
         print_freq=100,
         lr=0.01,
-        out_file="spd/experiments/linear/out/linear.pt",  # pyright: ignore [reportArgumentType]
     )
+
+    set_seed(config.seed)
+    # Create a run name based on important config parameters
+    run_name = (
+        f"linear_n-features{config.n_features}_n-layers{config.n_layers}_"
+        f"n-instances{config.n_instances}_seed{config.seed}"
+    )
+    out_dir = Path(__file__).parent / "out" / run_name
+
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
-    train(config, model, dataloader, device)
+    train(config=config, model=model, dataloader=dataloader, device=device)
 
     # Assert that, for each instance, the multiplication of the params is approximately the identity
     for instance in range(config.n_instances):

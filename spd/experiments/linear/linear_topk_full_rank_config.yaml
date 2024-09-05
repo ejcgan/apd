@@ -8,12 +8,13 @@ topk: 1
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1
+topk_l2_coeff: 0.3
 batch_size: 1024
 steps: 20_000
 print_freq: 500
-image_freq: 1000
-save_freq: 10_000
-lr: 1e-1
+image_freq: 2000
+save_freq: 20_000
+lr: 1e-3
 lr_schedule: constant
 lr_warmup_pct: 0.1
 task_config:
@@ -22,4 +23,4 @@ task_config:
   # n_layers: 3
   # n_instances: 2
   k: 5
-  pretrained_model_path: spd/experiments/linear/out/linear.pt
+  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances2_seed0/model.pth

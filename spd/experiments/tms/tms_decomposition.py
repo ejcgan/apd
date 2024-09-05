@@ -65,26 +65,36 @@ def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> dict[s
 def plot_subnetwork_params(
     model: TMSSPDFullRankModel, step: int, out_dir: Path, **_
 ) -> dict[str, plt.Figure]:
-    """Plot each subnetwork parameter matrix."""
-    # model.subnetwork_params: [n_instances, k, n_features, n_hidden]
+    """Plot the subnetwork parameter matrix."""
+    all_params = model.all_subnetwork_params()
+    n_params = len(all_params)
+    if n_params > 1:
+        logger.warning(
+            "Plotting multiple subnetwork params is currently not supported. Plotting the first."
+        )
+    all_params = all_params[0]
+    # all_params: [n_instances, k, n_features, n_hidden]
+
+    n_instances, k, dim1, dim2 = all_params.shape
+
     fig, axs = plt.subplots(
-        model.k,
-        model.n_instances,
-        figsize=(2 * model.n_instances, 2 * model.k),
+        k,
+        n_instances,
+        figsize=(2 * n_instances, 2 * k),
         gridspec_kw={"wspace": 0.05, "hspace": 0.05},
     )
 
-    for i in range(model.n_instances):
-        for j in range(model.k):
+    for i in range(n_instances):
+        for j in range(k):
             ax = axs[j, i]  # type: ignore
-            param = model.subnetwork_params[i, j].detach().cpu().numpy()
+            param = all_params[i, j].detach().cpu().numpy()
             ax.matshow(param, cmap="RdBu", norm=CenteredNorm())
             ax.set_xticks([])
             ax.set_yticks([])
 
             if i == 0:
                 ax.set_ylabel(f"k={j}", rotation=0, ha="right", va="center")
-            if j == model.k - 1:
+            if j == k - 1:
                 ax.set_xlabel(f"Inst {i}", rotation=45, ha="right")
 
     fig.suptitle(f"Subnetwork Parameters (Step {step})")

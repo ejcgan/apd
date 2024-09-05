@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
+from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
@@ -19,6 +20,7 @@ from spd.experiments.linear.models import (
     DeepLinearModel,
 )
 from spd.log import logger
+from spd.models.base import SPDFullRankModel
 from spd.run_spd import Config, DeepLinearConfig, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
@@ -49,6 +51,49 @@ def get_run_name(config: Config) -> str:
             f"bs{config.batch_size}_"
         )
     return config.wandb_run_name_prefix + run_suffix
+
+
+def plot_multiple_subnetwork_params(
+    model: SPDFullRankModel, step: int, out_dir: Path, **_
+) -> dict[str, plt.Figure]:
+    """Plot each subnetwork parameter matrix."""
+    all_params = model.all_subnetwork_params()
+    # Each param (of which there are n_layers): [n_instances, k, n_features, n_features]
+    n_params = len(all_params)
+    assert n_params >= 1
+
+    n_instances, k, dim1, dim2 = all_params[0].shape
+
+    fig, axs = plt.subplots(
+        k,
+        n_instances * n_params,
+        # + n_params - 1 to account for the space between the subplots
+        figsize=(2 * n_instances * n_params + n_params - 1, 2 * k),
+        gridspec_kw={"wspace": 0.05, "hspace": 0.05},
+    )
+
+    for inst_idx in range(n_instances):
+        for param_idx in range(n_params):
+            for k_idx in range(k):
+                row_idx = k_idx
+                column_idx = param_idx + inst_idx * n_params
+                ax = axs[row_idx, column_idx]  # type: ignore
+                param = all_params[param_idx][inst_idx, k_idx].detach().cpu().numpy()
+                ax.matshow(param, cmap="RdBu", norm=CenteredNorm())
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+                if column_idx == 0:
+                    ax.set_ylabel(f"k={k_idx}", rotation=0, ha="right", va="center")
+                if k_idx == k - 1:
+                    ax.set_xlabel(f"Inst {inst_idx} Param {param_idx}", rotation=0, ha="center")
+
+    fig.suptitle(f"Subnetwork Parameters (Step {step})")
+    fig.tight_layout()
+    fig.savefig(out_dir / f"subnetwork_params_{step}.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    tqdm.write(f"Saved subnetwork params to {out_dir / f'subnetwork_params_{step}.png'}")
+    return {"subnetwork_params": fig}
 
 
 def plot_inner_acts(
@@ -255,7 +300,7 @@ def main(
         pretrained_model=dl_model,
         plot_results_fn=plot_subnetwork_activations
         if isinstance(dlc_model, DeepLinearComponentModel)
-        else None,
+        else plot_multiple_subnetwork_params,
     )
 
     if config.wandb_project:

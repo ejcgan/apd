@@ -18,4 +18,4 @@ sparsity_loss_type: jacobian
 sparsity_warmup_pct: 0.0
 task_config:
   task_name: deep_linear
-  pretrained_model_path: spd/experiments/linear/out/linear.pt
+  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances2_seed0/model.pth

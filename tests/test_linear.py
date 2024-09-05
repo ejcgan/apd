@@ -155,7 +155,6 @@ def test_train_linear_happy_path() -> None:
         steps=3,  # Run only a few steps
         print_freq=100,
         lr=0.01,
-        out_file=None,
     )
 
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
@@ -168,7 +167,7 @@ def test_train_linear_happy_path() -> None:
     initial_loss = torch.mean((labels.to(device) - initial_out) ** 2).item()
 
     # Train the model
-    train(config, model, dataloader, device)
+    train(config, model, dataloader, device, out_dir=None)
 
     # Calculate final loss
     final_out = model(batch.to(device))
