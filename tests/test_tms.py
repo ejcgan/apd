@@ -154,7 +154,7 @@ def test_train_tms_happy_path():
     set_seed(0)
     # Set up a small configuration
     config = TMSTrainConfig(
-        n_features=3, n_hidden=2, n_instances=2, feature_probability=0.1, batch_size=32
+        n_features=3, n_hidden=2, n_instances=2, feature_probability=0.1, batch_size=32, steps=5
     )
 
     # Initialize model, dataset, and dataloader
@@ -179,7 +179,7 @@ def test_train_tms_happy_path():
     initial_loss = torch.mean((labels.abs() - initial_out) ** 2)
 
     # Run optimize function
-    train(model, dataloader, steps=5, print_freq=1000)
+    train(model, dataloader, steps=config.steps, print_freq=1000)
 
     # Calculate final loss
     final_out = model(batch)

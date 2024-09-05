@@ -28,7 +28,7 @@ class TMSTrainConfig(BaseModel):
     feature_probability: float
     batch_size: PositiveInt
     steps: PositiveInt
-    seed: int
+    seed: int = 0
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -147,6 +147,7 @@ if __name__ == "__main__":
 
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
+
     run_name = (
         f"tms_n-features{config.n_features}_n-hidden{config.n_hidden}_"
         f"n-instances{config.n_instances}_seed{config.seed}.pth"
