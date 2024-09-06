@@ -102,6 +102,13 @@ class DeepLinearComponentModel(SPDModel):
     def all_Bs(self) -> list[Float[Tensor, "n_instances k n_features"]]:
         return [layer.B for layer in self.layers]
 
+    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_features"]]:
+        all_params = []
+        for layer in self.layers:
+            params = torch.einsum("ifk,ikh->ikfh", layer.A, layer.B)
+            all_params.append(params)
+        return all_params
+
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
@@ -227,7 +234,7 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "k n_features n_features"]]:
+    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_features"]]:
         return [layer.subnetwork_params for layer in self.layers]
 
     def forward(

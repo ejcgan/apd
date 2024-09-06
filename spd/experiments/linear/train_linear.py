@@ -89,7 +89,7 @@ if __name__ == "__main__":
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
-    train(config=config, model=model, dataloader=dataloader, device=device)
+    train(config=config, model=model, dataloader=dataloader, device=device, out_dir=out_dir)
 
     # Assert that, for each instance, the multiplication of the params is approximately the identity
     for instance in range(config.n_instances):

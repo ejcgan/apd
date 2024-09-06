@@ -275,6 +275,44 @@ def calc_attributions_rank_one(
     return attribution_scores
 
 
+def calc_attributions_rank_one_per_layer(
+    out: Float[Tensor, "... d_out"],
+    inner_acts: list[Float[Tensor, "... k"]],
+) -> list[Float[Tensor, "... k"]]:
+    """Calculate the attributions for each layer.
+
+    This differs from calc_attributions_rank_one in that it returns a list of attribution scores
+    for each layer that are the sum of squares of output features, rather than taking the sum of
+    squared attributions across layers.
+
+    i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
+    sum_{n_features}(sum_{layers}(activation * grad))^2.
+
+    Args:
+        out: The output of the model.
+        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
+            parameter matrix).
+
+    Returns:
+        The list of attribution scores for each layer.
+    """
+
+    layer_attribution_scores: list[Float[Tensor, "... k"]] = [
+        torch.zeros_like(inner_acts[0]) for _ in range(len(inner_acts))
+    ]
+    for feature_idx in range(out.shape[-1]):
+        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+            out[..., feature_idx].sum(), inner_acts, retain_graph=True
+        )
+        assert len(feature_grads) == len(inner_acts)
+        for param_matrix_idx in range(len(inner_acts)):
+            layer_attribution_scores[param_matrix_idx] += (
+                feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+            ).pow(2)
+
+    return layer_attribution_scores
+
+
 def calc_attributions_full_rank(
     out: Float[Tensor, "... out_dim"],
     inner_acts: list[Float[Tensor, "... k d_out"]],
@@ -322,6 +360,49 @@ def calc_attributions_full_rank(
         attribution_scores += feature_attributions**2
 
     return attribution_scores
+
+
+def calc_attributions_full_rank_per_layer(
+    out: Float[Tensor, "... out_dim"],
+    inner_acts: list[Float[Tensor, "... k d_out"]],
+    layer_acts: list[Float[Tensor, "... d_out"]],
+) -> list[Float[Tensor, "... k"]]:
+    """Calculate the attributions for each layer.
+
+    This differs from calc_attributions_full_rank in that it returns a list of attribution scores
+    for each layer that are the sum of squares of output features, rather than taking the sum of
+    squared attributions across layers.
+
+    i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
+    sum_{n_features}(sum_{layers}(activation * grad))^2.
+
+    Args:
+        out: The output of the model.
+        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
+            parameter matrix).
+        layer_acts: The activations of the layer that we are attributing to.
+
+    Returns:
+        The list of attribution scores for each layer.
+    """
+
+    layer_attribution_scores: list[Float[Tensor, "... k"]] = [
+        torch.zeros(inner_acts[0].shape[:-1], device=inner_acts[0].device)
+        for _ in range(len(inner_acts))
+    ]
+    for feature_idx in range(out.shape[-1]):
+        grad_layer_acts: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+            out[..., feature_idx].sum(), layer_acts, retain_graph=True
+        )
+        assert len(grad_layer_acts) == len(inner_acts)
+        for param_matrix_idx in range(len(inner_acts)):
+            layer_attribution_scores[param_matrix_idx] += einops.einsum(
+                grad_layer_acts[param_matrix_idx].detach(),
+                inner_acts[param_matrix_idx],
+                "... d_out ,... k d_out -> ... k",
+            ).pow(2)
+
+    return layer_attribution_scores
 
 
 def calc_topk_mask(
