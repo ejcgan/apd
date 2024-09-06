@@ -102,7 +102,6 @@ def plot_subnetwork_params(
                 ax.set_xlabel(f"Inst {i}", rotation=45, ha="right")
 
     fig.suptitle(f"Subnetwork Parameters (Step {step})")
-    fig.tight_layout()
     fig.savefig(out_dir / f"subnetwork_params_{step}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
     tqdm.write(f"Saved subnetwork params to {out_dir / f'subnetwork_params_{step}.png'}")
