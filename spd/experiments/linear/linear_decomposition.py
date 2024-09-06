@@ -38,18 +38,25 @@ wandb.require("core")
 
 def get_run_name(config: Config) -> str:
     """Generate a run name based on the config."""
+    run_suffix = ""
     if config.wandb_run_name:
         run_suffix = config.wandb_run_name
     else:
-        run_suffix = (
-            f"lr{config.lr}_"
-            f"p{config.pnorm}_"
-            f"topk{config.topk}_"
-            f"topkrecon{config.topk_recon_coeff}_"
-            f"lpsp{config.lp_sparsity_coeff}_"
-            f"topkl2_{config.topk_l2_coeff}_"
-            f"bs{config.batch_size}_"
-        )
+        assert isinstance(config.task_config, DeepLinearConfig)
+        if config.pnorm is not None:
+            run_suffix += f"p{config.pnorm}_"
+        if config.lp_sparsity_coeff is not None:
+            run_suffix += f"lpsp{config.lp_sparsity_coeff}_"
+        if config.topk is not None:
+            run_suffix += f"topk{config.topk}_"
+        if config.topk_recon_coeff is not None:
+            run_suffix += f"topkrecon{config.topk_recon_coeff}_"
+        if config.topk_l2_coeff is not None:
+            run_suffix += f"topkl2_{config.topk_l2_coeff}_"
+        run_suffix += f"lr{config.lr}_"
+        run_suffix += f"bs{config.batch_size}_"
+        run_suffix += f"ft{config.task_config.n_features}_"
+        run_suffix += f"hid{config.task_config.n_layers}"
     return config.wandb_run_name_prefix + run_suffix
 
 

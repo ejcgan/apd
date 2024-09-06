@@ -1,6 +1,6 @@
 wandb_project: spd-piecewise
 wandb_run_name: null
-wandb_run_name_prefix: "changeme_"
+wandb_run_name_prefix: ""
 seed: 0
 topk: 0.625
 batch_topk: true
