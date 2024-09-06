@@ -16,8 +16,5 @@ lr_schedule: constant
 lr_warmup_pct: 0.1
 task_config:
   task_name: deep_linear
-  # n_features: 5
-  # n_layers: 3
-  # n_instances: 2
   k: 5
-  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances2_seed0/model.pth
+  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances6_seed0/model.pth

@@ -3,7 +3,7 @@ wandb_run_name: null
 wandb_run_name_prefix: ""
 seed: 0
 batch_size: 1024
-steps: 20_000
+steps: 10_000
 print_freq: 500
 image_freq: 1000
 save_freq: 10_000
@@ -18,4 +18,4 @@ sparsity_loss_type: jacobian
 sparsity_warmup_pct: 0.0
 task_config:
   task_name: deep_linear
-  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances2_seed0/model.pth
+  pretrained_model_path: spd/experiments/linear/out/linear_n-features5_n-layers3_n-instances6_seed0/model.pth

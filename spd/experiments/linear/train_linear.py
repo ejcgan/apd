@@ -71,7 +71,7 @@ if __name__ == "__main__":
     config = Config(
         n_features=5,
         n_layers=3,
-        n_instances=2,
+        n_instances=6,
         batch_size=100,
         steps=1000,
         print_freq=100,
