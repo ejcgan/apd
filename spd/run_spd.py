@@ -106,7 +106,11 @@ class Config(BaseModel):
         if self.topk is not None:
             if self.batch_topk:
                 if not (self.batch_size * self.topk).is_integer():
-                    raise ValueError("batch_size * topk must be an integer when using batch_topk")
+                    logger.warning(
+                        f"batch_size * topk={self.batch_size * self.topk} is not an integer, will "
+                        f"round down from {self.batch_size * self.topk} to "
+                        f"{int(self.batch_size * self.topk)} when calculating topk_mask"
+                    )
             else:
                 if not self.topk.is_integer():
                     raise ValueError("topk must be an integer when not using batch_topk")
