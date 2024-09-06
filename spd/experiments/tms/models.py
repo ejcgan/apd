@@ -83,6 +83,10 @@ class TMSSPDModel(SPDModel):
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
         return [self.B, rearrange(self.A, "i f k -> i k f")]
 
+    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_hidden"]]:
+        w1 = torch.einsum("ifk,ikh->ikfh", self.A, self.B)
+        return [w1, rearrange(w1, "i k f h -> i k h f")]
+
     def forward(
         self, x: Float[Tensor, "... i f"]
     ) -> tuple[

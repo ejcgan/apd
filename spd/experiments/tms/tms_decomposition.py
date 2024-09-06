@@ -48,7 +48,7 @@ def get_run_name(config: Config, task_config: TMSConfig) -> str:
     return config.wandb_run_name_prefix + run_suffix
 
 
-def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> dict[str, plt.Figure]:
+def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
     permuted_A_T_list: list[torch.Tensor] = []
     for i in range(model.n_instances):
         permuted_matrix = permute_to_identity(model.A[i].T.abs())
@@ -59,12 +59,12 @@ def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> dict[s
     fig.savefig(out_dir / f"A_{step}.png")
     plt.close(fig)
     tqdm.write(f"Saved A matrix to {out_dir / f'A_{step}.png'}")
-    return {"A": fig}
+    return fig
 
 
 def plot_subnetwork_params(
-    model: TMSSPDFullRankModel, step: int, out_dir: Path, **_
-) -> dict[str, plt.Figure]:
+    model: TMSSPDFullRankModel | TMSSPDModel, step: int, out_dir: Path, **_
+) -> plt.Figure:
     """Plot the subnetwork parameter matrix."""
     all_params = model.all_subnetwork_params()
     n_params = len(all_params)
@@ -102,7 +102,19 @@ def plot_subnetwork_params(
     fig.savefig(out_dir / f"subnetwork_params_{step}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
     tqdm.write(f"Saved subnetwork params to {out_dir / f'subnetwork_params_{step}.png'}")
-    return {"subnetwork_params": fig}
+    return fig
+
+
+def make_plots(
+    model: TMSSPDFullRankModel | TMSSPDModel, step: int, out_dir: Path, **_
+) -> dict[str, plt.Figure]:
+    plots = {}
+    if isinstance(model, TMSSPDFullRankModel):
+        plots["subnetwork_params"] = plot_subnetwork_params(model, step, out_dir)
+    else:
+        plots["A"] = plot_permuted_A(model, step, out_dir)
+        plots["subnetwork_params"] = plot_subnetwork_params(model, step, out_dir)
+    return plots
 
 
 def main(
@@ -175,9 +187,7 @@ def main(
         device=device,
         dataloader=dataloader,
         pretrained_model=pretrained_model,
-        plot_results_fn=plot_permuted_A
-        if isinstance(model, TMSSPDModel)
-        else plot_subnetwork_params,
+        plot_results_fn=make_plots,
     )
 
     if config.wandb_project:

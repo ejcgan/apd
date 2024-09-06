@@ -8,7 +8,7 @@ lp_sparsity_coeff: 3
 pnorm: 0.9
 pnorm_end: null
 batch_size: 2048
-steps: 12_000
+steps: 20_000
 image_freq: 4000
 print_freq: 1000
 lr: 0.06
@@ -22,5 +22,6 @@ task_config:
   n_instances: 12
   bias_val: 0.0
   train_bias: true
+  feature_probability: 0.05
   # File obtained by running spd/experiments/tms/train_tms.py
   pretrained_model_path: spd/experiments/tms/out/tms_n-features5_n-hidden2_n-instances12_seed0.pth/model.pth
