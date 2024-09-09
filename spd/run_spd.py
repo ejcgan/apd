@@ -656,7 +656,6 @@ def optimize(
             if config.wandb_project:
                 wandb.log(
                     {
-                        "step": step,
                         "pnorm": step_pnorm,
                         "lr": step_lr,
                         "total_loss": loss.mean().item(),

@@ -703,21 +703,20 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         )
 
     def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        all_A_pairs = [
-            (self.mlps[i].linear1.A, self.mlps[i].linear2.A) for i in range(self.n_layers)
-        ]
-        As = [A for A_pair in all_A_pairs for A in A_pair]
+        As = []
+        for mlp in self.mlps:
+            As.append(mlp.linear1.A)
+            As.append(mlp.linear2.A)
         assert len(As) == self.n_param_matrices
         return As
 
     def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        # Get all B matrices
-        all_B_pairs = [
-            (self.mlps[i].linear1.B, self.mlps[i].linear2.B) for i in range(self.n_layers)
-        ]
-        As = [B for B_pair in all_B_pairs for B in B_pair]
-        assert len(As) == self.n_param_matrices
-        return As
+        Bs = []
+        for mlp in self.mlps:
+            Bs.append(mlp.linear1.B)
+            Bs.append(mlp.linear2.B)
+        assert len(Bs) == self.n_param_matrices
+        return Bs
 
     def set_handcoded_AB(self, target_transformer: PiecewiseFunctionTransformer):
         assert self.n_inputs == target_transformer.n_inputs
@@ -966,13 +965,10 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
             )
 
     def all_subnetwork_params(self) -> list[Float[Tensor, "k d_in d_out"]]:
-        all_subnetwork_pairs = [
-            (self.mlps[i].linear1.subnetwork_params, self.mlps[i].linear2.subnetwork_params)
-            for i in range(self.n_layers)
-        ]
-        all_subnetworks = [
-            subnetwork for subnetwork_pair in all_subnetwork_pairs for subnetwork in subnetwork_pair
-        ]
+        all_subnetworks = []
+        for mlp in self.mlps:
+            all_subnetworks.append(mlp.linear1.subnetwork_params)
+            all_subnetworks.append(mlp.linear2.subnetwork_params)
         assert len(all_subnetworks) == self.n_param_matrices
         return all_subnetworks
 

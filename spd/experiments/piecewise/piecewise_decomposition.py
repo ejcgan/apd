@@ -69,8 +69,6 @@ def plot_components_fullrank(
     model: PiecewiseFunctionSPDTransformer,
     step: int,
     out_dir: Path | None,
-    device: str,
-    slow_images: bool,
     **_,
 ) -> dict[str, plt.Figure]:
     # Not implemented attribution score plots, or multi-layer plots, yet.
