@@ -43,16 +43,16 @@ def get_run_name(config: Config) -> str:
     else:
         assert isinstance(config.task_config, DeepLinearConfig)
         if config.pnorm is not None:
-            run_suffix += f"p{config.pnorm}_"
+            run_suffix += f"p{config.pnorm:.2e}_"
         if config.lp_sparsity_coeff is not None:
-            run_suffix += f"lpsp{config.lp_sparsity_coeff}_"
+            run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
         if config.topk is not None:
-            run_suffix += f"topk{config.topk}_"
+            run_suffix += f"topk{config.topk:.2e}_"
         if config.topk_recon_coeff is not None:
-            run_suffix += f"topkrecon{config.topk_recon_coeff}_"
+            run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
         if config.topk_l2_coeff is not None:
-            run_suffix += f"topkl2_{config.topk_l2_coeff}_"
-        run_suffix += f"lr{config.lr}_"
+            run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
+        run_suffix += f"lr{config.lr:.2e}_"
         run_suffix += f"bs{config.batch_size}_"
         run_suffix += f"ft{config.task_config.n_features}_"
         run_suffix += f"hid{config.task_config.n_layers}"

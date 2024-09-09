@@ -188,4 +188,4 @@ def test_train_tms_happy_path():
     # Assert that the final loss is lower than the initial loss
     assert (
         final_loss < initial_loss
-    ), f"Final loss ({final_loss:.4f}) is not lower than initial loss ({initial_loss:.4f})"
+    ), f"Final loss ({final_loss:.2e}) is not lower than initial loss ({initial_loss:.2e})"

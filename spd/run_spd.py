@@ -63,6 +63,7 @@ class PiecewiseConfig(BaseModel):
     range_min: float
     range_max: float
     k: PositiveInt
+    target_seed: int | None = None
     simple_bias: bool = False
     handcoded_AB: bool = False
 
@@ -659,8 +660,6 @@ def optimize(
                         "pnorm": step_pnorm,
                         "lr": step_lr,
                         "total_loss": loss.mean().item(),
-                        "lp_sparsity_coeff": step_lp_sparsity_coeff,
-                        "topk_recon_coeff": step_topk_recon_coeff,
                         "lp_sparsity_loss": lp_sparsity_loss.mean().item()
                         if lp_sparsity_loss is not None
                         else None,
