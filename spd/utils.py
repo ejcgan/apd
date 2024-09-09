@@ -346,7 +346,7 @@ def calc_attributions_full_rank(
         feature_attributions: Float[Tensor, "... k"] = torch.zeros(
             inner_acts[0].shape[:-1], device=inner_acts[0].device
         )
-        grad_layer_acts: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
+        grad_layer_acts: tuple[Float[Tensor, "... d_out"], ...] = torch.autograd.grad(
             out[..., feature_idx].sum(), layer_acts, retain_graph=True
         )
         assert len(grad_layer_acts) == len(inner_acts)

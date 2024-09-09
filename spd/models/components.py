@@ -163,6 +163,10 @@ class MLPComponents(nn.Module):
         list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
     ]:
         """
+        Note that "inner_acts" represents the activations after multiplcation by A in the rank 1
+        case, and after multiplication by subnetwork_params (but before summing over k) in the
+        full-rank case.
+
         Returns:
             x: The output of the MLP
             layer_acts: The activations of each linear layer
@@ -191,6 +195,10 @@ class MLPComponents(nn.Module):
     ]:
         """
         Performs a forward pass using only the top-k components for each linear layer.
+
+        Note that "inner_acts" represents the activations after multiplcation by A in the rank 1
+        case, and after multiplication by subnetwork_params (but before summing over k) in the
+        full-rank case.
 
         Args:
             x: Input tensor

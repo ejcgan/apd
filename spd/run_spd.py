@@ -394,14 +394,14 @@ def calc_lp_sparsity_loss_rank_one(
             dimension.
     """
     assert len(layer_acts) == len(inner_acts) == len(layer_out_params)
-    lp_sparsity_loss = torch.zeros_like(inner_acts[0], requires_grad=True)
+    attributions = torch.zeros_like(inner_acts[0], requires_grad=True)
     for feature_idx in range(out.shape[-1]):
         grad_layer_acts = torch.autograd.grad(
             out[..., feature_idx].sum(),
             layer_acts,
             retain_graph=True,
         )
-        sparsity_inner = torch.zeros_like(lp_sparsity_loss, requires_grad=True)
+        sparsity_inner = torch.zeros_like(attributions, requires_grad=True)
         for param_matrix_idx in range(len(layer_out_params)):
             # h_i * grad_h_i
             sparsity_inner = sparsity_inner + (
@@ -413,11 +413,11 @@ def calc_lp_sparsity_loss_rank_one(
                 )
             )
 
-        lp_sparsity_loss = lp_sparsity_loss + sparsity_inner**2
-    lp_sparsity_loss = lp_sparsity_loss / out.shape[-1]
+        attributions = attributions + sparsity_inner**2
+    attributions = attributions / out.shape[-1]
 
     # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
-    lp_sparsity_loss = ((lp_sparsity_loss.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
+    lp_sparsity_loss = ((attributions.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
     lp_sparsity_loss = lp_sparsity_loss.mean(dim=0)  # Mean over batch dim
     return lp_sparsity_loss
 
@@ -445,14 +445,14 @@ def calc_lp_sparsity_loss_full_rank(
     assert n_param_matrices == len(inner_acts)
     batch = out.shape[0]
     assert batch == layer_acts[0].shape[0] == inner_acts[0].shape[0]
-    lp_sparsity_loss = torch.zeros(inner_acts[0].shape[:-1], requires_grad=True)
+    attributions = torch.zeros(inner_acts[0].shape[:-1], requires_grad=True)
     for feature_idx in range(out.shape[-1]):
         grad_layer_acts = torch.autograd.grad(
             out[..., feature_idx].sum(),
             layer_acts,
             retain_graph=True,
         )
-        sparsity_inner = torch.zeros_like(lp_sparsity_loss, requires_grad=True)
+        sparsity_inner = torch.zeros_like(attributions, requires_grad=True)
         for param_matrix_idx in range(n_param_matrices):
             # h_i * grad_h_i
             sparsity_inner += einops.einsum(
@@ -461,12 +461,12 @@ def calc_lp_sparsity_loss_full_rank(
                 "... d_out ,... k d_out -> ... k",
             )
 
-        lp_sparsity_loss = lp_sparsity_loss + sparsity_inner**2
+        attributions = attributions + sparsity_inner**2
     d_model_out = out.shape[-1]
-    lp_sparsity_loss = lp_sparsity_loss / d_model_out
+    attributions = attributions / d_model_out
 
     # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
-    lp_sparsity_loss = ((lp_sparsity_loss.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
+    lp_sparsity_loss = ((attributions.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
     lp_sparsity_loss = lp_sparsity_loss.mean(dim=0)  # Mean over batch dim
     return lp_sparsity_loss
 

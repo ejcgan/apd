@@ -926,11 +926,6 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         self.W_U = nn.Linear(self.d_embed, self.n_outputs, bias=False)
         initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
-        # The input_component is used for all A matrices in the first linear layer of each MLP
-        self.input_component = nn.Parameter(torch.empty(self.d_embed, self.k))
-        # The output_component is used for all B matrices in the second linear layer of each MLP
-        self.output_component = nn.Parameter(torch.empty(self.k, self.d_embed))
-
         self.mlps = nn.ModuleList(
             [
                 MLPComponents(
@@ -938,8 +933,6 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
                     d_mlp=d_mlp,
                     k=k,
                     input_bias=input_biases[i] if input_biases is not None else None,
-                    input_component=self.input_component,  # type: ignore
-                    output_component=self.output_component,  # type: ignore
                     full_rank=True,
                 )
                 for i in range(n_layers)
