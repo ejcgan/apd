@@ -90,9 +90,9 @@ def _plot_multiple_subnetwork_params(
                 ax.set_yticks([])
 
                 if column_idx == 0:
-                    ax.set_ylabel(f"k={k_idx}", rotation=0, ha="right", va="center")
+                    ax.set_ylabel(f"Subnet {k_idx}", rotation=0, ha="right", va="center")
                 if k_idx == k - 1:
-                    ax.set_xlabel(f"Inst {inst_idx} Param {param_idx}", rotation=0, ha="center")
+                    ax.set_xlabel(f"Inst {inst_idx} Layer {param_idx}", rotation=0, ha="center")
 
     fig.suptitle(f"Subnetwork Parameters (Step {step})")
     return fig
@@ -118,7 +118,7 @@ def _plot_subnetwork_attributions_fn(
     )
 
     cmap = "Blues"
-    # Add the batch data
+
     for i in range(n_instances):
         ax = axs[0, i]
         data = batch[:, i, :].detach().cpu().float().numpy()
