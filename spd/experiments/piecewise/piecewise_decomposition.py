@@ -8,6 +8,7 @@ import torch
 import wandb
 from jaxtyping import Float
 from torch import Tensor
+from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDFullRankTransformer,
@@ -44,22 +45,16 @@ def piecewise_plot_results_fn(
     **_,
 ):
     assert isinstance(config.task_config, PiecewiseConfig)
-    topk = config.topk
-    batch_topk = config.batch_topk
     slow_images = config.slow_images
-    start = config.task_config.range_min
-    stop = config.task_config.range_max
     # Plot functions
-    if topk is not None:
+    if config.topk is not None:
         fig_dict_1 = plot_model_functions(
             spd_model=model,
             target_model=target_model,
-            topk=topk,
-            batch_topk=batch_topk,
             full_rank=isinstance(model, PiecewiseFunctionSPDFullRankTransformer),
             device=device,
-            start=start,
-            stop=stop,
+            start=config.task_config.range_min,
+            stop=config.task_config.range_max,
             print_info=False,
         )
     else:
@@ -74,6 +69,13 @@ def piecewise_plot_results_fn(
             model=model, step=step, out_dir=out_dir, device=device, slow_images=slow_images
         )
     # Adjust order of plots on wandb
+    fig_dict = {**fig_dict_2, **fig_dict_1}
+    # Save plots to files
+    if out_dir:
+        for k, v in fig_dict.items():
+            out_file = out_dir / f"{k}_s{step}.png"
+            v.savefig(out_file, dpi=200)
+            tqdm.write(f"Saved plot to {out_file}")
     return {**fig_dict_2, **fig_dict_1}
 
 

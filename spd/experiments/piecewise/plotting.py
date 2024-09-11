@@ -7,7 +7,6 @@ import numpy as np
 import torch
 from matplotlib.colors import CenteredNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDFullRankTransformer,
@@ -96,9 +95,6 @@ def plot_components_fullrank(
             W_out_k = mlp.linear2.subnetwork_params[k].T
             ax = axs[k + 1, 1]  # type: ignore
             plot_matrix(ax, W_out_k, f"W_out_k.T, k={k}", "Neuron index", "")
-    if out_dir is not None:
-        fig.savefig(out_dir / f"matrices_layer0_s{step}.png", dpi=300)
-        print(f"saved to {out_dir / f'matrices_layer0_s{step}.png'}")
     return {"matrices_layer0": fig}
 
 
@@ -140,10 +136,6 @@ def plot_components(
         "Subnetwork index",
         "Function index",
     )
-    if out_dir:
-        fig_a.savefig(out_dir / f"attribution_scores_s{step}.png", dpi=300)
-        plt.close(fig_a)
-        tqdm.write(f"Saved attribution scores to {out_dir / f'attribution_scores_s{step}.png'}")
 
     # Figures for A, B, AB of each layer
     n_rows = 3 + model.k if slow_images else 3
@@ -221,28 +213,27 @@ def plot_components(
                     "Embedding index",
                     "%.2f",
                 )
-
-        if out_dir:
-            fig.savefig(out_dir / f"matrices_layer{n}_s{step}.png", dpi=300)
-            plt.close(fig_a)
-            tqdm.write(f"Saved matrix analysis to {out_dir / f'matrices_layer{n}_s{step}.png'}")
-
     return {"attrib_scores": fig_a, **{f"matrices_layer{n}": fig for n, fig in enumerate(figs)}}
 
 
 def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
-    topk: float,
-    batch_topk: bool,
     full_rank: bool,
     device: str,
     start: float,
     stop: float,
     print_info: bool = False,
 ) -> dict[str, plt.Figure]:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    fig.suptitle(f"Model functions (topk={topk}, batch_topk={batch_topk})")
+    fig, axes = plt.subplots(nrows=3, figsize=(12, 12), constrained_layout=True)
+    assert isinstance(axes, np.ndarray)
+    [ax, ax_attrib, ax_inner] = axes
+    topk = 1
+    batch_topk = False
+    fig.suptitle(
+        f"Model outputs for each control bit. (Plot with topk={topk} & batch_topk={batch_topk}.\n"
+        "This should differ from the training settings, topk>=1 ought to work for plotting.)"
+    )
     # Get model outputs for simple example data. Create input array with 10_000 rows, 1000
     # rows for each function. Set the 0th column to be linspace(0, 5, 1000) repeated. Set the
     # control bits to [0,1,0,0,...] for the first 1000 rows, [0,0,1,0,...] for the next 1000 rows,
@@ -273,6 +264,7 @@ def plot_model_functions(
     topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
     out_topk, _, inner_acts_topk = spd_model.forward_topk(input_array, topk_mask=topk_mask)
     assert len(inner_acts_topk) == spd_model.n_param_matrices
+    attribution_scores = attribution_scores.cpu().detach()
 
     if print_info:
         # Check if, ever, there are cases where the control bit is 1 but the topk_mask is False.
@@ -299,25 +291,63 @@ def plot_model_functions(
 
     # Plot for every k
     tab20 = plt.get_cmap("tab20")
-    for k in range(n_functions):
+    # cb stands for control bit which is active there; this differs from k due to permutation
+    for cb in range(n_functions):
         d = 1 / n_functions
-        color0 = tab20(k / n_functions)
-        color1 = tab20(k / n_functions + d / 4)
-        color2 = tab20(k / n_functions + 2 * d / 4)
-        color3 = tab20(k / n_functions + 3 * d / 4)
-        s = slice(k * n_samples, (k + 1) * n_samples)
+        color0 = tab20(cb / n_functions)
+        color1 = tab20(cb / n_functions + d / 4)
+        color2 = tab20(cb / n_functions + 2 * d / 4)
+        color3 = tab20(cb / n_functions + 3 * d / 4)
+        s = slice(cb * n_samples, (cb + 1) * n_samples)
         if model_output_hardcoded is not None:
             assert target_model is not None
             assert target_model.controlled_resnet is not None
             ax.plot(
                 x_space,
-                target_model.controlled_resnet.functions[k](x_space),
+                target_model.controlled_resnet.functions[cb](x_space),
                 ls=":",
                 color=color0,
             )
-            ax.plot(input_xs[s], model_output_hardcoded[s], label=f"k={k}", color=color1)
+            ax.plot(input_xs[s], model_output_hardcoded[s], label=f"cb={cb}", color=color1)
         ax.plot(input_xs[s], model_output_spd[s], ls="-.", color=color2)
         ax.plot(input_xs[s], out_topk[s], ls="--", color=color3)
+        k_cb = attribution_scores[s].mean(dim=0).argmax()
+        for k in range(n_functions):
+            # Find permutation
+            if k == k_cb:
+                ax_attrib.plot(
+                    input_xs[s],
+                    attribution_scores[s][:, k],
+                    color=color1,
+                    label=f"cb={cb}, k_cb={k}",
+                )
+                assert len(inner_acts) <= 3, "Didn't implement more than 3 SPD 'layers' yet"
+                for j in range(len(inner_acts)):
+                    ls = ["-", "--"][j]
+                    if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
+                        ax_inner.plot(
+                            input_xs[s],
+                            inner_acts[j].cpu().detach()[s][:, k],
+                            color=color1,
+                            ls=ls,
+                            label=f"cb={cb}, k_cb={k}" if j == 0 else None,
+                        )
+            else:
+                ax_attrib.plot(input_xs[s], attribution_scores[s][:, k], color=color1, alpha=0.2)
+                for j in range(len(inner_acts)):
+                    ls = ["-", "--"][j]
+                    if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
+                        ax_inner.plot(
+                            input_xs[s],
+                            inner_acts[j].cpu().detach()[s][:, k],
+                            color="k",
+                            ls=ls,
+                            lw=0.2,
+                        )
+    ax_inner.plot([], [], color="C0", label="W_in", ls="-")
+    ax_inner.plot([], [], color="C0", label="W_out", ls="--")
+    ax_inner.plot([], [], color="k", label="k!=k_cb", ls="-", lw=0.2)
+
     # Add some additional (blue) legend lines explaining the different line styles
     if model_output_hardcoded is not None:
         ax.plot([], [], ls=":", color="C0", label="true function")
@@ -325,6 +355,17 @@ def plot_model_functions(
     ax.plot([], [], ls="-.", color="C0", label="spd model")
     ax.plot([], [], ls="--", color="C0", label="spd model topk")
     ax.legend(ncol=3)
+    ax_attrib.legend(ncol=3)
+    ax_attrib.set_yscale("log")
+    ax_attrib.set_ylabel("attribution_scores (log)")
+    ax_attrib.set_xlabel("x (model input dim 0)")
+    ax_attrib.set_title(
+        "Attributions of each subnetwork for every control bit case (k=k_cb in bold)"
+    )
+    ax_inner.legend(ncol=3)
+    ax_inner.set_ylabel("inner acts (symlog)")
+    ax_inner.set_title("'inner acts', coloured for the top subnetwork, black for the others")
+    ax_inner.set_xlabel("x (model input dim 0)")
     ax.set_xlabel("x (model input dim 0)")
     ax.set_ylabel("f(x) (model output dim 0)")
     return {"model_functions": fig}

@@ -29,6 +29,9 @@ with open(pretrained_path.parent / "config.json") as f:
     # might differ from training. Thus we manually set topk to 1. Note that this should work for
     # both, batch and non-batch topk.
     config_dict["topk"] = 1
+    # Disable batch_topk to rule out errors caused by batch -- non-batch is an easier task for SPD
+    # in the toy setting used for plots.
+    config_dict["batch_topk"] = False
     config = Config(**config_dict)
 
 with open(pretrained_path.parent / "function_params.json") as f:
@@ -43,8 +46,11 @@ hardcoded_model, spd_model, dataloader, test_dataloader = get_model_and_dataload
     config, device, out_dir=None
 )
 assert isinstance(hardcoded_model, PiecewiseFunctionTransformer)
-assert isinstance(spd_model, PiecewiseFunctionSPDTransformer)
+assert isinstance(
+    spd_model, PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer
+)
 spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
+# spd_model.set_handcoded_AB(hardcoded_model)
 
 
 topk = config.topk
@@ -64,8 +70,6 @@ if topk is not None:
     extra_fig_dict = plot_model_functions(
         spd_model=spd_model,
         target_model=hardcoded_model,
-        topk=topk,
-        batch_topk=False,
         full_rank=full_rank,
         device=device,
         start=config.task_config.range_min,
