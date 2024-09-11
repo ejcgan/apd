@@ -684,12 +684,11 @@ def optimize(
         ):
             fig_dict = plot_results_fn(
                 model=model,
+                target_model=pretrained_model,
                 step=step,
                 out_dir=out_dir,
                 device=device,
-                topk=config.topk,
-                batch_topk=config.batch_topk,
-                slow_images=config.slow_images,
+                config=config,
             )
             if config.wandb_project:
                 wandb.log(
