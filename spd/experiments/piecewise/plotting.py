@@ -1,20 +1,24 @@
 from pathlib import Path
+from typing import NamedTuple
 
 import einops
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tkr
 import numpy as np
 import torch
+from jaxtyping import Float
 from matplotlib.colors import CenteredNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from torch import Tensor
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDFullRankTransformer,
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import calc_recon_mse
+from spd.run_spd import Config, calc_recon_mse
 from spd.utils import (
+    BatchedDataLoader,
     calc_attributions_full_rank,
     calc_attributions_rank_one,
     calc_topk_mask,
@@ -216,6 +220,58 @@ def plot_components(
     return {"attrib_scores": fig_a, **{f"matrices_layer{n}": fig for n, fig in enumerate(figs)}}
 
 
+class SPDoutputs(NamedTuple):
+    target_model_output: torch.Tensor | None
+    spd_model_output: torch.Tensor
+    spd_topk_model_output: torch.Tensor
+    layer_acts: list[torch.Tensor]
+    topk_layer_acts: list[torch.Tensor]
+    inner_acts: list[torch.Tensor]
+    topk_inner_acts: list[torch.Tensor]
+    attribution_scores: torch.Tensor
+    topk_mask: torch.Tensor
+
+
+def run_spd_forward_pass(
+    spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
+    target_model: PiecewiseFunctionTransformer | None,
+    input_array: torch.Tensor,
+    full_rank: bool,
+    batch_topk: bool,
+    topk: float,
+) -> SPDoutputs:
+    # non-SPD model, and SPD-model non-topk forward pass
+    model_output_hardcoded = target_model(input_array) if target_model is not None else None
+    model_output_spd, layer_acts, inner_acts = spd_model(input_array)
+
+    # SPD-model topk forward pass, copy-pasted from run_spd
+    if full_rank:
+        attribution_scores = calc_attributions_full_rank(
+            out=model_output_spd,
+            inner_acts=inner_acts,
+            layer_acts=layer_acts,
+        )
+    else:
+        attribution_scores = calc_attributions_rank_one(out=model_output_spd, inner_acts=inner_acts)
+    topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
+    model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model.forward_topk(
+        input_array, topk_mask=topk_mask
+    )
+    assert len(inner_acts_topk) == spd_model.n_param_matrices
+    attribution_scores = attribution_scores.cpu().detach()
+    return SPDoutputs(
+        target_model_output=model_output_hardcoded,
+        spd_model_output=model_output_spd,
+        spd_topk_model_output=model_output_spd_topk,
+        layer_acts=layer_acts,
+        topk_layer_acts=layer_acts_topk,
+        inner_acts=inner_acts,
+        topk_inner_acts=inner_acts_topk,
+        attribution_scores=attribution_scores,
+        topk_mask=topk_mask,
+    )
+
+
 def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
@@ -228,7 +284,12 @@ def plot_model_functions(
     fig, axes = plt.subplots(nrows=3, figsize=(12, 12), constrained_layout=True)
     assert isinstance(axes, np.ndarray)
     [ax, ax_attrib, ax_inner] = axes
+    # For these tests we run with unusual data where there's always 1 control bit active, which
+    # might differ from training. Thus we manually set topk to 1. Note that this should work for
+    # both, batch and non-batch topk.
     topk = 1
+    # Disable batch_topk to rule out errors caused by batch -- non-batch is an easier task for SPD
+    # in the toy setting used for plots.
     batch_topk = False
     fig.suptitle(
         f"Model outputs for each control bit. (Plot with topk={topk} & batch_topk={batch_topk}.\n"
@@ -248,23 +309,20 @@ def plot_model_functions(
     x_space = torch.linspace(start, stop, n_samples)
     input_array[:, 0] = x_space.repeat(n_functions)
 
-    # non-SPD model, and SPD-model non-topk forward pass
-    model_output_hardcoded = target_model(input_array) if target_model is not None else None
-    model_output_spd, layer_acts, inner_acts = spd_model(input_array)
-
-    # SPD-model topk forward pass, copy-pasted from run_spd
-    if full_rank:
-        attribution_scores = calc_attributions_full_rank(
-            out=model_output_spd,
-            inner_acts=inner_acts,
-            layer_acts=layer_acts,
-        )
-    else:
-        attribution_scores = calc_attributions_rank_one(out=model_output_spd, inner_acts=inner_acts)
-    topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
-    out_topk, _, inner_acts_topk = spd_model.forward_topk(input_array, topk_mask=topk_mask)
-    assert len(inner_acts_topk) == spd_model.n_param_matrices
-    attribution_scores = attribution_scores.cpu().detach()
+    spd_outputs = run_spd_forward_pass(
+        spd_model=spd_model,
+        target_model=target_model,
+        input_array=input_array,
+        full_rank=full_rank,
+        batch_topk=batch_topk,
+        topk=topk,
+    )
+    model_output_hardcoded = spd_outputs.target_model_output
+    model_output_spd = spd_outputs.spd_model_output
+    out_topk = spd_outputs.spd_topk_model_output
+    inner_acts = spd_outputs.inner_acts
+    attribution_scores = spd_outputs.attribution_scores
+    topk_mask = spd_outputs.topk_mask
 
     if print_info:
         # Check if, ever, there are cases where the control bit is 1 but the topk_mask is False.
@@ -369,3 +427,51 @@ def plot_model_functions(
     ax.set_xlabel("x (model input dim 0)")
     ax.set_ylabel("f(x) (model output dim 0)")
     return {"model_functions": fig}
+
+
+def plot_subnetwork_correlations(
+    dataloader: BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
+    spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
+    config: Config,
+    device: str,
+    n_forward_passes: int = 100,
+) -> dict[str, plt.Figure]:
+    topk_masks = []
+    for batch, _ in dataloader:
+        batch = batch.to(device=device)
+        assert config.topk is not None
+        spd_outputs = run_spd_forward_pass(
+            spd_model=spd_model,
+            target_model=None,
+            input_array=batch,
+            full_rank=config.full_rank,
+            batch_topk=config.batch_topk,
+            topk=config.topk,
+        )
+        topk_masks.append(spd_outputs.topk_mask)
+        if len(topk_masks) > n_forward_passes:
+            break
+    topk_masks = torch.cat(topk_masks).float()
+    # Calculate correlation matrix
+    corr_matrix = torch.corrcoef(topk_masks.T).cpu()
+    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
+    im = ax.matshow(corr_matrix)
+    ax.xaxis.set_ticks_position("bottom")
+    for i in range(corr_matrix.shape[0]):
+        for j in range(corr_matrix.shape[1]):
+            ax.text(
+                j,
+                i,
+                f"{corr_matrix[i, j]:.2f}",
+                ha="center",
+                va="center",
+                color="#EE7777",
+                fontsize=8,
+            )
+    divider = make_axes_locatable(plt.gca())
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(im, cax=cax)
+    ax.set_title("Subnetwork Correlation Matrix")
+    ax.set_xlabel("Subnetwork")
+    ax.set_ylabel("Subnetwork")
+    return {"subnetwork_correlation_matrix": fig}
