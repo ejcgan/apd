@@ -13,6 +13,7 @@ batch_size: 2048
 steps: 30_000
 image_freq: 2000
 print_freq: 1000
+save_freq: 30_000
 lr: 1e-3
 lr_schedule: constant
 lr_warmup_pct: 0.1
