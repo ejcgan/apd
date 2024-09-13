@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib import collections as mc
-from matplotlib import colors as mcolors
 from pydantic import BaseModel, PositiveInt
 from tqdm import tqdm, trange
 
@@ -86,23 +85,24 @@ def train(
 
 
 def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
+    """2D polygon plot of the TMS model.
+
+    Adapted from
+    https://colab.research.google.com/github/anthropics/toy-models-of-superposition/blob/main/toy_models.ipynb.
+    """
     WA = model.W.detach()
-    N = len(WA[:, 0])
     sel = range(config.n_instances)  # can be used to highlight specific sparsity levels
-    plt.rcParams["axes.prop_cycle"] = plt.cycler(
-        "color",
-        # plt.cm.viridis(model.importance[0].cpu().numpy()),  # type: ignore
-        plt.cm.viridis(np.array([1.0])),  # type: ignore
-    )
+    color = plt.cm.viridis(np.array([0.0]))  # type: ignore
     plt.rcParams["figure.dpi"] = 200
     fig, axs = plt.subplots(1, len(sel), figsize=(2 * len(sel), 2))
     axs = np.array(axs)
     for i, ax in zip(sel, axs, strict=False):
         W = WA[i].cpu().detach().numpy()
-        colors = [mcolors.to_rgba(c) for c in plt.rcParams["axes.prop_cycle"].by_key()["color"]]
-        ax.scatter(W[:, 0], W[:, 1], c=colors[0 : len(W[:, 0])])
+        ax.scatter(W[:, 0], W[:, 1], c=color)
         ax.set_aspect("equal")
-        ax.add_collection(mc.LineCollection(np.stack((np.zeros_like(W), W), axis=1), colors=colors))  # type: ignore
+        ax.add_collection(
+            mc.LineCollection(np.stack((np.zeros_like(W), W), axis=1), colors=[color])  # type: ignore
+        )
 
         z = 1.5
         ax.set_facecolor("#FCFBF8")
