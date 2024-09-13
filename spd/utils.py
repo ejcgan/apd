@@ -351,6 +351,9 @@ def calc_attributions_full_rank(
         )
         assert len(grad_layer_acts) == len(inner_acts)
         for param_matrix_idx in range(len(inner_acts)):
+            # Note that this operation would be equivalent to:
+            # einsum(grad_inner_acts, inner_acts, "... k d_out ,... k d_out -> ... k")
+            # since the gradient distributes over the sum.
             feature_attributions += einops.einsum(
                 grad_layer_acts[param_matrix_idx].detach(),
                 inner_acts[param_matrix_idx],
