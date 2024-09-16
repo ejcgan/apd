@@ -204,6 +204,11 @@ def get_model_and_dataloader(
     piecewise_model_spd.W_E.requires_grad_(False)
     piecewise_model_spd.W_U.requires_grad_(False)
 
+    train_dataset_seed = (
+        config.task_config.dataset_seed
+        if config.task_config.dataset_seed is not None
+        else config.seed
+    )
     dataset = PiecewiseDataset(
         n_inputs=piecewise_model.n_inputs,
         functions=functions,
@@ -212,6 +217,7 @@ def get_model_and_dataloader(
         range_max=config.task_config.range_max,
         batch_size=config.batch_size,
         return_labels=False,
+        dataset_seed=train_dataset_seed,
     )
     dataloader = BatchedDataLoader(dataset)
 
@@ -223,6 +229,7 @@ def get_model_and_dataloader(
         range_max=config.task_config.range_max,
         batch_size=config.batch_size,
         return_labels=True,
+        dataset_seed=train_dataset_seed + 1,
     )
     test_dataloader = BatchedDataLoader(test_dataset)
 

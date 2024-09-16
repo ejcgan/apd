@@ -24,6 +24,7 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         range_max: float,
         batch_size: int,
         return_labels: bool,
+        dataset_seed: int | None = None,
     ):
         self.n_inputs = n_inputs
         self.functions = functions
@@ -32,6 +33,9 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
         self.range_max = range_max
         self.batch_size = batch_size
         self.return_labels = return_labels
+        self.seed_generator = torch.Generator()
+        if dataset_seed is not None:
+            self.seed_generator.manual_seed(dataset_seed)
 
     def __len__(self) -> int:
         return 2**31
@@ -39,10 +43,16 @@ class PiecewiseDataset(Dataset[tuple[Float[Tensor, " n_inputs"], Float[Tensor, "
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         data = torch.empty((self.batch_size, self.n_inputs))
         data[:, 0] = (
-            torch.rand(self.batch_size) * (self.range_max - self.range_min) + self.range_min
+            torch.rand(self.batch_size, generator=self.seed_generator)
+            * (self.range_max - self.range_min)
+            + self.range_min
         )
         control_bits = torch.bernoulli(
-            torch.full((self.batch_size, self.n_inputs - 1), self.feature_probability)
+            torch.full(
+                (self.batch_size, self.n_inputs - 1),
+                self.feature_probability,
+            ),
+            generator=self.seed_generator,
         )
         data[:, 1:] = control_bits
         if self.return_labels:

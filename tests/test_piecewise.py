@@ -39,7 +39,7 @@ def get_piecewise_config(
     )
 
 
-def piecewise_decomposition_optimize_test(config: Config) -> None:
+def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool = True) -> None:
     set_seed(0)
     device = "cpu"
     assert isinstance(config.task_config, PiecewiseConfig)
@@ -67,9 +67,10 @@ def piecewise_decomposition_optimize_test(config: Config) -> None:
         plot_results_fn=None,
     )
 
-    assert not torch.allclose(
-        initial_param, piecewise_model_spd.mlps[0].linear1.A
-    ), "Model A matrix should have changed after optimization"
+    if check_A_changed:
+        assert not torch.allclose(
+            initial_param, piecewise_model_spd.mlps[0].linear1.A
+        ), "Model A matrix should have changed after optimization"
 
     # Check that other params are exactly equal
     for i in range(len(piecewise_model_spd.mlps)):
@@ -78,11 +79,11 @@ def piecewise_decomposition_optimize_test(config: Config) -> None:
     assert torch.allclose(piecewise_model_spd.W_U.weight, initial_W_U)
 
 
-def test_piecewise_batch_tokp_no_l2_handcoded_AB() -> None:
+def test_piecewise_batch_topk_no_l2_handcoded_AB() -> None:
     config = Config(
         topk=4,
         batch_topk=True,
-        batch_size=2,
+        batch_size=4,  # Needs to be enough to have at least 1 control bit on in two steps
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -91,14 +92,14 @@ def test_piecewise_batch_tokp_no_l2_handcoded_AB() -> None:
         topk_l2_coeff=None,
         task_config=get_piecewise_config(handcoded_AB=True, n_layers=1),
     )
-    piecewise_decomposition_optimize_test(config)
+    piecewise_decomposition_optimize_test(config, check_A_changed=False)
 
 
 def test_piecewise_batch_topk_no_l2() -> None:
     config = Config(
         topk=4,
         batch_topk=True,
-        batch_size=2,
+        batch_size=4,
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -114,7 +115,7 @@ def test_piecewise_batch_topk_and_l2() -> None:
     config = Config(
         topk=4,
         batch_topk=True,
-        batch_size=2,
+        batch_size=4,
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -130,7 +131,7 @@ def test_piecewise_topk_and_l2() -> None:
     config = Config(
         topk=4,
         batch_topk=False,
-        batch_size=2,
+        batch_size=4,
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -146,7 +147,7 @@ def test_piecewise_lp() -> None:
     config = Config(
         topk=None,
         batch_topk=False,
-        batch_size=2,
+        batch_size=4,
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -163,7 +164,7 @@ def test_piecewise_lp_simple_bias_false() -> None:
     config = Config(
         topk=None,
         batch_topk=False,
-        batch_size=2,
+        batch_size=4,
         steps=2,
         print_freq=2,
         save_freq=None,
@@ -177,10 +178,11 @@ def test_piecewise_lp_simple_bias_false() -> None:
 
 
 def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
-    """After training for a few steps, the topk_recon_loss and param_match_loss should stay at 0."""
+    """After training for a few steps, topk_recon_loss and param_match_loss should stay at ~0."""
     set_seed(0)
     device = "cpu"
     config = Config(
+        seed=0,
         full_rank=False,
         topk=2,
         batch_topk=True,

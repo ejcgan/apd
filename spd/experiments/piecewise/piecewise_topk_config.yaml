@@ -28,6 +28,5 @@ task_config:
   range_min: 0
   range_max: 5
   k: 10
-  target_seed: 0
   simple_bias: false
   handcoded_AB: false
