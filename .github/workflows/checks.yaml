@@ -29,7 +29,7 @@ jobs:
         with:
           path: |
             ./venv
-          key: ${{ runner.os }}-${{ runner.environment }}-cache-${{ hashFiles('**/pyproject.toml') }}
+          key: ${{ runner.os }}-${{ runner.environment }}-cache-v1-${{ hashFiles('**/pyproject.toml') }}
 
       - name: Install Dependencies
         if: steps.cache-env.outputs.cache-hit != 'true'

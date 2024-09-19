@@ -33,9 +33,11 @@ def plot_matrix(
     ylabel: str,
     colorbar_format: str = "%.0f",
 ) -> None:
+    # Useful to have bigger text for small matrices
+    fontsize = 8 if matrix.numel() < 50 else 4
     im = ax.matshow(matrix.detach().cpu().numpy(), cmap="coolwarm", norm=CenteredNorm())
     for (j, i), label in np.ndenumerate(matrix.detach().cpu().numpy()):
-        ax.text(i, j, f"{label:.2f}", ha="center", va="center", fontsize=4)
+        ax.text(i, j, f"{label:.2f}", ha="center", va="center", fontsize=fontsize)
     ax.set_xlabel(xlabel)
     if ylabel != "":
         ax.set_ylabel(ylabel)
@@ -475,3 +477,32 @@ def plot_subnetwork_correlations(
     ax.set_xlabel("Subnetwork")
     ax.set_ylabel("Subnetwork")
     return {"subnetwork_correlation_matrix": fig}
+
+
+def plot_subnetwork_attributions_statistics(
+    topk_mask: Float[Tensor, "batch_size k"],
+) -> dict[str, plt.Figure]:
+    """Plot a vertical bar chart of the number of active subnetworks over the batch."""
+    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
+    assert topk_mask.ndim == 2
+    values = topk_mask.sum(dim=1).cpu().detach().numpy()
+    bins = list(range(int(values.min().item()), int(values.max().item()) + 2))
+    counts, _ = np.histogram(values, bins=bins)
+    bars = ax.bar(bins[:-1], counts, align="center", width=0.8)
+    ax.set_xticks(bins[:-1])
+    ax.set_xticklabels([str(b) for b in bins[:-1]])
+    ax.set_title(f"Active subnetworks on current batch (batch_size={topk_mask.shape[0]})")
+    ax.set_xlabel("Number of active subnetworks")
+    ax.set_ylabel("Count")
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(
+            f"{height}",
+            xy=(bar.get_x() + bar.get_width() / 2, height),
+            xytext=(0, 3),  # 3 points vertical offset
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+        )
+    return {"subnetwork_attributions_statistics": fig}

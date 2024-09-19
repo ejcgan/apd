@@ -585,7 +585,7 @@ def optimize(
                     step_pnorm=step_pnorm,
                 )
 
-        out_topk, topk_l2_loss, topk_recon_loss = None, None, None
+        out_topk, topk_l2_loss, topk_recon_loss, topk_mask = None, None, None, None
         if config.topk is not None:
             if config.full_rank:
                 attribution_scores = calc_attributions_full_rank(
@@ -690,6 +690,7 @@ def optimize(
                 out_dir=out_dir,
                 device=device,
                 config=config,
+                topk_mask=topk_mask,
             )
             if config.wandb_project:
                 wandb.log(
