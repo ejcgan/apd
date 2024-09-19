@@ -350,27 +350,28 @@ def plot_model_functions(
     input_xs = input_array[:, 0].cpu().detach().numpy()
 
     # Plot for every k
-    tab20 = plt.get_cmap("tab20")
+    tab20b_colors = plt.get_cmap("tab20b").colors  # type: ignore
+    tab20c_colors = plt.get_cmap("tab20c").colors  # type: ignore
+    colors = [*tab20b_colors, *tab20c_colors]
     # cb stands for control bit which is active there; this differs from k due to permutation
     for cb in range(n_functions):
-        d = 1 / n_functions
-        color0 = tab20(cb / n_functions)
-        color1 = tab20(cb / n_functions + d / 4)
-        color2 = tab20(cb / n_functions + 2 * d / 4)
-        color3 = tab20(cb / n_functions + 3 * d / 4)
+        color0 = colors[(4 * cb + 0) % len(colors)]
+        color1 = colors[(4 * cb + 1) % len(colors)]
+        color2 = colors[(4 * cb + 2) % len(colors)]
+        color3 = colors[(4 * cb + 3) % len(colors)]
         s = slice(cb * n_samples, (cb + 1) * n_samples)
+        ax.plot(input_xs[s], out_topk[s], ls="--", color=color0)
         if model_output_hardcoded is not None:
             assert target_model is not None
             assert target_model.controlled_resnet is not None
+            ax.plot(input_xs[s], model_output_hardcoded[s], label=f"cb={cb}", color=color1)
             ax.plot(
                 x_space,
                 target_model.controlled_resnet.functions[cb](x_space),
                 ls=":",
-                color=color0,
+                color=color2,
             )
-            ax.plot(input_xs[s], model_output_hardcoded[s], label=f"cb={cb}", color=color1)
-        ax.plot(input_xs[s], model_output_spd[s], ls="-.", color=color2)
-        ax.plot(input_xs[s], out_topk[s], ls="--", color=color3)
+        ax.plot(input_xs[s], model_output_spd[s], ls="-.", color=color3)
         k_cb = attribution_scores[s].mean(dim=0).argmax()
         for k in range(n_functions):
             # Find permutation
@@ -378,7 +379,7 @@ def plot_model_functions(
                 ax_attrib.plot(
                     input_xs[s],
                     attribution_scores[s][:, k],
-                    color=color1,
+                    color=color0,
                     label=f"cb={cb}, k_cb={k}",
                 )
                 assert len(inner_acts) <= 3, "Didn't implement more than 3 SPD 'layers' yet"
@@ -388,12 +389,12 @@ def plot_model_functions(
                         ax_inner.plot(
                             input_xs[s],
                             inner_acts[j].cpu().detach()[s][:, k],
-                            color=color1,
+                            color=color0,
                             ls=ls,
                             label=f"cb={cb}, k_cb={k}" if j == 0 else None,
                         )
             else:
-                ax_attrib.plot(input_xs[s], attribution_scores[s][:, k], color=color1, alpha=0.2)
+                ax_attrib.plot(input_xs[s], attribution_scores[s][:, k], color=color0, alpha=0.2)
                 for j in range(len(inner_acts)):
                     ls = ["-", "--"][j]
                     if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
@@ -404,16 +405,16 @@ def plot_model_functions(
                             ls=ls,
                             lw=0.2,
                         )
-    ax_inner.plot([], [], color="C0", label="W_in", ls="-")
-    ax_inner.plot([], [], color="C0", label="W_out", ls="--")
+    ax_inner.plot([], [], color=colors[0], label="W_in", ls="-")
+    ax_inner.plot([], [], color=colors[0], label="W_out", ls="--")
     ax_inner.plot([], [], color="k", label="k!=k_cb", ls="-", lw=0.2)
 
     # Add some additional (blue) legend lines explaining the different line styles
+    ax.plot([], [], ls="--", color=colors[0], label="spd model topk")
     if model_output_hardcoded is not None:
-        ax.plot([], [], ls=":", color="C0", label="true function")
-        ax.plot([], [], ls="-", color="C0", label="target model")
-    ax.plot([], [], ls="-.", color="C0", label="spd model")
-    ax.plot([], [], ls="--", color="C0", label="spd model topk")
+        ax.plot([], [], ls="-", color=colors[1], label="target model")
+        ax.plot([], [], ls=":", color=colors[2], label="true function")
+    ax.plot([], [], ls="-.", color=colors[3], label="spd model")
     ax.legend(ncol=3)
     ax_attrib.legend(ncol=3)
     ax_attrib.set_yscale("log")
