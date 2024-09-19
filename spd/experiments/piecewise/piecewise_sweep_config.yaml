@@ -1,0 +1,14 @@
+program: spd/experiments/piecewise/piecewise_decomposition.py
+method: grid
+metric:
+  name: total_loss
+  goal: minimize
+parameters:
+  lr:
+    values: [3e-2, 1e-1]
+
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/experiments/piecewise/piecewise_lp_config.yaml
