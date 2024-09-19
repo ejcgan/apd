@@ -431,8 +431,6 @@ def calc_lp_sparsity_loss_full_rank(
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
 
-    The attributions here now work the same as in the topk case, because there is no B matrix.
-
     Args:
         out (Float[Tensor, "... d_model_out"]): The output of the model.
         layer_acts (list[Float[Tensor, "... d_out"]]): The activations of each layer.
@@ -442,27 +440,9 @@ def calc_lp_sparsity_loss_full_rank(
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
             dimension.
     """
-    n_param_matrices = len(layer_acts)
-    assert n_param_matrices == len(inner_acts)
-    batch = out.shape[0]
-    assert batch == layer_acts[0].shape[0] == inner_acts[0].shape[0]
-    attributions = torch.zeros(inner_acts[0].shape[:-1], requires_grad=True, device=out.device)
-    for feature_idx in range(out.shape[-1]):
-        grad_layer_acts = torch.autograd.grad(
-            out[..., feature_idx].sum(),
-            layer_acts,
-            retain_graph=True,
-        )
-        sparsity_inner = torch.zeros_like(attributions, requires_grad=True)
-        for param_matrix_idx in range(n_param_matrices):
-            # h_i * grad_h_i
-            sparsity_inner = sparsity_inner + einops.einsum(
-                grad_layer_acts[param_matrix_idx].detach(),
-                inner_acts[param_matrix_idx],
-                "... d_out ,... k d_out -> ... k",
-            )
+    attributions = calc_attributions_full_rank(out, inner_acts, layer_acts)
 
-        attributions = attributions + sparsity_inner**2
+    # Average the attributions over the output dimensions
     d_model_out = out.shape[-1]
     attributions = attributions / d_model_out
 
