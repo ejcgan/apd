@@ -22,6 +22,7 @@ from spd.experiments.piecewise.plotting import (
     plot_components,
     plot_components_fullrank,
     plot_model_functions,
+    plot_piecewise_network,
     plot_subnetwork_attributions_statistics,
     plot_subnetwork_correlations,
 )
@@ -66,6 +67,8 @@ def piecewise_plot_results_fn(
             print_info=False,
         )
         fig_dict.update(fig_dict_functions)
+        fig_dict_network = plot_piecewise_network(model)
+        fig_dict.update(fig_dict_network)
 
     if config.topk is not None:
         if dataloader is not None:
@@ -84,17 +87,19 @@ def piecewise_plot_results_fn(
         fig_dict.update(fig_dict_attributions)
 
     # Plot components
-    if isinstance(model, PiecewiseFunctionSPDFullRankTransformer):
-        fig_dict_components = plot_components_fullrank(
-            model=model, step=step, out_dir=out_dir, slow_images=slow_images
-        )
-        fig_dict.update(fig_dict_components)
+    if config.task_config.n_layers == 1:
+        if isinstance(model, PiecewiseFunctionSPDFullRankTransformer):
+            fig_dict_components = plot_components_fullrank(
+                model=model, step=step, out_dir=out_dir, slow_images=slow_images
+            )
+            fig_dict.update(fig_dict_components)
+        else:
+            fig_dict_components = plot_components(
+                model=model, step=step, out_dir=out_dir, device=device, slow_images=slow_images
+            )
+            fig_dict.update(fig_dict_components)
     else:
-        fig_dict_components = plot_components(
-            model=model, step=step, out_dir=out_dir, device=device, slow_images=slow_images
-        )
-        fig_dict.update(fig_dict_components)
-
+        tqdm.write("Skipping component plots for >1 layer models")
     # Save plots to files
     if out_dir:
         for k, v in fig_dict.items():

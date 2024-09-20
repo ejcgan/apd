@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as tkr
 import numpy as np
 import torch
+from einops import einsum
 from jaxtyping import Float
 from matplotlib.colors import CenteredNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -16,13 +17,32 @@ from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.run_spd import Config, calc_recon_mse
+from spd.models.components import ParamComponents, ParamComponentsFullRank
+from spd.run_spd import (
+    Config,
+    calc_recon_mse,
+)
 from spd.utils import (
     BatchedDataLoader,
     calc_attributions_full_rank,
     calc_attributions_rank_one,
     calc_topk_mask,
 )
+
+
+def get_weight_matrix(
+    general_param_components: ParamComponents | ParamComponentsFullRank,
+) -> Float[Tensor, "k i j"]:
+    if isinstance(general_param_components, ParamComponentsFullRank):
+        weight: Float[Tensor, "k i j"] = general_param_components.subnetwork_params
+        return weight
+    elif isinstance(general_param_components, ParamComponents):
+        a: Float[Tensor, "i k"] = general_param_components.A
+        b: Float[Tensor, "k j"] = general_param_components.B
+        weight: Float[Tensor, "k i j"] = einsum(a, b, "i k, k j -> k i j")
+        return weight
+    else:
+        raise ValueError(f"Unknown type: {type(general_param_components)}")
 
 
 def plot_matrix(
@@ -382,7 +402,7 @@ def plot_model_functions(
                     color=color0,
                     label=f"cb={cb}, k_cb={k}",
                 )
-                assert len(inner_acts) <= 3, "Didn't implement more than 3 SPD 'layers' yet"
+                assert len(inner_acts) <= 2, "Didn't implement more than 2 SPD 'layers' yet"
                 for j in range(len(inner_acts)):
                     ls = ["-", "--"][j]
                     if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
@@ -478,6 +498,108 @@ def plot_subnetwork_correlations(
     ax.set_xlabel("Subnetwork")
     ax.set_ylabel("Subnetwork")
     return {"subnetwork_correlation_matrix": fig}
+
+
+def plot_single_network(ax: plt.Axes, weights: list[dict[str, Float[Tensor, "i j"]]]) -> None:
+    n_layers = len(weights)
+    d_embed = weights[0]["W_in"].shape[0]
+    d_mlp = weights[0]["W_in"].shape[1]
+    assert all(W["W_in"].shape == (d_embed, d_mlp) for W in weights)
+    assert all(W["W_out"].shape == (d_mlp, d_embed) for W in weights)
+
+    # Define node positions
+    x_embed = np.linspace(0.05, 0.45, d_embed)
+    x_mlp = np.linspace(0.55, 0.95, d_mlp)
+
+    # Plot nodes
+    for lay in range(n_layers + 1):
+        ax.scatter(x_embed, [2 * lay] * d_embed, s=100, color="grey", edgecolors="k", zorder=3)
+    for lay in range(n_layers):
+        ax.scatter(x_mlp, [2 * lay + 1] * d_mlp, s=100, color="grey", edgecolors="k", zorder=3)
+
+    # Plot edges
+    cmap = plt.get_cmap("RdBu")
+    for lay in range(n_layers):
+        # Normalize weights
+        W_in_norm = weights[lay]["W_in"] / weights[lay]["W_in"].abs().max()
+        W_out_norm = weights[lay]["W_out"] / weights[lay]["W_out"].abs().max()
+        for i in range(d_embed):
+            for j in range(d_mlp):
+                weight = W_in_norm[i, j].item()
+                color = cmap(0.5 * (weight + 1))
+                ax.plot(
+                    [x_embed[i], x_mlp[j]],
+                    [2 * lay + 2, 2 * lay + 1],
+                    color=color,
+                    linewidth=abs(weight),
+                )
+                weight = W_out_norm[j, i].item()
+                color = cmap(0.5 * (weight + 1))
+                ax.plot(
+                    [x_mlp[j], x_embed[i]],
+                    [2 * lay + 1, 2 * lay],
+                    color=color,
+                    linewidth=abs(weight),
+                )
+    # Draw residual steam
+    for i in range(d_embed):
+        ax.plot([x_embed[i], x_embed[i]], [0, 2 * n_layers], color="grey", linewidth=0.5, zorder=-1)
+    ax.add_patch(
+        plt.Rectangle(
+            (0.05, 0.05),
+            0.45,
+            0.9,
+            fill=True,
+            color="grey",
+            alpha=0.25,
+            transform=ax.transAxes,
+            zorder=-2,
+        )
+    )
+    # Draw MLP branching off
+    y1 = np.linspace(0, 2 * n_layers, 100)
+    x1a = (1 + np.cos((y1 + 1) * 2 * np.pi / n_layers)) / 4 - 0.00
+    x1b = (1 + np.cos((y1 + 1) * 2 * np.pi / n_layers)) / 4 + 0.50
+    ax.fill_betweenx(y1, x1a, x1b, color="tan", alpha=0.5, zorder=-1)
+    # Turn off axes
+    ax.axis("off")
+
+
+def plot_piecewise_network(
+    model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
+) -> dict[str, plt.Figure]:
+    n_components = model.k
+    mlps: torch.nn.ModuleList = model.mlps
+    n_layers = len(mlps)
+
+    W_ins = [get_weight_matrix(mlps[lay].linear1) for lay in range(n_layers)]
+    W_outs = [get_weight_matrix(mlps[lay].linear2) for lay in range(n_layers)]
+    subnetworks = {}
+    subnetworks[-1] = []
+    for lay in range(n_layers):
+        subnetworks[-1].append({"W_in": W_ins[lay].sum(0), "W_out": W_outs[lay].sum(0)})
+
+    for k in range(n_components):
+        subnetworks[k] = []
+        for lay in range(n_layers):
+            subnetworks[k].append({"W_in": W_ins[lay][k], "W_out": W_outs[lay][k]})
+
+    fig, axs = plt.subplots(
+        1,
+        n_components + 1,
+        figsize=(2.5 * (n_components + 1), 2.5 * n_layers),
+        constrained_layout=True,
+    )
+    axs = np.array(axs)
+    for i, k in enumerate(np.arange(-1, n_components)):
+        axs[i].set_title(f"Subnet {k}")
+        plot_single_network(axs[i], subnetworks[k])
+    axs[0].set_title("Full model")
+    axs[0].text(0.275, 0.01, "Outputs", ha="center", va="center", transform=axs[0].transAxes)
+    axs[0].text(0.275, 0.985, "Inputs", ha="center", va="center", transform=axs[0].transAxes)
+    for lay in range(n_layers):
+        axs[0].text(1, 2 * lay + 1, "MLP", ha="left", va="center")
+    return {"subnetworks_graph_plots": fig}
 
 
 def plot_subnetwork_attributions_statistics(
