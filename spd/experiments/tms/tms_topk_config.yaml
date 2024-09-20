@@ -1,6 +1,6 @@
 wandb_project: spd-tms
 wandb_run_name: null
-wandb_run_name_prefix: ""
+wandb_run_name_prefix: "abl_"
 seed: 0
 topk: 0.25
 batch_topk: true

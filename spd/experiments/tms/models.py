@@ -139,6 +139,21 @@ class TMSSPDModel(SPDModel):
         assert self.A.grad is not None
         remove_grad_parallel_to_subnetwork_vecs(self.A.data, self.A.grad)
 
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "n_instances dim2"]]:
+        stored_vals = {
+            "A": self.A.data[:, :, subnet_idx].detach().clone(),
+            "B": self.B.data[:, subnet_idx, :].detach().clone(),
+        }
+        self.A.data[:, :, subnet_idx] = 0.0
+        self.B.data[:, subnet_idx, :] = 0.0
+        return stored_vals
+
+    def restore_subnet(
+        self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "n_instances dim2"]]
+    ) -> None:
+        self.A.data[:, :, subnet_idx] = stored_vals["A"]
+        self.B.data[:, subnet_idx, :] = stored_vals["B"]
+
 
 class TMSSPDFullRankModel(SPDFullRankModel):
     def __init__(
@@ -220,3 +235,19 @@ class TMSSPDFullRankModel(SPDFullRankModel):
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDFullRankModel":  # type: ignore
         pass
+
+    def set_subnet_to_zero(
+        self, subnet_idx: int
+    ) -> dict[str, Float[Tensor, "n_instances n_features n_hidden"]]:
+        stored_vals = {
+            "subnetwork_params": self.subnetwork_params.data[:, subnet_idx, :, :].detach().clone()
+        }
+        self.subnetwork_params.data[:, subnet_idx, :, :] = 0.0
+        return stored_vals
+
+    def restore_subnet(
+        self,
+        subnet_idx: int,
+        stored_vals: dict[str, Float[Tensor, "n_instances n_features n_hidden"]],
+    ) -> None:
+        self.subnetwork_params.data[:, subnet_idx, :, :] = stored_vals["subnetwork_params"]

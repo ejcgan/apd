@@ -50,6 +50,14 @@ class SPDModel(ABC, nn.Module):
         """Modify the gradient by subtracting it's component parallel to the activation."""
         pass
 
+    @abstractmethod
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:
+        pass
+
+    @abstractmethod
+    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "..."]]) -> None:
+        pass
+
 
 class SPDFullRankModel(ABC, nn.Module):
     @abstractmethod
@@ -79,6 +87,14 @@ class SPDFullRankModel(ABC, nn.Module):
 
     @abstractmethod
     def all_subnetwork_params(self) -> list[Float[Tensor, "... k d_layer_in d_layer_out"]]:
+        pass
+
+    @abstractmethod
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:
+        pass
+
+    @abstractmethod
+    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "..."]]) -> None:
         pass
 
 

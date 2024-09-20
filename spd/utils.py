@@ -19,6 +19,7 @@ from pydantic.v1.utils import deep_update
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from spd.models.base import SPDFullRankModel, SPDModel
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
@@ -285,11 +286,11 @@ def calc_attributions_rank_one(
     return attribution_scores
 
 
-def calc_attributions_rank_one_per_layer(
+def calc_grad_attributions_rank_one_per_layer(
     out: Float[Tensor, "... d_out"],
     inner_acts: list[Float[Tensor, "... k"]],
 ) -> list[Float[Tensor, "... k"]]:
-    """Calculate the attributions for each layer.
+    """Calculate the gradient attributions for each layer.
 
     This differs from calc_attributions_rank_one in that it returns a list of attribution scores
     for each layer that are the sum of squares of output features, rather than taking the sum of
@@ -298,6 +299,7 @@ def calc_attributions_rank_one_per_layer(
     i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
     sum_{n_features}(sum_{layers}(activation * grad))^2.
 
+    Note that we don't have an ablation version of this for computational reasons.
     Args:
         out: The output of the model.
         inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
@@ -375,7 +377,7 @@ def calc_attributions_full_rank(
     return attribution_scores
 
 
-def calc_attributions_full_rank_per_layer(
+def calc_grad_attributions_full_rank_per_layer(
     out: Float[Tensor, "... out_dim"],
     inner_acts: list[Float[Tensor, "... k d_out"]],
     layer_acts: list[Float[Tensor, "... d_out"]],
@@ -388,6 +390,8 @@ def calc_attributions_full_rank_per_layer(
 
     i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
     sum_{n_features}(sum_{layers}(activation * grad))^2.
+
+    Note that we don't have an ablation version of this for computational reasons.
 
     Args:
         out: The output of the model.
@@ -416,6 +420,25 @@ def calc_attributions_full_rank_per_layer(
             ).pow(2)
 
     return layer_attribution_scores
+
+
+@torch.inference_mode()
+def calc_ablation_attributions(
+    model: SPDModel | SPDFullRankModel,
+    batch: Float[Tensor, "batch ... n_features"],
+    out: Float[Tensor, "batch ... d_model_out"],
+) -> Float[Tensor, "batch ... k"]:
+    """Calculate the attributions by ablating each subnetwork one at a time."""
+
+    attr_shape = out.shape[:-1] + (model.k,)  # (batch, k) or (batch, n_instances, k)
+    attributions = torch.zeros(attr_shape, device=out.device, dtype=out.dtype)
+    for subnet_idx in range(model.k):
+        stored_vals = model.set_subnet_to_zero(subnet_idx)
+        ablation_out, _, _ = model(batch)
+        out_recon = ((out - ablation_out) ** 2).mean(dim=-1)
+        attributions[..., subnet_idx] = out_recon
+        model.restore_subnet(subnet_idx, stored_vals)
+    return attributions
 
 
 def calc_topk_mask(

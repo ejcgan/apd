@@ -24,6 +24,7 @@ from spd.run_spd import (
 )
 from spd.utils import (
     BatchedDataLoader,
+    calc_ablation_attributions,
     calc_attributions_full_rank,
     calc_attributions_rank_one,
     calc_topk_mask,
@@ -259,6 +260,7 @@ def run_spd_forward_pass(
     target_model: PiecewiseFunctionTransformer | None,
     input_array: torch.Tensor,
     full_rank: bool,
+    ablation_attributions: bool,
     batch_topk: bool,
     topk: float,
 ) -> SPDoutputs:
@@ -266,15 +268,21 @@ def run_spd_forward_pass(
     model_output_hardcoded = target_model(input_array) if target_model is not None else None
     model_output_spd, layer_acts, inner_acts = spd_model(input_array)
 
-    # SPD-model topk forward pass, copy-pasted from run_spd
-    if full_rank:
-        attribution_scores = calc_attributions_full_rank(
-            out=model_output_spd,
-            inner_acts=inner_acts,
-            layer_acts=layer_acts,
+    if ablation_attributions:
+        attribution_scores = calc_ablation_attributions(
+            model=spd_model, batch=input_array, out=model_output_spd
         )
     else:
-        attribution_scores = calc_attributions_rank_one(out=model_output_spd, inner_acts=inner_acts)
+        if full_rank:
+            attribution_scores = calc_attributions_full_rank(
+                out=model_output_spd,
+                inner_acts=inner_acts,
+                layer_acts=layer_acts,
+            )
+        else:
+            attribution_scores = calc_attributions_rank_one(
+                out=model_output_spd, inner_acts=inner_acts
+            )
     topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
     model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model.forward_topk(
         input_array, topk_mask=topk_mask
@@ -298,6 +306,7 @@ def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
     full_rank: bool,
+    ablation_attributions: bool,
     device: str,
     start: float,
     stop: float,
@@ -336,6 +345,7 @@ def plot_model_functions(
         target_model=target_model,
         input_array=input_array,
         full_rank=full_rank,
+        ablation_attributions=ablation_attributions,
         batch_topk=batch_topk,
         topk=topk,
     )
@@ -468,6 +478,7 @@ def plot_subnetwork_correlations(
             target_model=None,
             input_array=batch,
             full_rank=config.full_rank,
+            ablation_attributions=config.ablation_attributions,
             batch_topk=config.batch_topk,
             topk=config.topk,
         )

@@ -14,8 +14,8 @@ from spd.experiments.linear.models import (
     DeepLinearComponentModel,
 )
 from spd.utils import (
-    calc_attributions_full_rank_per_layer,
-    calc_attributions_rank_one_per_layer,
+    calc_grad_attributions_full_rank_per_layer,
+    calc_grad_attributions_rank_one_per_layer,
     permute_to_identity,
 )
 
@@ -49,12 +49,12 @@ def _collect_permuted_subnetwork_attributions(
 
     out, test_layer_acts, test_inner_acts = model(test_batch)
     if isinstance(model, DeepLinearComponentModel):
-        layer_attributions = calc_attributions_rank_one_per_layer(
+        layer_attributions = calc_grad_attributions_rank_one_per_layer(
             out=out, inner_acts=test_inner_acts
         )
     else:
         assert isinstance(model, DeepLinearComponentFullRankModel)
-        layer_attributions = calc_attributions_full_rank_per_layer(
+        layer_attributions = calc_grad_attributions_full_rank_per_layer(
             out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
         )
 
@@ -70,13 +70,13 @@ def _collect_permuted_subnetwork_attributions(
     return test_batch, test_attributions_permuted
 
 
-def plot_subnetwork_attributions_fn(
+def plot_subnetwork_grad_attributions_fn(
     batch: Float[Tensor, "batch n_instances n_features"],
     attributions: list[Float[Tensor, "batch n_instances k"]],
     step: int | None = None,
     n_instances: int | None = None,
 ) -> plt.Figure:
-    """Plot the attributions per layer, as well as the raw input batch.
+    """Plot the gradient attributions per layer, as well as the raw input batch.
 
     The first row of the plot is a matrix of shape (batch, n_features) where a unique features is
     active in each element of the batch.
@@ -136,7 +136,7 @@ def plot_subnetwork_attributions_fn(
             ax.set_xticks([])
             ax.set_yticks([])
 
-    title_text = "Subnet Attributions"
+    title_text = "Subnet Gradient Attributions"
     if step is not None:
         title_text += f" (Step {step})"
     fig.suptitle(title_text)
@@ -204,15 +204,17 @@ def make_linear_plots(
 ) -> dict[str, plt.Figure]:
     test_batch, test_attributions = _collect_permuted_subnetwork_attributions(model, device)
 
-    act_fig = plot_subnetwork_attributions_fn(
+    act_fig = plot_subnetwork_grad_attributions_fn(
         batch=test_batch, attributions=test_attributions, step=step, n_instances=n_instances
     )
     if out_dir is not None:
         filename = (
-            f"layer_attributions_{step}.png" if step is not None else "layer_attributions.png"
+            f"layer_grad_attributions_{step}.png"
+            if step is not None
+            else "layer_grad_attributions.png"
         )
         act_fig.savefig(out_dir / filename, dpi=300, bbox_inches="tight")
-        tqdm.write(f"Saved layer_attributions to {out_dir / filename}")
+        tqdm.write(f"Saved layer_grad_attributions to {out_dir / filename}")
     plt.close(act_fig)
 
     param_fig = plot_multiple_subnetwork_params(model=model, step=step, n_instances=n_instances)

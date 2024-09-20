@@ -69,6 +69,7 @@ if config.topk is not None:
             spd_model=spd_model,
             target_model=hardcoded_model,
             full_rank=config.full_rank,
+            ablation_attributions=config.ablation_attributions,
             device=device,
             start=config.task_config.range_min,
             stop=config.task_config.range_max,

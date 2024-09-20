@@ -1,7 +1,13 @@
+from pathlib import Path
+
 import pytest
 import torch
+from jaxtyping import Float
+from torch import Tensor, nn
 
+from spd.models.base import SPDFullRankModel
 from spd.utils import (
+    calc_ablation_attributions,
     calc_attributions_rank_one,
     calc_topk_mask,
     calculate_closeness_to_identity,
@@ -178,3 +184,52 @@ def test_calc_topk_mask_with_batch_topk_n_instances():
 
     result = calc_topk_mask(attribution_scores, topk, batch_topk=True)
     torch.testing.assert_close(result, expected_mask)
+
+
+def test_ablation_attributions():
+    class TestModel(SPDFullRankModel):
+        def __init__(self):
+            super().__init__()
+            self.subnetwork_params: Float[Tensor, "n_subnets dim"] = nn.Parameter(
+                torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+            )
+            self.k = 2
+
+        def forward(self, x):  # type: ignore
+            out = torch.einsum("i,ki->", x, self.subnetwork_params)
+            return out, None, None
+
+        def forward_topk(self, x, topk_mask):  # type: ignore
+            raise NotImplementedError
+
+        @classmethod
+        def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":
+            raise NotImplementedError
+
+        def all_subnetwork_params(self) -> list[Float[Tensor, "... k d_layer_in d_layer_out"]]:
+            raise NotImplementedError
+
+        def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:
+            stored_vals = {"subnetwork_params": self.subnetwork_params[subnet_idx].detach().clone()}
+            self.subnetwork_params[subnet_idx] = 0.0
+            return stored_vals
+
+        def restore_subnet(
+            self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "..."]]
+        ) -> None:
+            self.subnetwork_params[subnet_idx] = stored_vals["subnetwork_params"]
+
+    model = TestModel()
+    batch = torch.tensor([1.0, 1.0])
+    out, _, _ = model(batch)
+    attributions = calc_ablation_attributions(model, batch, out)
+
+    # output with all subnets:
+    # [1.0, 1.0] @ [1.0, 2.0] + [1.0, 1.0] @ [3.0, 4.0] = [10]
+    # output without subnet0: [1.0, 1.0] @ [3.0, 4.0] = [7.0]
+    # output without subnet1: [1.0, 1.0] @ [1.0, 2.0] = [3.0]
+    # attributions:
+    # 0. (10 - 7) ** 2 = 9
+    # 1. (10 - 3) ** 2 = 49
+    expected_attributions = torch.tensor([9.0, 49.0])
+    torch.testing.assert_close(attributions, expected_attributions)

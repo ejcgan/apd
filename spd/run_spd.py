@@ -27,7 +27,12 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDModel
 from spd.types import Probability, RootPath
-from spd.utils import calc_attributions_full_rank, calc_attributions_rank_one, calc_topk_mask
+from spd.utils import (
+    calc_ablation_attributions,
+    calc_attributions_full_rank,
+    calc_attributions_rank_one,
+    calc_topk_mask,
+)
 
 
 class TMSConfig(BaseModel):
@@ -98,6 +103,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
+    ablation_attributions: bool = False
     task_config: DeepLinearConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -166,6 +172,9 @@ class Config(BaseModel):
 
         if self.full_rank:
             assert not self.unit_norm_matrices, "Can't unit norm matrices if full rank"
+
+        if self.ablation_attributions:
+            assert self.topk is not None, "ablation_attributions is only compatible with topk"
         return self
 
 
@@ -538,6 +547,7 @@ def optimize(
         if config.param_match_coeff is not None:
             assert pretrained_model is not None, "Need a pretrained model for param_match loss"
             pretrained_weights = pretrained_model.all_decomposable_params()
+
             if config.full_rank:
                 assert isinstance(model, SPDFullRankModel)
                 param_match_loss = calc_param_match_loss_full_rank(
@@ -567,14 +577,17 @@ def optimize(
 
         out_topk, topk_l2_loss, topk_recon_loss, topk_mask = None, None, None, None
         if config.topk is not None:
-            if config.full_rank:
-                attribution_scores = calc_attributions_full_rank(
-                    out=out,
-                    inner_acts=inner_acts,
-                    layer_acts=layer_acts,
-                )
+            if config.ablation_attributions:
+                attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
             else:
-                attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
+                if config.full_rank:
+                    attribution_scores = calc_attributions_full_rank(
+                        out=out,
+                        inner_acts=inner_acts,
+                        layer_acts=layer_acts,
+                    )
+                else:
+                    attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
 
             topk_mask = calc_topk_mask(
                 attribution_scores, config.topk, batch_topk=config.batch_topk
