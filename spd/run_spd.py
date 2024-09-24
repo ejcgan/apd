@@ -706,6 +706,15 @@ def optimize(
         # Skip gradient step if we are at the last step (last step just for plotting and logging)
         if step != config.steps:
             loss.backward()
+
+            if step % config.print_freq == 0 and config.wandb_project:
+                # Calculate gradient norm
+                grad_norm: float = 0.0
+                for param in model.parameters():
+                    if param.grad is not None:
+                        grad_norm += param.grad.data.norm()  # type: ignore
+                    wandb.log({"grad_norm": grad_norm}, step=step)
+
             if config.unit_norm_matrices:
                 assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
                 model.fix_normalized_adam_gradients()
