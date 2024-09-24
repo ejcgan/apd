@@ -333,7 +333,7 @@ def plot_model_functions(
     n_samples = 1000
     n_functions = spd_model.num_functions
     # Set the control bits
-    input_array = torch.eye(spd_model.n_inputs, dtype=torch.float32)[-n_functions:, :]
+    input_array = torch.eye(spd_model.n_inputs)[-n_functions:, :]
     input_array = input_array.repeat_interleave(n_samples, dim=0)
     input_array = input_array.to(device)
     # Set the 0th input to x_space
