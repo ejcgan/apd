@@ -90,6 +90,7 @@ class Config(BaseModel):
     slow_images: bool = False
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
+    orthog_coeff: NonNegativeFloat | None = None
     out_recon_coeff: NonNegativeFloat | None = None
     param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
@@ -370,6 +371,38 @@ def calc_param_match_loss_full_rank(
     return param_match_loss / len(subnetwork_params)
 
 
+def calc_orthog_loss_full_rank(
+    subnetwork_params: list[Float[Tensor, " ... k d_in d_out"]],
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    """Calculate the sum of the absolute values of inner products of different subnets.
+
+    NOTE: We could and maybe should try L2 instead of absolute, as well as cosine sim rather than
+    dot product.
+
+    Args:
+        subnetwork_params (list[Float[Tensor, " ... k d_in d_out"]]): The parameters of the SPDModel
+
+    Returns:
+        The orthogonality loss of shape [n_instances] if the model has an n_instances dimension,
+        otherwise of shape [].
+    """
+    first_param = subnetwork_params[0]
+    # NOTE: The below assumes that the last three dims are the k, d_in, d_out and will not work
+    # for decomposing e.g. biases.
+    batch_dims = first_param.shape[:-3]  # All dimensions except the last three
+    k = first_param.shape[-3]
+    dot_prods = torch.zeros((*batch_dims, k, k), device=first_param.device)
+    for subnet in subnetwork_params:
+        dot_prods += einops.einsum(
+            subnet, subnet, "... k1 d_in d_out, ... k2 d_in d_out -> ... k1 k2"
+        )
+
+    # Multiply the k l diagonal by 0
+    dot_prods.diagonal(dim1=-2, dim2=-1).zero_()
+    orthog_loss = (dot_prods.abs()).mean(dim=(-2, -1))
+    return orthog_loss
+
+
 def calc_lp_sparsity_loss_rank_one(
     out: Float[Tensor, "... d_model_out"],
     layer_acts: list[Float[Tensor, "... d_in"]],
@@ -543,6 +576,11 @@ def optimize(
         # Calculate losses
         out_recon_loss = calc_recon_mse(out, labels, has_instance_dim)
 
+        orthog_loss = None
+        if config.orthog_coeff is not None:
+            assert config.full_rank, "Orthogonality loss only works in full rank models"
+            orthog_loss = calc_orthog_loss_full_rank(model.all_subnetwork_params())
+
         param_match_loss = None
         if config.param_match_coeff is not None:
             assert pretrained_model is not None, "Need a pretrained model for param_match loss"
@@ -615,6 +653,9 @@ def optimize(
 
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
+        if orthog_loss is not None:
+            assert config.orthog_coeff is not None
+            loss = loss + config.orthog_coeff * orthog_loss.mean()
         if param_match_loss is not None:
             assert config.param_match_coeff is not None
             loss = loss + config.param_match_coeff * param_match_loss.mean()
@@ -647,6 +688,8 @@ def optimize(
                 tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
             if param_match_loss is not None:
                 tqdm.write(f"Param match loss:{nl}{param_match_loss}")
+            if orthog_loss is not None:
+                tqdm.write(f"Orthog loss:{nl}{orthog_loss}")
             if config.wandb_project:
                 wandb.log(
                     {
@@ -665,6 +708,9 @@ def optimize(
                         else None,
                         "topk_l2_loss": topk_l2_loss.mean().item()
                         if topk_l2_loss is not None
+                        else None,
+                        "orthog_loss": orthog_loss.mean().item()
+                        if orthog_loss is not None
                         else None,
                     },
                     step=step,

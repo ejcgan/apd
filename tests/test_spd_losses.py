@@ -1,9 +1,11 @@
+import pytest
 import torch
 from jaxtyping import Float
 from torch import Tensor
 
 from spd.run_spd import (
     calc_lp_sparsity_loss_rank_one,
+    calc_orthog_loss_full_rank,
     calc_param_match_loss_rank_one,
     calc_topk_l2_rank_one,
 )
@@ -189,3 +191,17 @@ class TestCalcLpSparsityLoss:
         # Also check that the layer_out_params is in the computation graph of the sparsity result.
         result.backward()
         assert layer_out_params[0].grad is not None
+
+
+class TestCalcOrthogLoss:
+    @pytest.mark.parametrize(
+        "subnet, expected",
+        [
+            (torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]]), torch.tensor(0.0)),  # Orthogonal
+            (torch.tensor([[[1.0, 0.0]], [[-4.0, 1.0]]]), torch.tensor(2.0)),  # Not orthogonal
+        ],
+    )
+    def test_calc_orthog_loss_full_rank(self, subnet: Tensor, expected: Tensor) -> None:
+        result = calc_orthog_loss_full_rank(subnetwork_params=[subnet])
+        # Note that we take the dot product, then abs, then mean over the subnetwork indices
+        assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"

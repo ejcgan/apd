@@ -120,6 +120,8 @@ def get_run_name(config: Config) -> str:
         run_suffix += f"seed{config.seed}_"
         if config.task_config.target_seed is not None:
             run_suffix += f"target-seed{config.task_config.target_seed}_"
+        if config.orthog_coeff is not None:
+            run_suffix += f"orth{config.orthog_coeff:.2e}_"
         if config.pnorm is not None:
             run_suffix += f"p{config.pnorm:.2e}_"
         if config.lp_sparsity_coeff is not None:
