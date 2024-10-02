@@ -53,6 +53,7 @@ def deep_linear_decomposition_optimize_test(config: Config) -> None:
         device=device,
         dataloader=dataloader,
         pretrained_model=pretrained_model,
+        param_map={f"layer_{i}": f"layer_{i}" for i in range(config.task_config.n_layers)},
         plot_results_fn=None,
     )
 

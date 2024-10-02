@@ -9,7 +9,7 @@ from spd.experiments.piecewise.piecewise_decomposition import get_model_and_data
 from spd.run_spd import (
     Config,
     PiecewiseConfig,
-    calc_param_match_loss_rank_one,
+    calc_param_match_loss,
     calc_recon_mse,
     optimize,
 )
@@ -57,6 +57,11 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
     initial_W_E = piecewise_model_spd.W_E.weight.clone().detach()
     initial_W_U = piecewise_model_spd.W_U.weight.clone().detach()
 
+    param_map = {}
+    for i in range(piecewise_model_spd.n_layers):
+        param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
+        param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
+
     optimize(
         model=piecewise_model_spd,
         config=config,
@@ -64,6 +69,7 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
         device=device,
         dataloader=dataloader,
         pretrained_model=piecewise_model,
+        param_map=param_map,
         plot_results_fn=None,
     )
 
@@ -235,10 +241,16 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
     # Get initial losses (param_match_loss and topk_recon_loss)
     # Initial param match loss
     pretrained_weights = piecewise_model.all_decomposable_params()
-    initial_param_match_loss = calc_param_match_loss_rank_one(
+
+    param_map = {}
+    for i in range(piecewise_model_spd.n_layers):
+        param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
+        param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
+
+    initial_param_match_loss = calc_param_match_loss(
         pretrained_weights=pretrained_weights,
-        layer_in_params=piecewise_model_spd.all_As(),
-        layer_out_params=piecewise_model_spd.all_Bs(),
+        subnetwork_params_summed=piecewise_model_spd.all_subnetwork_params_summed(),
+        param_map=param_map,
     )
 
     # Rank 1 so layer_acts is None
@@ -259,14 +271,15 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
         device=device,
         dataloader=dataloader,
         pretrained_model=piecewise_model,
+        param_map=param_map,
         plot_results_fn=None,
     )
 
     # Check that the losses have not reduced
-    final_param_match_loss = calc_param_match_loss_rank_one(
+    final_param_match_loss = calc_param_match_loss(
         pretrained_weights=pretrained_weights,
-        layer_in_params=piecewise_model_spd.all_As(),
-        layer_out_params=piecewise_model_spd.all_Bs(),
+        subnetwork_params_summed=piecewise_model_spd.all_subnetwork_params_summed(),
+        param_map=param_map,
     )
 
     out, _, inner_acts = piecewise_model_spd(batch)

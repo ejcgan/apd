@@ -206,7 +206,7 @@ def test_ablation_attributions():
         def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":
             raise NotImplementedError
 
-        def all_subnetwork_params(self) -> list[Float[Tensor, "... k d_layer_in d_layer_out"]]:
+        def all_subnetwork_params(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
             raise NotImplementedError
 
         def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:

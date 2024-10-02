@@ -59,6 +59,7 @@ def tms_decomposition_optimize_test(config: Config):
         device=device,
         dataloader=dataloader,
         pretrained_model=pretrained_model,
+        param_map={"W": "W", "W_T": "W_T"},
         plot_results_fn=None,
     )
 

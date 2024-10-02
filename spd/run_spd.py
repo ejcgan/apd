@@ -245,8 +245,7 @@ def calc_recon_mse(
 
 
 def calc_topk_l2_rank_one(
-    layer_in_params: list[Float[Tensor, " ... d_in k"]],
-    layer_out_params: list[Float[Tensor, " ... k d_out"]],
+    all_As_and_Bs: list[tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]],
     topk_mask: Bool[Tensor, "batch ... k"],
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the L2 of the sum of the topk subnetworks.
@@ -255,8 +254,8 @@ def calc_topk_l2_rank_one(
     produce the same operation without it. The ... indicates an optional n_instances dimension.
 
     Args:
-        layer_in_params (list[Float[Tensor, " ... d_in k"]]): The input parameters of each layer.
-        layer_out_params (list[Float[Tensor, " ... k d_out"]]): The output parameters of each layer.
+        all_As_and_Bs (list[tuple[Float[Tensor, " ... d_in k"], Float[Tensor, " ... k d_out"]]]):
+            The A and B matrices for each layer.
         topk_mask (Bool[Tensor, "batch ... k"]): The topk mask to use for the L2 penalty.
             Will contain an n_instances dimension if the model has an n_instances dimension.
 
@@ -268,16 +267,16 @@ def calc_topk_l2_rank_one(
     n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
     accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
 
-    topk_l2_penalty = torch.zeros(accumulate_shape, device=layer_in_params[0].device)
-    for A, B in zip(layer_in_params, layer_out_params, strict=True):
+    topk_l2_penalty = torch.zeros(accumulate_shape, device=all_As_and_Bs[0][0].device)
+    for A, B in all_As_and_Bs:
         # A: [d_in, k] or [n_instances, d_in, k]
-        # B: [k, d_in] or [n_instances, k, d_in]
+        # B: [k, d_out] or [n_instances, k, d_out]
         # topk_mask: [batch, k] or [batch, n_instances, k]
         A_topk = torch.einsum("...fk,b...k ->b...fk", A, topk_mask)
         AB_topk = torch.einsum("b...fk,...kh->b...fh", A_topk, B)
         topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).mean(dim=(-2, -1))
     # Mean over batch_dim and divide by number of parameter matrices we iterated over
-    return topk_l2_penalty.mean(dim=0) / len(layer_in_params)
+    return topk_l2_penalty.mean(dim=0) / len(all_As_and_Bs)
 
 
 def calc_topk_l2_full_rank(
@@ -299,76 +298,58 @@ def calc_topk_l2_full_rank(
         The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
             deep linear toy models).
     """
+    assert len(subnetwork_params) > 0, "No subnetwork parameters provided"
+
     batch_size = topk_mask.shape[0]
     n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
     accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
 
     topk_mask = topk_mask.to(subnetwork_params[0].dtype)
     topk_l2_penalty = torch.zeros(accumulate_shape, device=subnetwork_params[0].device)
-    for subnetwork_param in subnetwork_params:
+    for subnetwork_param_val in subnetwork_params:
         # subnetwork_param: [k, d_in, d_out] or [n_instances, k, d_in, d_out]
         # topk_mask: [batch, k] or [batch, n_instances, k]
         topk_params = einops.einsum(
-            subnetwork_param, topk_mask, "... k d_in d_out, batch ... k -> batch ... d_in d_out"
+            subnetwork_param_val, topk_mask, "... k d_in d_out, batch ... k -> batch ... d_in d_out"
         )
         topk_l2_penalty = topk_l2_penalty + ((topk_params) ** 2).mean(dim=(-2, -1))
     # Mean over batch_dim and divide by number of parameter matrices we iterated over
+    # NOTE: Assumes all subnetwork params are the same shape, which will not be true if we add
+    # biases
     return topk_l2_penalty.mean(dim=0) / len(subnetwork_params)
 
 
-def calc_param_match_loss_rank_one(
-    pretrained_weights: list[Float[Tensor, " ... d_in d_out"]],
-    layer_in_params: list[Float[Tensor, " ... d_in k"]],
-    layer_out_params: list[Float[Tensor, " ... k d_out"]],
+def calc_param_match_loss(
+    pretrained_weights: dict[str, Float[Tensor, " ... d_in d_out"]],
+    subnetwork_params_summed: dict[str, Float[Tensor, " ... d_in d_out"]],
+    param_map: dict[str, str],
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the parameter match loss.
 
-    This is the L2 difference between the AB matrices of the SPDModel and the pretrained weights.
+    This is the L2 difference between the combined parameter matrices of the SPDModel and the
+    target params.
 
     Args:
-        pretrained_weights (list[Float[Tensor, " ... d_in d_out"]]): The pretrained weights to be
-            matched.
-        layer_in_params (list[Float[Tensor, " ... d_in k"]]): The input parameters of each layer.
-        layer_out_params (list[Float[Tensor, " ... k d_out"]]): The output parameters of each layer.
+        pretrained_weights (dict[str, Float[Tensor, " ... d_in d_out"]]): The pretrained weights to
+            be matched.
+        subnetwork_params_summed (dict[str, Float[Tensor, " ... d_in d_out"]]): The parameters of
+            the SPDModel (that have already been summed over the subnetwork dimension).
+        param_map (dict[str, str]): A map from keys in pretrained_weights to keys in
+            subnetwork_params_summed.
 
     Returns:
         The parameter match loss of shape [n_instances] if the model has an n_instances dimension,
         otherwise of shape [].
     """
-    param_match_loss = torch.tensor(0.0, device=layer_in_params[0].device)
-    for i, (A, B) in enumerate(zip(layer_in_params, layer_out_params, strict=True)):
-        AB = torch.einsum("...fk,...kg->...fg", A, B)
-        param_match_loss = param_match_loss + ((AB - pretrained_weights[i]) ** 2).mean(dim=(-2, -1))
-    return param_match_loss / len(layer_in_params)
-
-
-def calc_param_match_loss_full_rank(
-    pretrained_weights: list[Float[Tensor, " ... d_in d_out"]],
-    subnetwork_params: list[Float[Tensor, " ... k d_in d_out"]],
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the parameter match loss.
-
-    This is the L2 difference between the sum of the subnetwork matrices of the SPDModel and the
-    pretrained weights.
-
-    Args:
-        pretrained_weights (list[Float[Tensor, " ... d_in d_out"]]): The pretrained weights to be
-            matched.
-        subnetwork_params (list[Float[Tensor, " ... k d_in d_out"]]): The parameters of the SPDModel
-
-    Returns:
-        The parameter match loss of shape [n_instances] if the model has an n_instances dimension,
-        otherwise of shape [].
-    """
-    param_match_loss = torch.tensor(0.0, device=subnetwork_params[0].device)
-    for pretrained_weight, subnetwork_param in zip(
-        pretrained_weights, subnetwork_params, strict=False
-    ):
-        summed_param = einops.einsum(subnetwork_param, "... k d_in d_out -> ... d_in d_out")
-        param_match_loss = param_match_loss + ((summed_param - pretrained_weight) ** 2).mean(
+    device = next(iter(subnetwork_params_summed.values())).device
+    param_match_loss = torch.tensor(0.0, device=device)
+    for target_param_name, subnetwork_param_name in param_map.items():
+        pretrained_weight = pretrained_weights[target_param_name]
+        subnetwork_param = subnetwork_params_summed[subnetwork_param_name]
+        param_match_loss = param_match_loss + ((subnetwork_param - pretrained_weight) ** 2).mean(
             dim=(-2, -1)
         )
-    return param_match_loss / len(subnetwork_params)
+    return param_match_loss / len(subnetwork_params_summed)
 
 
 def calc_orthog_loss_full_rank(
@@ -500,6 +481,7 @@ def optimize(
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
     pretrained_model: Model | None,
+    param_map: dict[str, str] | None = None,
     plot_results_fn: Callable[..., dict[str, plt.Figure]] | None = None,
     out_dir: Path | None = None,
 ) -> None:
@@ -579,23 +561,17 @@ def optimize(
         orthog_loss = None
         if config.orthog_coeff is not None:
             assert config.full_rank, "Orthogonality loss only works in full rank models"
-            orthog_loss = calc_orthog_loss_full_rank(model.all_subnetwork_params())
+            orthog_loss = calc_orthog_loss_full_rank(list(model.all_subnetwork_params().values()))
 
         param_match_loss = None
         if config.param_match_coeff is not None:
             assert pretrained_model is not None, "Need a pretrained model for param_match loss"
-            pretrained_weights = pretrained_model.all_decomposable_params()
-
-            if config.full_rank:
-                assert isinstance(model, SPDFullRankModel)
-                param_match_loss = calc_param_match_loss_full_rank(
-                    pretrained_weights, model.all_subnetwork_params()
-                )
-            else:
-                assert isinstance(model, SPDModel)
-                param_match_loss = calc_param_match_loss_rank_one(
-                    pretrained_weights, model.all_As(), model.all_Bs()
-                )
+            assert param_map is not None, "Need a param_map for param_match loss"
+            param_match_loss = calc_param_match_loss(
+                pretrained_weights=pretrained_model.all_decomposable_params(),
+                subnetwork_params_summed=model.all_subnetwork_params_summed(),
+                param_map=param_map,
+            )
 
         lp_sparsity_loss = None
         if config.lp_sparsity_coeff is not None:
@@ -609,7 +585,7 @@ def optimize(
                     out=out,
                     layer_acts=layer_acts,
                     inner_acts=inner_acts,
-                    layer_out_params=model.all_Bs(),
+                    layer_out_params=[tup[1] for tup in model.all_As_and_Bs()],
                     step_pnorm=step_pnorm,
                 )
 
@@ -620,9 +596,7 @@ def optimize(
             else:
                 if config.full_rank:
                     attribution_scores = calc_attributions_full_rank(
-                        out=out,
-                        inner_acts=inner_acts,
-                        layer_acts=layer_acts,
+                        out=out, inner_acts=inner_acts, layer_acts=layer_acts
                     )
                 else:
                     attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
@@ -637,14 +611,14 @@ def optimize(
 
             if config.topk_l2_coeff is not None:
                 if config.full_rank:
+                    assert isinstance(model, SPDFullRankModel)
                     topk_l2_loss = calc_topk_l2_full_rank(
-                        subnetwork_params=model.all_subnetwork_params(), topk_mask=topk_mask
+                        subnetwork_params=list(model.all_subnetwork_params().values()),
+                        topk_mask=topk_mask,
                     )
                 else:
                     topk_l2_loss = calc_topk_l2_rank_one(
-                        layer_in_params=model.all_As(),
-                        layer_out_params=model.all_Bs(),
-                        topk_mask=topk_mask,
+                        all_As_and_Bs=model.all_As_and_Bs(), topk_mask=topk_mask
                     )
 
             if config.topk_recon_coeff is not None:

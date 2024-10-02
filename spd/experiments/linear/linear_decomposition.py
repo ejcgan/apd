@@ -111,6 +111,12 @@ def main(
             k=config.task_config.k,
         ).to(device)
 
+    param_map = None
+    if config.task_config.pretrained_model_path:
+        # Map from pretrained model's `all_decomposable_params` to the SPD models'
+        # `all_subnetwork_params_summed`.
+        param_map = {f"layer_{i}": f"layer_{i}" for i in range(n_layers)}
+
     dataset = DeepLinearDataset(n_features, n_instances)
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
@@ -121,6 +127,7 @@ def main(
         device=device,
         dataloader=dataloader,
         pretrained_model=dl_model,
+        param_map=param_map,
         plot_results_fn=make_linear_plots,
     )
 

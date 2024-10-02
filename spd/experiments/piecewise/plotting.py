@@ -145,11 +145,11 @@ def plot_components(
     attribution_scores_normed = attribution_scores / attribution_scores.std(dim=1, keepdim=True)
     # Get As and Bs and ABs
     n_layers = model.n_layers
-    assert len(model.all_As()) == len(model.all_Bs()), "A and B matrices must have the same length"
-    assert len(model.all_As()) % 2 == 0, "A and B matrices must have an even length (MLP in + out)"
-    assert len(model.all_As()) // 2 == n_layers, "Number of A and B matrices must be 2*n_layers"
-    As = model.all_As()
-    Bs = model.all_Bs()
+    all_As_and_Bs = model.all_As_and_Bs()
+    assert len(all_As_and_Bs) % 2 == 0, "A and B matrices must have an even length (MLP in + out)"
+    assert len(all_As_and_Bs) // 2 == n_layers, "Number of A and B matrices must be 2*n_layers"
+    As = [tup[0] for tup in all_As_and_Bs]
+    Bs = [tup[1] for tup in all_As_and_Bs]
     ABs = [torch.einsum("...fk,...kg->...fg", As[i], Bs[i]) for i in range(len(As))]
     ABs_by_k = [torch.einsum("...fk,...kg->...kfg", As[i], Bs[i]) for i in range(len(As))]
 

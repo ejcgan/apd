@@ -301,12 +301,20 @@ def main(
         dataloader=test_dataloader,
     )
 
+    # Map from pretrained model's `all_decomposable_params` to the SPD models'
+    # `all_subnetwork_params_summed`.
+    param_map = {}
+    for i in range(piecewise_model_spd.n_layers):
+        param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
+        param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
+
     optimize(
         model=piecewise_model_spd,
         config=config,
         out_dir=out_dir,
         device=device,
         pretrained_model=piecewise_model,
+        param_map=param_map,
         dataloader=dataloader,
         plot_results_fn=plot_results_fn,
     )

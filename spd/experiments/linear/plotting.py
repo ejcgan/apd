@@ -152,9 +152,10 @@ def plot_multiple_subnetwork_params(
     all_params = model.all_subnetwork_params()
     # Each param (of which there are n_layers): [n_instances, k, n_features, n_features]
     n_params = len(all_params)
-    assert n_params >= 1
+    layer_names = [f"layer_{i}" for i in range(n_params)]
+    assert set(layer_names) == set(all_params.keys())
 
-    param_n_instances, k, dim1, dim2 = all_params[0].shape
+    param_n_instances, k, dim1, dim2 = all_params[layer_names[0]].shape
 
     assert n_instances is None or n_instances <= param_n_instances
     n_instances = param_n_instances if n_instances is None else n_instances
@@ -173,7 +174,9 @@ def plot_multiple_subnetwork_params(
                 row_idx = param_idx + inst_idx * n_params
 
                 ax = axs[row_idx, col_idx]  # type: ignore
-                param = all_params[param_idx][inst_idx, subnet_idx].detach().cpu().numpy()
+                param = (
+                    all_params[layer_names[param_idx]][inst_idx, subnet_idx].detach().cpu().numpy()
+                )
                 ax.matshow(param, cmap="RdBu", norm=CenteredNorm())
                 ax.set_xticks([])
                 ax.set_yticks([])

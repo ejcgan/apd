@@ -71,15 +71,14 @@ def plot_subnetwork_params(
 ) -> plt.Figure:
     """Plot the subnetwork parameter matrix."""
     all_params = model.all_subnetwork_params()
-    n_params = len(all_params)
-    if n_params > 1:
+    if len(all_params) > 1:
         logger.warning(
             "Plotting multiple subnetwork params is currently not supported. Plotting the first."
         )
-    all_params = all_params[0]
-    # all_params: [n_instances, k, n_features, n_hidden]
+    subnet_params = all_params["W"]
 
-    n_instances, k, dim1, dim2 = all_params.shape
+    # subnet_params: [n_instances, k, n_features, n_hidden]
+    n_instances, k, dim1, dim2 = subnet_params.shape
 
     fig, axs = plt.subplots(
         k,
@@ -91,7 +90,7 @@ def plot_subnetwork_params(
     for i in range(n_instances):
         for j in range(k):
             ax = axs[j, i]  # type: ignore
-            param = all_params[i, j].detach().cpu().numpy()
+            param = subnet_params[i, j].detach().cpu().numpy()
             ax.matshow(param, cmap="RdBu", norm=CenteredNorm())
             ax.set_xticks([])
             ax.set_yticks([])
@@ -175,6 +174,12 @@ def main(
         )
         pretrained_model.eval()
 
+    param_map = None
+    if task_config.pretrained_model_path:
+        # Map from pretrained model's `all_decomposable_params` to the SPD models'
+        # `all_subnetwork_params_summed`.
+        param_map = {"W": "W", "W_T": "W_T"}
+
     dataset = TMSDataset(
         n_instances=task_config.n_instances,
         n_features=task_config.n_features,
@@ -190,6 +195,7 @@ def main(
         device=device,
         dataloader=dataloader,
         pretrained_model=pretrained_model,
+        param_map=param_map,
         plot_results_fn=make_plots,
     )
 

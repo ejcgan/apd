@@ -32,12 +32,14 @@ class SPDModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_As(self) -> list[Float[Tensor, "... d_layer_in k"]]:
-        """Pre-normalized A matrices."""
+    def all_As_and_Bs(
+        self,
+    ) -> list[tuple[Float[Tensor, "... d_layer_in k"], Float[Tensor, "... k d_layer_out"]]]:
+        """List of tuples containing A and B matrices."""
         pass
 
     @abstractmethod
-    def all_Bs(self) -> list[Float[Tensor, "... k d_layer_out"]]:
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "d_layer_in d_layer_out"]]:
         pass
 
     @abstractmethod
@@ -86,7 +88,7 @@ class SPDFullRankModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_subnetwork_params(self) -> list[Float[Tensor, "... k d_layer_in d_layer_out"]]:
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
         pass
 
     @abstractmethod
@@ -100,5 +102,5 @@ class SPDFullRankModel(ABC, nn.Module):
 
 class Model(ABC, nn.Module):
     @abstractmethod
-    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
+    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
         pass

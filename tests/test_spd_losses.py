@@ -6,7 +6,7 @@ from torch import Tensor
 from spd.run_spd import (
     calc_lp_sparsity_loss_rank_one,
     calc_orthog_loss_full_rank,
-    calc_param_match_loss_rank_one,
+    calc_param_match_loss,
     calc_topk_l2_rank_one,
 )
 
@@ -18,9 +18,7 @@ class TestCalcTopkL2:
         topk_mask: Float[Tensor, "batch=1 k=2"] = torch.tensor(
             [[True, False, False]], dtype=torch.bool
         )
-        result = calc_topk_l2_rank_one(
-            layer_in_params=[A], layer_out_params=[B], topk_mask=topk_mask
-        )
+        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 0, 0], [1, 0, 0]]])
@@ -32,9 +30,7 @@ class TestCalcTopkL2:
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
         topk_mask = torch.tensor([[True, True, True]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(
-            layer_in_params=[A], layer_out_params=[B], topk_mask=topk_mask
-        )
+        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 1, 1], [1, 1, 1]]])
@@ -47,9 +43,7 @@ class TestCalcTopkL2:
         B = torch.ones(2, 2, 1)
         # topk_mask: [batch=2, n_instances=2, k=2]
         topk_mask = torch.tensor([[[1, 0], [0, 1]], [[0, 1], [1, 1]]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(
-            layer_in_params=[A], layer_out_params=[B], topk_mask=topk_mask
-        )
+        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A: [n_instances=2, d_in=1, k=2] = torch.tensor(
@@ -101,9 +95,13 @@ class TestCalcParamMatchLoss:
     def test_calc_param_match_loss_single_instance_single_param(self):
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
-        pretrained_weights = [torch.tensor([[1.0, 1.0], [1.0, 1.0]])]
-        result = calc_param_match_loss_rank_one(
-            pretrained_weights=pretrained_weights, layer_in_params=[A], layer_out_params=[B]
+        pretrained_weights = {"layer1": torch.tensor([[1.0, 1.0], [1.0, 1.0]])}
+        subnetwork_params = {"layer1": A @ B}
+        param_map = {"layer1": "layer1"}
+        result = calc_param_match_loss(
+            pretrained_weights=pretrained_weights,
+            subnetwork_params_summed=subnetwork_params,
+            param_map=param_map,
         )
 
         # A: [2, 3], B: [3, 2], both filled with ones
@@ -116,12 +114,19 @@ class TestCalcParamMatchLoss:
     def test_calc_param_match_loss_single_instance_multiple_params(self):
         As = [torch.ones(2, 3), torch.ones(3, 3)]
         Bs = [torch.ones(3, 3), torch.ones(3, 2)]
-        pretrained_weights = [
-            torch.tensor([[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]]),
-            torch.tensor([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]),
-        ]
-        result = calc_param_match_loss_rank_one(
-            pretrained_weights=pretrained_weights, layer_in_params=As, layer_out_params=Bs
+        pretrained_weights = {
+            "layer1": torch.tensor([[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]]),
+            "layer2": torch.tensor([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]),
+        }
+        subnetwork_params = {
+            "layer1": As[0] @ Bs[0],
+            "layer2": As[1] @ Bs[1],
+        }
+        param_map = {"layer1": "layer1", "layer2": "layer2"}
+        result = calc_param_match_loss(
+            pretrained_weights=pretrained_weights,
+            subnetwork_params_summed=subnetwork_params,
+            param_map=param_map,
         )
 
         # First layer: AB1: [[3, 3, 3], [3, 3, 3]], diff^2: [[1, 1, 1], [1, 1, 1]]
@@ -133,9 +138,15 @@ class TestCalcParamMatchLoss:
     def test_calc_param_match_loss_multiple_instances(self):
         As = [torch.ones(2, 2, 3)]
         Bs = [torch.ones(2, 3, 2)]
-        pretrained_weights = [torch.tensor([[[2.0, 2.0], [2.0, 2.0]], [[1.0, 1.0], [1.0, 1.0]]])]
-        result = calc_param_match_loss_rank_one(
-            pretrained_weights=pretrained_weights, layer_in_params=As, layer_out_params=Bs
+        pretrained_weights = {
+            "layer1": torch.tensor([[[2.0, 2.0], [2.0, 2.0]], [[1.0, 1.0], [1.0, 1.0]]])
+        }
+        subnetwork_params = {"layer1": As[0] @ Bs[0]}
+        param_map = {"layer1": "layer1"}
+        result = calc_param_match_loss(
+            pretrained_weights=pretrained_weights,
+            subnetwork_params_summed=subnetwork_params,
+            param_map=param_map,
         )
 
         # AB [n_instances=2, d_in=2, d_out=2]: [[[3, 3], [3, 3]], [[3, 3], [3, 3]]]

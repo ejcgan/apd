@@ -466,12 +466,13 @@ class PiecewiseFunctionTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
-        """List of all parameters which will be decomposed with SPD."""
-        params = []
-        for mlp in self.mlps:
-            params.append(mlp.input_layer.weight.T)
-            params.append(mlp.output_layer.weight.T)
+    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+        """Dictionary of all parameters which will be decomposed with SPD."""
+        params = {}
+        for i, mlp in enumerate(self.mlps):
+            # We transpose because our SPD model uses (input, output) pairs, not (output, input)
+            params[f"mlp_{i}.input_layer.weight"] = mlp.input_layer.weight.T
+            params[f"mlp_{i}.output_layer.weight"] = mlp.output_layer.weight.T
         return params
 
     @classmethod
@@ -632,21 +633,34 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             ]
         )
 
-    def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        As = []
+    def all_As_and_Bs(self) -> list[tuple[Float[Tensor, "dim k"], Float[Tensor, "k dim"]]]:
+        As_and_Bs = []
         for mlp in self.mlps:
-            As.append(mlp.linear1.A)
-            As.append(mlp.linear2.A)
-        assert len(As) == self.n_param_matrices
-        return As
+            As_and_Bs.append((mlp.linear1.A, mlp.linear1.B))
+            As_and_Bs.append((mlp.linear2.A, mlp.linear2.B))
+        return As_and_Bs
 
-    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        Bs = []
-        for mlp in self.mlps:
-            Bs.append(mlp.linear1.B)
-            Bs.append(mlp.linear2.B)
-        assert len(Bs) == self.n_param_matrices
-        return Bs
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "..."]]:
+        params = {}
+        for i, mlp in enumerate(self.mlps):
+            params[f"mlp_{i}.input_layer.weight"] = einops.einsum(
+                mlp.linear1.A, mlp.linear1.B, "d_embed k, k d_mlp -> k d_embed d_mlp"
+            )
+            params[f"mlp_{i}.output_layer.weight"] = einops.einsum(
+                mlp.linear2.A, mlp.linear2.B, "d_embed k, k d_mlp -> k d_embed d_mlp"
+            )
+        return params
+
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "..."]]:
+        params = {}
+        for i, mlp in enumerate(self.mlps):
+            params[f"mlp_{i}.input_layer.weight"] = einops.einsum(
+                mlp.linear1.A, mlp.linear1.B, "d_embed k, k d_mlp -> d_embed d_mlp"
+            )
+            params[f"mlp_{i}.output_layer.weight"] = einops.einsum(
+                mlp.linear2.A, mlp.linear2.B, "d_embed k, k d_mlp -> d_embed d_mlp"
+            )
+        return params
 
     def set_handcoded_AB(self, target_transformer: PiecewiseFunctionTransformer):
         assert self.n_inputs == target_transformer.n_inputs
@@ -909,13 +923,19 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
                 "d_mlp k, k d_embed -> k d_mlp d_embed",
             )
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "k d_in d_out"]]:
-        all_subnetworks = []
-        for mlp in self.mlps:
-            all_subnetworks.append(mlp.linear1.subnetwork_params)
-            all_subnetworks.append(mlp.linear2.subnetwork_params)
-        assert len(all_subnetworks) == self.n_param_matrices
-        return all_subnetworks
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "..."]]:
+        params = {}
+        for i, mlp in enumerate(self.mlps):
+            params[f"mlp_{i}.input_layer.weight"] = mlp.linear1.subnetwork_params
+            params[f"mlp_{i}.output_layer.weight"] = mlp.linear2.subnetwork_params
+        return params
+
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "..."]]:
+        params = {}
+        for i, mlp in enumerate(self.mlps):
+            params[f"mlp_{i}.input_layer.weight"] = mlp.linear1.subnetwork_params.sum(dim=-3)
+            params[f"mlp_{i}.output_layer.weight"] = mlp.linear2.subnetwork_params.sum(dim=-3)
+        return params
 
     def forward(
         self, x: Float[Tensor, "... inputs"]

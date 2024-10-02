@@ -41,9 +41,9 @@ class DeepLinearModel(Model):
         model.load_state_dict(params)
         return model
 
-    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
-        """List of all parameters which will be decomposed with SPD."""
-        return [layer for layer in self.layers]
+    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+        """Dictionary of all parameters which will be decomposed with SPD."""
+        return {f"layer_{i}": layer for i, layer in enumerate(self.layers)}
 
 
 class DeepLinearParamComponents(nn.Module):
@@ -96,18 +96,28 @@ class DeepLinearComponentModel(SPDModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    def all_As(self) -> list[Float[Tensor, "n_instances n_features k"]]:
-        return [layer.A for layer in self.layers]
+    def all_As_and_Bs(
+        self,
+    ) -> list[
+        tuple[Float[Tensor, "n_instances n_features k"], Float[Tensor, "n_instances k n_features"]]
+    ]:
+        return [(layer.A, layer.B) for layer in self.layers]
 
-    def all_Bs(self) -> list[Float[Tensor, "n_instances k n_features"]]:
-        return [layer.B for layer in self.layers]
+    def all_subnetwork_params(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances k n_features n_features"]]:
+        return {
+            f"layer_{i}": torch.einsum("ifk,ikh->ikfh", layer.A, layer.B)
+            for i, layer in enumerate(self.layers)
+        }
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_features"]]:
-        all_params = []
-        for layer in self.layers:
-            params = torch.einsum("ifk,ikh->ikfh", layer.A, layer.B)
-            all_params.append(params)
-        return all_params
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances n_features n_features"]]:
+        return {
+            f"layer_{i}": torch.einsum("ifk,ikh->ifh", layer.A, layer.B)
+            for i, layer in enumerate(self.layers)
+        }
 
     def forward(
         self,
@@ -250,8 +260,17 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
         for param in self.layers.parameters():
             nn.init.kaiming_normal_(param)
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_features"]]:
-        return [layer.subnetwork_params for layer in self.layers]
+    def all_subnetwork_params(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances k n_features n_features"]]:
+        return {f"layer_{i}": layer.subnetwork_params for i, layer in enumerate(self.layers)}
+
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances n_features n_features"]]:
+        return {
+            f"layer_{i}": layer.subnetwork_params.sum(dim=-3) for i, layer in enumerate(self.layers)
+        }
 
     def forward(
         self,

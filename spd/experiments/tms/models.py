@@ -34,9 +34,9 @@ class TMSModel(Model):
         out = F.relu(out)
         return out
 
-    def all_decomposable_params(self) -> list[Float[Tensor, "..."]]:
-        """List of all parameters which will be decomposed with SPD."""
-        return [self.W, rearrange(self.W, "i f h -> i h f")]
+    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+        """Dictionary of all parameters which will be decomposed with SPD."""
+        return {"W": self.W, "W_T": rearrange(self.W, "i f h -> i h f")}
 
 
 class TMSSPDModel(SPDModel):
@@ -74,18 +74,22 @@ class TMSSPDModel(SPDModel):
 
         self.n_param_matrices = 2  # Two W matrices (even though they're tied)
 
-    def all_As(self) -> list[Float[Tensor, "dim k"]]:
-        # Note that A is defined as the matrix which mutliplies the activations
-        # to get the inner_acts. In TMS, because we tie the W matrices, our second A matrix
-        # is actually the B matrix
-        return [self.A, rearrange(self.B, "i k h -> i h k")]
+    def all_As_and_Bs(
+        self,
+    ) -> list[tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]]:
+        return [
+            (self.A, self.B),
+            (rearrange(self.B, "i k h -> i h k"), rearrange(self.A, "i f k -> i k f")),
+        ]
 
-    def all_Bs(self) -> list[Float[Tensor, "k dim"]]:
-        return [self.B, rearrange(self.A, "i f k -> i k f")]
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
+        W = torch.einsum("ifk,ikh->ikfh", self.A, self.B)
+        return {"W": W, "W_T": rearrange(W, "i k f h -> i k h f")}
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_hidden"]]:
-        w1 = torch.einsum("ifk,ikh->ikfh", self.A, self.B)
-        return [w1, rearrange(w1, "i k f h -> i k h f")]
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
+        """All subnetwork params summed over the subnetwork dimension. I.e. all the ABs."""
+        W = torch.einsum("ifk,ikh->ifh", self.A, self.B)
+        return {"W": W, "W_T": rearrange(W, "i f h -> i h f")}
 
     def forward(
         self, x: Float[Tensor, "... i f"]
@@ -185,8 +189,20 @@ class TMSSPDFullRankModel(SPDFullRankModel):
 
         self.n_param_matrices = 2  # Two W matrices (even though they're tied)
 
-    def all_subnetwork_params(self) -> list[Float[Tensor, "n_instances k n_features n_hidden"]]:
-        return [self.subnetwork_params, rearrange(self.subnetwork_params, "i k f h -> i k h f")]
+    def all_subnetwork_params(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances k d_layer_in d_layer_out"]]:
+        return {
+            "W": self.subnetwork_params,
+            "W_T": rearrange(self.subnetwork_params, "i k f h -> i k h f"),
+        }
+
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances d_layer_in d_layer_out"]]:
+        """All subnetwork params summed over the subnetwork dimension."""
+        summed_params = self.subnetwork_params.sum(dim=-3)
+        return {"W": summed_params, "W_T": rearrange(summed_params, "i f h -> i h f")}
 
     def forward(
         self, x: Float[Tensor, "... n_instances n_features"]
