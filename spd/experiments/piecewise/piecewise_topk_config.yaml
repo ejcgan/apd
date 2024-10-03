@@ -30,3 +30,4 @@ task_config:
   k: 10
   simple_bias: false
   handcoded_AB: false
+  decompose_bias: false

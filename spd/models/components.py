@@ -76,11 +76,19 @@ class ParamComponents(nn.Module):
 
 
 class ParamComponentsFullRank(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, k: int):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        k: int,
+        bias: bool,
+    ):
         super().__init__()
 
         self.subnetwork_params = nn.Parameter(torch.empty(k, in_dim, out_dim))
         init_param_(self.subnetwork_params)
+
+        self.bias = nn.Parameter(torch.zeros(k, out_dim)) if bias else None
 
     def forward(
         self,
@@ -89,6 +97,8 @@ class ParamComponentsFullRank(nn.Module):
         inner_acts = einops.einsum(
             x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
         )
+        if self.bias is not None:
+            inner_acts += self.bias
         out = einops.einsum(inner_acts, "batch k dim2 -> batch dim2")
         return out, inner_acts
 
@@ -112,6 +122,8 @@ class ParamComponentsFullRank(nn.Module):
         inner_acts = einops.einsum(
             x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
         )
+        if self.bias is not None:
+            inner_acts += self.bias
         inner_acts_topk = einops.einsum(
             inner_acts, topk_mask, "batch k dim2, batch k -> batch k dim2"
         )
@@ -120,13 +132,10 @@ class ParamComponentsFullRank(nn.Module):
 
 
 class MLPComponents(nn.Module):
-    """
-    A module that contains two linear layers with a ReLU activation in between.
+    """A module that contains two linear layers with a ReLU activation in between for full rank SPD.
 
-    Handles both full rank and rank one versions.
-
-    Note that the first linear layer has a bias that is not decomposed, and the second linear layer
-    has no bias.
+    A bias gets added to the first layer but not the second. The bias does not have a subnetwork
+    dimension in this rank 1 case.
     """
 
     def __init__(
@@ -137,23 +146,19 @@ class MLPComponents(nn.Module):
         input_bias: Float[Tensor, " d_mlp"] | None = None,
         input_component: nn.Parameter | None = None,
         output_component: nn.Parameter | None = None,
-        full_rank: bool = False,
     ):
         super().__init__()
-        if full_rank:
-            self.linear1 = ParamComponentsFullRank(in_dim=d_embed, out_dim=d_mlp, k=k)
-            self.linear2 = ParamComponentsFullRank(in_dim=d_mlp, out_dim=d_embed, k=k)
-        else:
-            self.linear1 = ParamComponents(
-                in_dim=d_embed, out_dim=d_mlp, k=k, resid_component=input_component, resid_dim=0
-            )
-            self.linear2 = ParamComponents(
-                in_dim=d_mlp, out_dim=d_embed, k=k, resid_component=output_component, resid_dim=1
-            )
+
+        self.linear1 = ParamComponents(
+            in_dim=d_embed, out_dim=d_mlp, k=k, resid_component=input_component, resid_dim=0
+        )
+        self.linear2 = ParamComponents(
+            in_dim=d_mlp, out_dim=d_embed, k=k, resid_component=output_component, resid_dim=1
+        )
 
         self.bias1 = nn.Parameter(torch.zeros(d_mlp))
         if input_bias is not None:
-            self.bias1.data = input_bias.detach().clone()
+            self.bias1.data[:] = input_bias.detach().clone()
 
     def forward(
         self, x: Float[Tensor, "... d_embed"]
@@ -206,7 +211,8 @@ class MLPComponents(nn.Module):
         Returns:
             x: The output of the MLP
             layer_acts: The activations of each linear layer
-            inner_acts: The component activations inside each linear layer
+            inner_acts: The component activations inside each linear layer (i.e. after multiplying
+                by A)
         """
         inner_acts = []
         layer_acts = []
@@ -220,6 +226,86 @@ class MLPComponents(nn.Module):
         x = torch.nn.functional.relu(x)
 
         # Second linear layer
+        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_mask)
+        inner_acts.append(inner_acts_linear2)
+        layer_acts.append(x)
+
+        return x, layer_acts, inner_acts
+
+
+class MLPComponentsFullRank(nn.Module):
+    """A module that contains two linear layers with a ReLU activation in between for full rank SPD.
+
+    The biases are (optionally) part of the "linear" layers, and have a subnetwork dimension in this
+    full rank case.
+    """
+
+    def __init__(
+        self,
+        d_embed: int,
+        d_mlp: int,
+        k: int,
+    ):
+        super().__init__()
+        self.linear1 = ParamComponentsFullRank(in_dim=d_embed, out_dim=d_mlp, k=k, bias=True)
+        self.linear2 = ParamComponentsFullRank(in_dim=d_mlp, out_dim=d_embed, k=k, bias=False)
+
+    def forward(
+        self, x: Float[Tensor, "... d_embed"]
+    ) -> tuple[
+        Float[Tensor, "... d_embed"],
+        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
+    ]:
+        """
+        Args:
+            x: Input tensor
+        Returns:
+            x: The output of the MLP
+            layer_acts: The activations at the output of each layer after summing over the
+                subnetwork dimension.
+            inner_acts: The activations at the output of each subnetwork before summing.
+        """
+        inner_acts = []
+        layer_acts = []
+        x, inner_acts_linear1 = self.linear1(x)
+        inner_acts.append(inner_acts_linear1)
+        layer_acts.append(x)
+
+        x, inner_acts_linear2 = self.linear2(torch.nn.functional.relu(x))
+        inner_acts.append(inner_acts_linear2)
+        layer_acts.append(x)
+        return x, layer_acts, inner_acts
+
+    def forward_topk(
+        self,
+        x: Float[Tensor, "... d_embed"],
+        topk_mask: Bool[Tensor, "... k"],
+    ) -> tuple[
+        Float[Tensor, "... d_embed"],
+        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
+    ]:
+        """Performs a forward pass using only the top-k components for each linear layer.
+
+        Args:
+            x: Input tensor
+            topk_mask: Boolean tensor indicating which components to keep.
+        Returns:
+            x: The output of the MLP
+            layer_acts: The activations at the output of each layer after summing over the
+                subnetwork dimension.
+            inner_acts: The activations at the output of each subnetwork before summing.
+        """
+        inner_acts = []
+        layer_acts = []
+
+        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk_mask)
+        inner_acts.append(inner_acts_linear1)
+        layer_acts.append(x)
+
+        x = torch.nn.functional.relu(x)
+
         x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_mask)
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)

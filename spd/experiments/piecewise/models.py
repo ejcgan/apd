@@ -10,8 +10,9 @@ import torch.nn as nn
 from jaxtyping import Bool, Float
 from torch import Tensor
 
+from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDModel
-from spd.models.components import MLPComponents
+from spd.models.components import MLPComponents, MLPComponentsFullRank
 from spd.utils import calc_neuron_indices, remove_grad_parallel_to_subnetwork_vecs
 
 
@@ -436,6 +437,7 @@ class PiecewiseFunctionTransformer(Model):
         d_mlp: int,
         n_layers: int,
         d_embed: int | None = None,
+        decompose_bias: bool = True,
     ):
         super().__init__()
         self.n_inputs = n_inputs
@@ -443,7 +445,7 @@ class PiecewiseFunctionTransformer(Model):
         self.n_layers = n_layers
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
-
+        self.decompose_bias = decompose_bias
         self.controlled_resnet: ControlledResNet | None = None
 
         self.num_functions = n_inputs - 1
@@ -466,12 +468,16 @@ class PiecewiseFunctionTransformer(Model):
             residual = residual + layer(residual)
         return self.W_U(residual)
 
-    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_decomposable_params(
+        self,
+    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:  # bias or weight
         """Dictionary of all parameters which will be decomposed with SPD."""
         params = {}
         for i, mlp in enumerate(self.mlps):
             # We transpose because our SPD model uses (input, output) pairs, not (output, input)
             params[f"mlp_{i}.input_layer.weight"] = mlp.input_layer.weight.T
+            if self.decompose_bias:
+                params[f"mlp_{i}.input_layer.bias"] = mlp.input_layer.bias
             params[f"mlp_{i}.output_layer.weight"] = mlp.output_layer.weight.T
         return params
 
@@ -627,7 +633,6 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                     input_bias=input_biases[i] if input_biases is not None else None,
                     input_component=self.input_component,  # type: ignore
                     output_component=self.output_component,  # type: ignore
-                    full_rank=False,
                 )
                 for i in range(n_layers)
             ]
@@ -640,29 +645,29 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             As_and_Bs.append((mlp.linear2.A, mlp.linear2.B))
         return As_and_Bs
 
-    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "k d_in d_out"]]:
         params = {}
         for i, mlp in enumerate(self.mlps):
             params[f"mlp_{i}.input_layer.weight"] = einops.einsum(
                 mlp.linear1.A, mlp.linear1.B, "d_embed k, k d_mlp -> k d_embed d_mlp"
             )
             params[f"mlp_{i}.output_layer.weight"] = einops.einsum(
-                mlp.linear2.A, mlp.linear2.B, "d_embed k, k d_mlp -> k d_embed d_mlp"
+                mlp.linear2.A, mlp.linear2.B, "d_mlp k, k d_embed -> k d_mlp d_embed"
             )
         return params
 
-    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "d_in d_out"]]:
         params = {}
         for i, mlp in enumerate(self.mlps):
             params[f"mlp_{i}.input_layer.weight"] = einops.einsum(
                 mlp.linear1.A, mlp.linear1.B, "d_embed k, k d_mlp -> d_embed d_mlp"
             )
             params[f"mlp_{i}.output_layer.weight"] = einops.einsum(
-                mlp.linear2.A, mlp.linear2.B, "d_embed k, k d_mlp -> d_embed d_mlp"
+                mlp.linear2.A, mlp.linear2.B, "d_mlp k, k d_embed -> d_mlp d_embed"
             )
         return params
 
-    def set_handcoded_AB(self, target_transformer: PiecewiseFunctionTransformer):
+    def set_handcoded_spd_params(self, target_transformer: PiecewiseFunctionTransformer):
         assert self.n_inputs == target_transformer.n_inputs
         assert self.n_layers == target_transformer.n_layers
         assert self.d_embed == target_transformer.d_embed
@@ -699,14 +704,6 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                 self.mlps[i].linear2.A.data[:, 0] = original_Wout_last_col / norm
                 self.mlps[i].linear2.A.data[:, 1:] = 1.0  # avoid division by zero
                 self.mlps[i].linear2.B.data[0, -1] = 1.0 * norm
-                # Assert biases
-                assert torch.allclose(
-                    self.mlps[i].bias1, target_transformer.mlps[i].input_layer.bias
-                )
-                assert torch.allclose(
-                    torch.tensor(0.0), target_transformer.mlps[i].output_layer.bias
-                )
-
             else:
                 # input_layer
                 self.mlps[i].linear1.A.data[0, :] = 1.0
@@ -738,6 +735,14 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
                 self.mlps[i].linear2.A.data /= all_norms
                 self.mlps[i].linear2.B.data[:correct_k, -1] = 1.0
                 self.mlps[i].linear2.B.data *= all_norms.T
+
+            # Copy over biases if they are not the same
+            assert torch.allclose(
+                target_transformer.mlps[i].output_layer.bias, torch.tensor(0.0)
+            ), "output layer bias should be 0"
+            if not torch.allclose(self.mlps[i].bias1, target_transformer.mlps[i].input_layer.bias):
+                logger.warning("Input biases are not the same. Copying over from target model.")
+                self.mlps[i].bias1.data[:] = target_transformer.mlps[i].input_layer.bias
 
             AB_in = torch.einsum("ij,jk->ki", self.mlps[i].linear1.A, self.mlps[i].linear1.B)
             assert torch.allclose(AB_in, target_transformer.mlps[i].input_layer.weight)
@@ -860,8 +865,8 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         d_mlp: The number of neurons in each MLP layer
         n_layers: The number of MLP layers
         k: The number of components to keep
-        input_biases: The biases for the first linear layer of each MLP
         d_embed: The dimension of the embedding space
+        decompose_bias: Whether to decompose the bias term in the MLP layers
     """
 
     def __init__(
@@ -870,8 +875,8 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         d_mlp: int,
         n_layers: int,
         k: int,
-        input_biases: list[Float[Tensor, " d_mlp"]] | None = None,
         d_embed: int | None = None,
+        decompose_bias: bool = True,
     ):
         super().__init__()
         self.n_inputs = n_inputs
@@ -880,6 +885,7 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         self.d_embed = self.n_inputs + 1 if d_embed is None else d_embed
         self.d_control = self.d_embed - 2
         self.n_param_matrices = n_layers * 2
+        self.decompose_bias = decompose_bias
 
         self.num_functions = n_inputs - 1
         self.n_outputs = 1  # this is hardcoded. This class isn't defined for multiple outputs
@@ -893,47 +899,59 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
         self.mlps = nn.ModuleList(
-            [
-                MLPComponents(
-                    d_embed=self.d_embed,
-                    d_mlp=d_mlp,
-                    k=k,
-                    input_bias=input_biases[i] if input_biases is not None else None,
-                    full_rank=True,
-                )
-                for i in range(n_layers)
-            ]
+            [MLPComponentsFullRank(d_embed=self.d_embed, d_mlp=d_mlp, k=k) for _ in range(n_layers)]
         )
 
-    def set_handcoded_AB(self, target_transformer: PiecewiseFunctionSPDTransformer):
+    def set_handcoded_spd_params(self, target_transformer: PiecewiseFunctionSPDTransformer):
         assert self.n_inputs == target_transformer.n_inputs
         assert self.n_layers == target_transformer.n_layers
         assert self.d_embed == target_transformer.d_embed
         assert self.d_control == target_transformer.d_control
         self.to(target_transformer.W_E.weight.device)
         for i, mlp in enumerate(self.mlps):
-            mlp.linear1.subnetwork_params.data[:, :] = einops.einsum(
+            mlp.linear1.subnetwork_params.data[:, :, :] = einops.einsum(
                 target_transformer.mlps[i].linear1.A,
                 target_transformer.mlps[i].linear1.B,
                 "d_embed k, k d_mlp -> k d_embed d_mlp",
             )
-            mlp.linear2.subnetwork_params.data[:, :] = einops.einsum(
+            mlp.linear2.subnetwork_params.data[:, :, :] = einops.einsum(
                 target_transformer.mlps[i].linear2.A,
                 target_transformer.mlps[i].linear2.B,
                 "d_mlp k, k d_embed -> k d_mlp d_embed",
             )
+            # We have the handcoded bias of shape (d_out,) in target_transformer.mlps[i].bias1.
+            # Our SPD model has biases of shape (k, d_out). We only want to set the biases in each
+            # subnetwork that have non-zero values in the corresponding columns of
+            # mlp.linear1.subnetwork_params. To do this, we find the columns of
+            # mlp.linear1.subnetwork_params that are all zeros and mask these out.
+            zero_vals: Bool[Tensor, "k d_out"] = mlp.linear1.subnetwork_params.sum(dim=-2).bool()
+            target_bias: Float[Tensor, " d_out"] = target_transformer.mlps[i].bias1
+            mlp.linear1.bias.data[:, :] = einops.einsum(
+                zero_vals, target_bias, "k d_out, d_out -> k d_out"
+            )
 
-    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "..."]]:
+            # Check that the sum of the biases in each subnetwork is equal to the target bias
+            assert torch.allclose(mlp.linear1.bias.data.sum(dim=0), target_bias)
+
+    def all_subnetwork_params(
+        self,
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
         params = {}
         for i, mlp in enumerate(self.mlps):
             params[f"mlp_{i}.input_layer.weight"] = mlp.linear1.subnetwork_params
+            if self.decompose_bias:
+                params[f"mlp_{i}.input_layer.bias"] = mlp.linear1.bias
             params[f"mlp_{i}.output_layer.weight"] = mlp.linear2.subnetwork_params
         return params
 
-    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
         params = {}
         for i, mlp in enumerate(self.mlps):
             params[f"mlp_{i}.input_layer.weight"] = mlp.linear1.subnetwork_params.sum(dim=-3)
+            if self.decompose_bias:
+                params[f"mlp_{i}.input_layer.bias"] = mlp.linear1.bias.sum(dim=-2)
             params[f"mlp_{i}.output_layer.weight"] = mlp.linear2.subnetwork_params.sum(dim=-3)
         return params
 
@@ -986,7 +1004,7 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         residual = self.W_E(x)
 
         for layer in self.mlps:
-            assert isinstance(layer, MLPComponents)
+            assert isinstance(layer, MLPComponentsFullRank)
             layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_mask)
             residual = residual + layer_out
             layer_acts.extend(layer_acts_i)
@@ -1012,7 +1030,9 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         model.load_state_dict(params)
         return model
 
-    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "d_in d_out"]]:
+    def set_subnet_to_zero(
+        self, subnet_idx: int
+    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:  # bias or weight
         stored_vals = {}
         for i, mlp in enumerate(self.mlps):
             stored_vals[f"mlp_{i}_linear1"] = (
@@ -1023,11 +1043,22 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
             )
             mlp.linear1.subnetwork_params.data[subnet_idx, :, :] = 0.0
             mlp.linear2.subnetwork_params.data[subnet_idx, :, :] = 0.0
+            if self.decompose_bias:
+                stored_vals[f"mlp_{i}_linear1_bias"] = (
+                    mlp.linear1.bias.data[subnet_idx].detach().clone()
+                )
+                mlp.linear1.bias.data[subnet_idx] = 0.0
         return stored_vals
 
     def restore_subnet(
-        self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "d_in d_out"]]
+        self,
+        subnet_idx: int,
+        stored_vals: dict[
+            str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]  # bias or weight
+        ],
     ) -> None:
         for i, mlp in enumerate(self.mlps):
             mlp.linear1.subnetwork_params.data[subnet_idx, :, :] = stored_vals[f"mlp_{i}_linear1"]
             mlp.linear2.subnetwork_params.data[subnet_idx, :, :] = stored_vals[f"mlp_{i}_linear2"]
+            if self.decompose_bias:
+                mlp.linear1.bias.data[subnet_idx] = stored_vals[f"mlp_{i}_linear1_bias"]

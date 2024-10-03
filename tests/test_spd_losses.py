@@ -102,6 +102,7 @@ class TestCalcParamMatchLoss:
             pretrained_weights=pretrained_weights,
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
+            has_instance_dim=False,
         )
 
         # A: [2, 3], B: [3, 2], both filled with ones
@@ -127,6 +128,7 @@ class TestCalcParamMatchLoss:
             pretrained_weights=pretrained_weights,
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
+            has_instance_dim=False,
         )
 
         # First layer: AB1: [[3, 3, 3], [3, 3, 3]], diff^2: [[1, 1, 1], [1, 1, 1]]
@@ -147,6 +149,7 @@ class TestCalcParamMatchLoss:
             pretrained_weights=pretrained_weights,
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
+            has_instance_dim=True,
         )
 
         # AB [n_instances=2, d_in=2, d_out=2]: [[[3, 3], [3, 3]], [[3, 3], [3, 3]]]

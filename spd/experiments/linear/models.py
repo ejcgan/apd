@@ -41,7 +41,9 @@ class DeepLinearModel(Model):
         model.load_state_dict(params)
         return model
 
-    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_decomposable_params(
+        self,
+    ) -> dict[str, Float[Tensor, "n_instances n_features n_features"]]:
         """Dictionary of all parameters which will be decomposed with SPD."""
         return {f"layer_{i}": layer for i, layer in enumerate(self.layers)}
 

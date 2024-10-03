@@ -49,7 +49,7 @@ assert isinstance(
 spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
 
 # To test handcoded AB, uncomment the following line
-# spd_model.set_handcoded_AB(hardcoded_model)
+# spd_model.set_handcoded_spd_params(hardcoded_model)
 
 
 if config.full_rank:

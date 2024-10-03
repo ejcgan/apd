@@ -34,7 +34,7 @@ class TMSModel(Model):
         out = F.relu(out)
         return out
 
-    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_decomposable_params(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
         """Dictionary of all parameters which will be decomposed with SPD."""
         return {"W": self.W, "W_T": rearrange(self.W, "i f h -> i h f")}
 

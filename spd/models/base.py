@@ -53,11 +53,11 @@ class SPDModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
         pass
 
     @abstractmethod
-    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "..."]]) -> None:
+    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Tensor]) -> None:
         pass
 
 
@@ -88,19 +88,19 @@ class SPDFullRankModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
+    def all_subnetwork_params(self) -> dict[str, Tensor]:
         pass
 
     @abstractmethod
-    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "..."]]:
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
         pass
 
     @abstractmethod
-    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "..."]]) -> None:
+    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Tensor]) -> None:
         pass
 
 
 class Model(ABC, nn.Module):
     @abstractmethod
-    def all_decomposable_params(self) -> dict[str, Float[Tensor, "..."]]:
+    def all_decomposable_params(self) -> dict[str, Tensor]:
         pass

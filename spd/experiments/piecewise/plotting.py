@@ -84,16 +84,16 @@ def plot_components_fullrank(
 ) -> dict[str, plt.Figure]:
     # Not implemented attribution score plots, or multi-layer plots, yet.
     assert model.n_layers == 1
-    ncols = 2
+    ncols = 3  # Updated to 3 columns to include the bias plot
     if slow_images:
         nrows = model.k + 1
         fig, axs = plt.subplots(
-            nrows, ncols, figsize=(16 * ncols, 3 * nrows), constrained_layout=True
+            nrows, ncols, figsize=(5 * ncols, 3 * nrows), constrained_layout=True
         )
     else:
         nrows = 1
         fig, axs_row = plt.subplots(
-            nrows, ncols, figsize=(16 * ncols, 3 * nrows), constrained_layout=True
+            nrows, ncols, figsize=(5 * ncols, 3 * nrows), constrained_layout=True
         )
         axs = np.array([axs_row])
 
@@ -107,6 +107,13 @@ def plot_components_fullrank(
     )
     plot_matrix(
         axs[0, 1],
+        torch.einsum("kd->d", model.mlps[0].linear1.bias).unsqueeze(0),
+        "Bias, sum over k",
+        "Neuron index",
+        "",
+    )
+    plot_matrix(
+        axs[0, 2],
         einops.einsum(model.mlps[0].linear2.subnetwork_params, "k ... -> ...").T,
         "W_out.T, sum over k",
         "Neuron index",
@@ -119,8 +126,11 @@ def plot_components_fullrank(
             W_in_k = mlp.linear1.subnetwork_params[k]
             ax = axs[k + 1, 0]  # type: ignore
             plot_matrix(ax, W_in_k, f"W_in_k, k={k}", "Neuron index", "Embedding index")
-            W_out_k = mlp.linear2.subnetwork_params[k].T
+            bias_k = mlp.linear1.bias[None, k]
             ax = axs[k + 1, 1]  # type: ignore
+            plot_matrix(ax, bias_k, f"Bias_k, k={k}", "Neuron index", "")
+            W_out_k = mlp.linear2.subnetwork_params[k].T
+            ax = axs[k + 1, 2]  # type: ignore
             plot_matrix(ax, W_out_k, f"W_out_k.T, k={k}", "Neuron index", "")
     return {"matrices_layer0": fig}
 
