@@ -36,6 +36,7 @@ def get_piecewise_config(
         k=6,
         handcoded_AB=handcoded_AB,
         simple_bias=simple_bias,
+        decompose_bias=False,
     )
 
 
