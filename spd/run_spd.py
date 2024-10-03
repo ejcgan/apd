@@ -178,11 +178,20 @@ class Config(BaseModel):
         if self.ablation_attributions:
             assert self.topk is not None, "ablation_attributions is only compatible with topk"
 
-        if self.full_rank and isinstance(self.task_config, PiecewiseConfig):
-            if not self.task_config.handcoded_AB and not self.task_config.decompose_bias:
-                raise ValueError("Must have one of handcoded_AB or decompose_bias set")
-            if self.task_config.decompose_bias:
-                raise ValueError("Cannot decompose bias in rank 1 case")
+        if (
+            self.full_rank
+            and isinstance(self.task_config, PiecewiseConfig)
+            and not self.task_config.handcoded_AB
+            and not self.task_config.decompose_bias
+        ):
+            raise ValueError("Must have one of handcoded_AB or decompose_bias set")
+
+        if (
+            not self.full_rank
+            and isinstance(self.task_config, PiecewiseConfig)
+            and self.task_config.decompose_bias
+        ):
+            raise ValueError("Cannot decompose bias in rank 1 case")
 
         return self
 
