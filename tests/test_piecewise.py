@@ -61,6 +61,8 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
     param_map = {}
     for i in range(piecewise_model_spd.n_layers):
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
+        if config.full_rank and config.task_config.decompose_bias:
+            param_map[f"mlp_{i}.input_layer.bias"] = f"mlp_{i}.input_layer.bias"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 
     optimize(
@@ -246,6 +248,8 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
     param_map = {}
     for i in range(piecewise_model_spd.n_layers):
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
+        if config.full_rank and config.task_config.decompose_bias:
+            param_map[f"mlp_{i}.input_layer.bias"] = f"mlp_{i}.input_layer.bias"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 
     initial_param_match_loss = calc_param_match_loss(

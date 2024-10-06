@@ -492,6 +492,7 @@ class PiecewiseFunctionTransformer(Model):
         suppression_size: float | None = None,
         seed: int | None = None,
         simple_bias: bool = False,
+        decompose_bias: bool = True,
     ) -> "PiecewiseFunctionTransformer":
         if seed is not None:
             # Create local random number generators
@@ -506,7 +507,9 @@ class PiecewiseFunctionTransformer(Model):
         neurons_per_function = neurons_per_function
         d_mlp = neurons_per_function * len(functions) // n_layers
         d_embed = n_inputs + 1
-        model = cls(n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers)
+        model = cls(
+            n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers, decompose_bias=decompose_bias
+        )
 
         assert len(functions) == d_embed - 2
         assert len(functions) == n_inputs - 1
