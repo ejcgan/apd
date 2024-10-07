@@ -1,4 +1,3 @@
-import math
 import os
 import random
 import time
@@ -205,8 +204,10 @@ def save_config_to_wandb(config: BaseModel, filename: str = "final_config.yaml")
         time.sleep(1)
 
 
-def init_param_(param: torch.Tensor) -> None:
-    torch.nn.init.kaiming_uniform_(param, a=math.sqrt(5))
+def init_param_(param: torch.Tensor, scale: float = 1.0) -> None:
+    torch.nn.init.kaiming_uniform_(param)
+    with torch.no_grad():
+        param.mul_(scale)
 
 
 class DatasetGeneratedDataLoader(DataLoader[Q], Generic[Q]):

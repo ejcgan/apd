@@ -12,6 +12,7 @@ class ParamComponents(nn.Module):
         in_dim: int,
         out_dim: int,
         k: int,
+        init_scale: float,
         resid_component: nn.Parameter | None,
         resid_dim: int | None,
     ):
@@ -41,8 +42,8 @@ class ParamComponents(nn.Module):
 
         self.A = a
         self.B = b
-        init_param_(self.A)
-        init_param_(self.B)
+        init_param_(self.A, init_scale)
+        init_param_(self.B, init_scale)
 
     def forward(
         self,
@@ -82,11 +83,12 @@ class ParamComponentsFullRank(nn.Module):
         out_dim: int,
         k: int,
         bias: bool,
+        init_scale: float,
     ):
         super().__init__()
 
         self.subnetwork_params = nn.Parameter(torch.empty(k, in_dim, out_dim))
-        init_param_(self.subnetwork_params)
+        init_param_(self.subnetwork_params, init_scale)
 
         self.bias = nn.Parameter(torch.zeros(k, out_dim)) if bias else None
 
@@ -143,6 +145,7 @@ class MLPComponents(nn.Module):
         d_embed: int,
         d_mlp: int,
         k: int,
+        init_scale: float,
         input_bias: Float[Tensor, " d_mlp"] | None = None,
         input_component: nn.Parameter | None = None,
         output_component: nn.Parameter | None = None,
@@ -150,10 +153,20 @@ class MLPComponents(nn.Module):
         super().__init__()
 
         self.linear1 = ParamComponents(
-            in_dim=d_embed, out_dim=d_mlp, k=k, resid_component=input_component, resid_dim=0
+            in_dim=d_embed,
+            out_dim=d_mlp,
+            k=k,
+            resid_component=input_component,
+            resid_dim=0,
+            init_scale=init_scale,
         )
         self.linear2 = ParamComponents(
-            in_dim=d_mlp, out_dim=d_embed, k=k, resid_component=output_component, resid_dim=1
+            in_dim=d_mlp,
+            out_dim=d_embed,
+            k=k,
+            resid_component=output_component,
+            resid_dim=1,
+            init_scale=init_scale,
         )
 
         self.bias1 = nn.Parameter(torch.zeros(d_mlp))
@@ -245,10 +258,15 @@ class MLPComponentsFullRank(nn.Module):
         d_embed: int,
         d_mlp: int,
         k: int,
+        init_scale: float,
     ):
         super().__init__()
-        self.linear1 = ParamComponentsFullRank(in_dim=d_embed, out_dim=d_mlp, k=k, bias=True)
-        self.linear2 = ParamComponentsFullRank(in_dim=d_mlp, out_dim=d_embed, k=k, bias=False)
+        self.linear1 = ParamComponentsFullRank(
+            in_dim=d_embed, out_dim=d_mlp, k=k, bias=True, init_scale=init_scale
+        )
+        self.linear2 = ParamComponentsFullRank(
+            in_dim=d_mlp, out_dim=d_embed, k=k, bias=False, init_scale=init_scale
+        )
 
     def forward(
         self, x: Float[Tensor, "... d_embed"]
