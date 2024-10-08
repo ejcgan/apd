@@ -250,9 +250,9 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
 
 
 def calc_attributions_rank_one(
-    out: Float[Tensor, "... d_out"],
-    inner_acts: list[Float[Tensor, "... k"]],
-) -> Float[Tensor, "... k"]:
+    out: Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"],
+    inner_acts_vals: list[Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]],
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     """Calculate the sum of the (squared) attributions from each output dimension.
 
     An attribution is the element-wise product of the gradient of the output dimension w.r.t. the
@@ -266,21 +266,27 @@ def calc_attributions_rank_one(
 
     Args:
         out: The output of the model.
-        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
-            parameter matrix).
+        inner_acts_vals: The inner acts of the model (i.e. the set of subnetwork activations for
+            each parameter matrix).
 
     Returns:
         The sum of the (squared) attributions from each output dimension.
     """
-    attribution_scores: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
+    attribution_scores: Float[Tensor, " k"] | Float[Tensor, "n_instances k"] = torch.zeros_like(
+        inner_acts_vals[0]
+    )
     for feature_idx in range(out.shape[-1]):
-        feature_attributions: Float[Tensor, "... k"] = torch.zeros_like(inner_acts[0])
-        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), inner_acts, retain_graph=True
+        feature_attributions: Float[Tensor, " k"] | Float[Tensor, "n_instances k"] = (
+            torch.zeros_like(inner_acts_vals[0])
         )
-        assert len(feature_grads) == len(inner_acts)
-        for param_matrix_idx in range(len(inner_acts)):
-            feature_attributions += feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+        feature_grads: tuple[
+            Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"], ...
+        ] = torch.autograd.grad(out[..., feature_idx].sum(), inner_acts_vals, retain_graph=True)
+        assert len(feature_grads) == len(inner_acts_vals)
+        for param_matrix_idx in range(len(inner_acts_vals)):
+            feature_attributions += (
+                feature_grads[param_matrix_idx] * inner_acts_vals[param_matrix_idx]
+            )
 
         attribution_scores += feature_attributions**2
 
@@ -289,7 +295,7 @@ def calc_attributions_rank_one(
 
 def calc_grad_attributions_rank_one_per_layer(
     out: Float[Tensor, "... d_out"],
-    inner_acts: list[Float[Tensor, "... k"]],
+    inner_acts_vals: list[Float[Tensor, "... k"]],
 ) -> list[Float[Tensor, "... k"]]:
     """Calculate the gradient attributions for each layer.
 
@@ -311,16 +317,16 @@ def calc_grad_attributions_rank_one_per_layer(
     """
 
     layer_attribution_scores: list[Float[Tensor, "... k"]] = [
-        torch.zeros_like(inner_acts[0]) for _ in range(len(inner_acts))
+        torch.zeros_like(inner_acts_vals[0]) for _ in range(len(inner_acts_vals))
     ]
     for feature_idx in range(out.shape[-1]):
         feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), inner_acts, retain_graph=True
+            out[..., feature_idx].sum(), inner_acts_vals, retain_graph=True
         )
-        assert len(feature_grads) == len(inner_acts)
-        for param_matrix_idx in range(len(inner_acts)):
+        assert len(feature_grads) == len(inner_acts_vals)
+        for param_matrix_idx in range(len(inner_acts_vals)):
             layer_attribution_scores[param_matrix_idx] += (
-                feature_grads[param_matrix_idx] * inner_acts[param_matrix_idx]
+                feature_grads[param_matrix_idx] * inner_acts_vals[param_matrix_idx]
             ).pow(2)
 
     return layer_attribution_scores
@@ -328,8 +334,8 @@ def calc_grad_attributions_rank_one_per_layer(
 
 def calc_attributions_full_rank(
     out: Float[Tensor, "... out_dim"],
-    inner_acts: list[Float[Tensor, "... k d_out"]],
-    layer_acts: list[Float[Tensor, "... d_out"]],
+    inner_acts: dict[str, Float[Tensor, "... k d_out"]],
+    layer_acts: dict[str, Float[Tensor, "... d_out"]],
 ) -> Float[Tensor, "... k"]:
     """Calculate the sum of the (squared) attributions from each output dimension.
 
@@ -344,32 +350,34 @@ def calc_attributions_full_rank(
 
     Args:
         out: The output of the model.
-        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
-            parameter matrix).
-        layer_acts: The activations of the layer that we are attributing to.
+        inner_acts: The activations at the output of each subnetwork before being summed.
+        layer_acts: The activations at the output of each layer after being summed.
 
     Returns:
         The sum of the (squared) attributions from each output dimension.
     """
+    assert inner_acts.keys() == layer_acts.keys()
+    first_param_matrix_name = next(iter(inner_acts.keys()))
     attribution_scores: Float[Tensor, "... k"] = torch.zeros(
-        inner_acts[0].shape[:-1], device=inner_acts[0].device
+        inner_acts[first_param_matrix_name].shape[:-1],
+        device=inner_acts[first_param_matrix_name].device,
     )
     out_dim = out.shape[-1]
     for feature_idx in range(out_dim):
         feature_attributions: Float[Tensor, "... k"] = torch.zeros(
-            inner_acts[0].shape[:-1], device=inner_acts[0].device
+            inner_acts[first_param_matrix_name].shape[:-1],
+            device=inner_acts[first_param_matrix_name].device,
         )
         grad_layer_acts: tuple[Float[Tensor, "... d_out"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), layer_acts, retain_graph=True
+            out[..., feature_idx].sum(), list(layer_acts.values()), retain_graph=True
         )
-        assert len(grad_layer_acts) == len(inner_acts)
-        for param_matrix_idx in range(len(inner_acts)):
+        for i, param_matrix_name in enumerate(layer_acts.keys()):
             # Note that this operation would be equivalent to:
             # einsum(grad_inner_acts, inner_acts, "... k d_out ,... k d_out -> ... k")
             # since the gradient distributes over the sum.
             feature_attributions += einops.einsum(
-                grad_layer_acts[param_matrix_idx].detach(),
-                inner_acts[param_matrix_idx],
+                grad_layer_acts[i].detach(),
+                inner_acts[param_matrix_name],
                 "... d_out ,... k d_out -> ... k",
             )
 
@@ -380,8 +388,8 @@ def calc_attributions_full_rank(
 
 def calc_grad_attributions_full_rank_per_layer(
     out: Float[Tensor, "... out_dim"],
-    inner_acts: list[Float[Tensor, "... k d_out"]],
-    layer_acts: list[Float[Tensor, "... d_out"]],
+    inner_acts: dict[str, Float[Tensor, "... k d_out"]],
+    layer_acts: dict[str, Float[Tensor, "... d_out"]],
 ) -> list[Float[Tensor, "... k"]]:
     """Calculate the attributions for each layer.
 
@@ -396,27 +404,28 @@ def calc_grad_attributions_full_rank_per_layer(
 
     Args:
         out: The output of the model.
-        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
-            parameter matrix).
-        layer_acts: The activations of the layer that we are attributing to.
+        inner_acts: The activations at the output of each subnetwork before being summed.
+        layer_acts: The activations at the output of each layer after being summed.
 
     Returns:
         The list of attribution scores for each layer.
     """
-
+    first_param_matrix_name = next(iter(inner_acts.keys()))
     layer_attribution_scores: list[Float[Tensor, "... k"]] = [
-        torch.zeros(inner_acts[0].shape[:-1], device=inner_acts[0].device)
+        torch.zeros(
+            inner_acts[first_param_matrix_name].shape[:-1],
+            device=inner_acts[first_param_matrix_name].device,
+        )
         for _ in range(len(inner_acts))
     ]
     for feature_idx in range(out.shape[-1]):
         grad_layer_acts: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), layer_acts, retain_graph=True
+            out[..., feature_idx].sum(), list(layer_acts.values()), retain_graph=True
         )
-        assert len(grad_layer_acts) == len(inner_acts)
-        for param_matrix_idx in range(len(inner_acts)):
-            layer_attribution_scores[param_matrix_idx] += einops.einsum(
-                grad_layer_acts[param_matrix_idx].detach(),
-                inner_acts[param_matrix_idx],
+        for i, param_matrix_name in enumerate(layer_acts.keys()):
+            layer_attribution_scores[i] += einops.einsum(
+                grad_layer_acts[i].detach(),
+                inner_acts[param_matrix_name],
                 "... d_out ,... k d_out -> ... k",
             ).pow(2)
 

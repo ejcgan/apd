@@ -76,11 +76,11 @@ class TMSSPDModel(SPDModel):
 
     def all_As_and_Bs(
         self,
-    ) -> list[tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]]:
-        return [
-            (self.A, self.B),
-            (rearrange(self.B, "i k h -> i h k"), rearrange(self.A, "i f k -> i k f")),
-        ]
+    ) -> dict[str, tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]]:
+        return {
+            "W": (self.A, self.B),
+            "W_T": (rearrange(self.B, "i k h -> i h k"), rearrange(self.A, "i f k -> i k f")),
+        }
 
     def all_subnetwork_params(self) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
         W = torch.einsum("ifk,ikh->ikfh", self.A, self.B)
@@ -94,7 +94,9 @@ class TMSSPDModel(SPDModel):
     def forward(
         self, x: Float[Tensor, "... i f"]
     ) -> tuple[
-        Float[Tensor, "... i f"], list[Float[Tensor, "... i f"]], list[Float[Tensor, "... i k"]]
+        Float[Tensor, "... i f"],
+        dict[str, Float[Tensor, "... i d_layer_out"]],
+        dict[str, Float[Tensor, "... i k"]],
     ]:
         inner_act_0 = torch.einsum("...if,ifk->...ik", x, self.A)
         layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0, self.B)
@@ -106,7 +108,7 @@ class TMSSPDModel(SPDModel):
         out = F.relu(pre_relu)
         # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
         # operations we care about (dout/d(inner_act_1)).
-        return out, [layer_act_0, layer_act_1], [inner_act_0, inner_act_1]
+        return out, {"W": layer_act_0, "W_T": layer_act_1}, {"W": inner_act_0, "W_T": inner_act_1}
 
     def forward_topk(
         self,
@@ -114,8 +116,8 @@ class TMSSPDModel(SPDModel):
         topk_mask: Bool[Tensor, "... n_instances k"],
     ) -> tuple[
         Float[Tensor, "... i f"],
-        list[Float[Tensor, "... i f"]],
-        list[Float[Tensor, "... i k"]],
+        dict[str, Float[Tensor, "... i d_layer_out"]],
+        dict[str, Float[Tensor, "... i k"]],
     ]:
         """Performs a forward pass using only the top-k subnetwork activations."""
         inner_act_0 = torch.einsum("...if,ifk->...ik", x, self.A)
@@ -130,7 +132,10 @@ class TMSSPDModel(SPDModel):
 
         pre_relu = layer_act_1 + self.b_final
         out = F.relu(pre_relu)
-        return out, [layer_act_0, layer_act_1], [inner_act_0_topk, inner_act_1_topk]
+
+        layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
+        inner_acts = {"W": inner_act_0_topk, "W_T": inner_act_1_topk}
+        return out, layer_acts, inner_acts
 
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDModel":  # type: ignore
@@ -208,8 +213,8 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         self, x: Float[Tensor, "... n_instances n_features"]
     ) -> tuple[
         Float[Tensor, "... n_instances n_features"],
-        list[Float[Tensor, "... n_instances n_features"]],
-        list[Float[Tensor, "... n_instances k"]],
+        dict[str, Float[Tensor, "... n_instances n_features"]],
+        dict[str, Float[Tensor, "... n_instances k"]],
     ]:
         inner_act_0 = torch.einsum("...if,ikfh->...ikh", x, self.subnetwork_params)
         layer_act_0 = torch.einsum("...ikh->...ih", inner_act_0)
@@ -221,7 +226,7 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         out = F.relu(pre_relu)
         # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
         # operations we care about (dout/d(inner_act_1)).
-        return out, [layer_act_0, layer_act_1], [inner_act_0, inner_act_1]
+        return out, {"W": layer_act_0, "W_T": layer_act_1}, {"W": inner_act_0, "W_T": inner_act_1}
 
     def forward_topk(
         self,
@@ -229,8 +234,8 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         topk_mask: Bool[Tensor, "... n_instances k"],
     ) -> tuple[
         Float[Tensor, "... n_instances n_features"],
-        list[Float[Tensor, "... n_instances n_features"]],
-        list[Float[Tensor, "... n_instances k"]],
+        dict[str, Float[Tensor, "... n_instances n_features"]],
+        dict[str, Float[Tensor, "... n_instances k"]],
     ]:
         """Performs a forward pass using only the top-k subnetwork activations."""
 
@@ -246,7 +251,10 @@ class TMSSPDFullRankModel(SPDFullRankModel):
 
         pre_relu = layer_act_1 + self.b_final
         out = F.relu(pre_relu)
-        return out, [layer_act_0, layer_act_1], [inner_act_0_topk, inner_act_1_topk]
+
+        layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
+        inner_acts = {"W": inner_act_0_topk, "W_T": inner_act_1_topk}
+        return out, layer_acts, inner_acts
 
     @classmethod
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDFullRankModel":  # type: ignore

@@ -643,11 +643,11 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             ]
         )
 
-    def all_As_and_Bs(self) -> list[tuple[Float[Tensor, "dim k"], Float[Tensor, "k dim"]]]:
-        As_and_Bs = []
-        for mlp in self.mlps:
-            As_and_Bs.append((mlp.linear1.A, mlp.linear1.B))
-            As_and_Bs.append((mlp.linear2.A, mlp.linear2.B))
+    def all_As_and_Bs(self) -> dict[str, tuple[Float[Tensor, "dim k"], Float[Tensor, "k dim"]]]:
+        As_and_Bs = {}
+        for i, mlp in enumerate(self.mlps):
+            As_and_Bs[f"mlp_{i}.input_layer.weight"] = (mlp.linear1.A, mlp.linear1.B)
+            As_and_Bs[f"mlp_{i}.output_layer.weight"] = (mlp.linear2.A, mlp.linear2.B)
         return As_and_Bs
 
     def all_subnetwork_params(self) -> dict[str, Float[Tensor, "k d_in d_out"]]:
@@ -758,23 +758,26 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         self, x: Float[Tensor, "... inputs"]
     ) -> tuple[
         Float[Tensor, "... outputs"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
+        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        dict[str, Float[Tensor, "... k"]],
     ]:
         """
         Returns:
             x: The output of the model
-            layer_acts: A list of activations for each layer in each MLP.
-            inner_acts: A list of component activations for each layer in each MLP.
+            layer_acts: A dictionary of activations for each layer in each MLP.
+            inner_acts: A dictionary of component activations (just after the A matrix) for each
+                layer in each MLP.
         """
-        layer_acts = []
-        inner_acts = []
+        layer_acts = {}
+        inner_acts = {}
         residual = self.W_E(x)
-        for layer in self.mlps:
+        for i, layer in enumerate(self.mlps):
             layer_out, layer_acts_i, inner_acts_i = layer(residual)
             residual = residual + layer_out
-            layer_acts.extend(layer_acts_i)
-            inner_acts.extend(inner_acts_i)
+            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
+            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
+            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
+            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
         return self.W_U(residual), layer_acts, inner_acts
 
     def forward_topk(
@@ -783,8 +786,8 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         topk_mask: Bool[Tensor, "... k"],
     ) -> tuple[
         Float[Tensor, "... outputs"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]],
+        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        dict[str, Float[Tensor, "... k"]],
     ]:
         """
         Performs a forward pass using only the top-k subnetwork activations.
@@ -795,20 +798,21 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
 
         Returns:
             output: The output of the transformer
-            layer_acts: A list of activations for each layer in each MLP
-            inner_acts: A list of component activations for each layer in each MLP
+            layer_acts: A dictionary of activations for each layer in each MLP
+            inner_acts: A dictionary of component activations (just after the A matrix) for each
+                layer in each MLP.
         """
-        layer_acts = []
-        inner_acts = []
+        layer_acts = {}
+        inner_acts = {}
         residual = self.W_E(x)
-
-        for layer in self.mlps:
+        for i, layer in enumerate(self.mlps):
             assert isinstance(layer, MLPComponents)
             layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_mask)
             residual = residual + layer_out
-            layer_acts.extend(layer_acts_i)
-            inner_acts.extend(inner_acts_i)
-
+            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
+            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
+            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
+            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
         return self.W_U(residual), layer_acts, inner_acts
 
     @classmethod
@@ -969,23 +973,27 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         self, x: Float[Tensor, "... inputs"]
     ) -> tuple[
         Float[Tensor, "... outputs"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k d_embed"]],
+        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        dict[str, Float[Tensor, "... k d_embed"]],
     ]:
         """
         Returns:
             x: The output of the model
-            layer_acts: A list of activations for each layer in each MLP.
-            inner_acts: A list of component activations for each layer in each MLP.
+            layer_acts: A dictionary of activations for each layer in each MLP.
+            inner_acts: A dictionary of component activations (just after the A matrix) for each
+                layer in each MLP.
         """
-        layer_acts = []
-        inner_acts = []
+        layer_acts = {}
+        inner_acts = {}
         residual = self.W_E(x)
-        for layer in self.mlps:
+        for i, layer in enumerate(self.mlps):
             layer_out, layer_acts_i, inner_acts_i = layer(residual)
+            assert len(layer_acts_i) == len(inner_acts_i) == 2
             residual = residual + layer_out
-            layer_acts.extend(layer_acts_i)
-            inner_acts.extend(inner_acts_i)
+            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
+            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
+            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
+            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
         return self.W_U(residual), layer_acts, inner_acts
 
     def forward_topk(
@@ -994,8 +1002,8 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         topk_mask: Bool[Tensor, "... k"],
     ) -> tuple[
         Float[Tensor, "... outputs"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k d_embed"]],
+        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        dict[str, Float[Tensor, "... k d_embed"]],
     ]:
         """
         Performs a forward pass using only the top-k subnetwork activations.
@@ -1006,20 +1014,22 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
 
         Returns:
             output: The output of the transformer
-            layer_acts: A list of activations for each layer in each MLP
-            inner_acts: A list of component activations for each layer in each MLP
+            layer_acts: A dictionary of activations for each layer in each MLP
+            inner_acts: A dictionary of component activations (just after the A matrix) for each
+                layer in each MLP
         """
-        layer_acts = []
-        inner_acts = []
+        layer_acts = {}
+        inner_acts = {}
         residual = self.W_E(x)
 
-        for layer in self.mlps:
+        for i, layer in enumerate(self.mlps):
             assert isinstance(layer, MLPComponentsFullRank)
             layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_mask)
             residual = residual + layer_out
-            layer_acts.extend(layer_acts_i)
-            inner_acts.extend(inner_acts_i)
-
+            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
+            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
+            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
+            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
         return self.W_U(residual), layer_acts, inner_acts
 
     @classmethod

@@ -18,7 +18,7 @@ class TestCalcTopkL2:
         topk_mask: Float[Tensor, "batch=1 k=2"] = torch.tensor(
             [[True, False, False]], dtype=torch.bool
         )
-        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
+        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 0, 0], [1, 0, 0]]])
@@ -30,7 +30,7 @@ class TestCalcTopkL2:
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
         topk_mask = torch.tensor([[True, True, True]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
+        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 1, 1], [1, 1, 1]]])
@@ -43,7 +43,7 @@ class TestCalcTopkL2:
         B = torch.ones(2, 2, 1)
         # topk_mask: [batch=2, n_instances=2, k=2]
         topk_mask = torch.tensor([[[1, 0], [0, 1]], [[0, 1], [1, 1]]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(all_As_and_Bs=[(A, B)], topk_mask=topk_mask)
+        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
 
         # Below we write what the intermediate values are
         # A: [n_instances=2, d_in=1, k=2] = torch.tensor(
@@ -161,17 +161,19 @@ class TestCalcParamMatchLoss:
 
 class TestCalcLpSparsityLoss:
     def test_calc_lp_sparsity_loss_rank_one_single_instance(self):
-        inner_acts: list[Float[Tensor, "batch=1 k=3"]] = [torch.tensor([[1.0, 1.0, 1.0]])]
-        layer_out_params: list[Float[Tensor, "k=3 d_out=2"]] = [
-            torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], requires_grad=True)
-        ]
+        inner_acts: dict[str, Float[Tensor, "batch=1 k=3"]] = {
+            "layer": torch.tensor([[1.0, 1.0, 1.0]], requires_grad=True)
+        }
+        B_params: dict[str, Float[Tensor, "k=3 d_out=2"]] = {
+            "layer": torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], requires_grad=True)
+        }
 
         # Compute layer_acts
-        layer_acts = [inner_acts[0] @ layer_out_params[0]]
+        layer_acts = {"layer": inner_acts["layer"] @ B_params["layer"]}
         # Expected layer_acts: [9.0, 12.0]
 
         # Compute out (assuming identity activation function)
-        out = layer_acts[0]
+        out = layer_acts["layer"]
         # Expected out: [9.0, 12.0]
 
         step_pnorm = 0.9
@@ -180,7 +182,7 @@ class TestCalcLpSparsityLoss:
             out=out,
             layer_acts=layer_acts,
             inner_acts=inner_acts,
-            layer_out_params=layer_out_params,
+            B_params=B_params,
             step_pnorm=step_pnorm,
         )
 
@@ -202,9 +204,9 @@ class TestCalcLpSparsityLoss:
         expected = torch.tensor(expected_val)
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
-        # Also check that the layer_out_params is in the computation graph of the sparsity result.
+        # Also check that the B_params is in the computation graph of the sparsity result.
         result.backward()
-        assert layer_out_params[0].grad is not None
+        assert B_params["layer"].grad is not None
 
 
 class TestCalcOrthogLoss:

@@ -11,8 +11,8 @@ class SPDModel(ABC, nn.Module):
         self, x: Float[Tensor, "... d_model_in"]
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
-        list[Float[Tensor, "... d_layer_out"]],  # layer activations
-        list[Float[Tensor, "... k"]],  # inner activations
+        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
+        dict[str, Float[Tensor, "... k"]],  # inner activations
     ]:
         pass
 
@@ -21,8 +21,8 @@ class SPDModel(ABC, nn.Module):
         self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
-        list[Float[Tensor, "... d_layer_out"]],  # layer activations
-        list[Float[Tensor, "... k"]],  # inner activations
+        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
+        dict[str, Float[Tensor, "... k"]],  # inner activations
     ]:
         pass
 
@@ -34,8 +34,8 @@ class SPDModel(ABC, nn.Module):
     @abstractmethod
     def all_As_and_Bs(
         self,
-    ) -> list[tuple[Float[Tensor, "... d_layer_in k"], Float[Tensor, "... k d_layer_out"]]]:
-        """List of tuples containing A and B matrices."""
+    ) -> dict[str, tuple[Float[Tensor, "... d_layer_in k"], Float[Tensor, "... k d_layer_out"]]]:
+        """Dict of tuples containing A and B matrices, keyed by the layer name."""
         pass
 
     @abstractmethod
@@ -67,8 +67,8 @@ class SPDFullRankModel(ABC, nn.Module):
         self, x: Float[Tensor, "... d_model_in"]
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
-        list[Float[Tensor, "... d_layer_out"]],  # layer activations
-        list[Float[Tensor, "... k d_layer_out"]],  # inner activations
+        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
+        dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
     ]:
         pass
 
@@ -77,8 +77,8 @@ class SPDFullRankModel(ABC, nn.Module):
         self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
-        list[Float[Tensor, "... d_layer_out"]],  # layer activations
-        list[Float[Tensor, "... k d_layer_out"]],  # inner activations
+        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
+        dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
     ]:
         pass
 

@@ -100,10 +100,11 @@ class DeepLinearComponentModel(SPDModel):
 
     def all_As_and_Bs(
         self,
-    ) -> list[
-        tuple[Float[Tensor, "n_instances n_features k"], Float[Tensor, "n_instances k n_features"]]
+    ) -> dict[
+        str,
+        tuple[Float[Tensor, "n_instances n_features k"], Float[Tensor, "n_instances k n_features"]],
     ]:
-        return [(layer.A, layer.B) for layer in self.layers]
+        return {f"layer_{i}": (layer.A, layer.B) for i, layer in enumerate(self.layers)}
 
     def all_subnetwork_params(
         self,
@@ -126,15 +127,15 @@ class DeepLinearComponentModel(SPDModel):
         x: Float[Tensor, "batch n_instances n_features"],
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
-        list[Float[Tensor, "batch n_instances n_features"]],
-        list[Float[Tensor, "batch n_instances k"]],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k"]],
     ]:
-        layer_acts = []
-        inner_acts = []
-        for layer in self.layers:
+        layer_acts = {}
+        inner_acts = {}
+        for i, layer in enumerate(self.layers):
             x, inner_act = layer(x)
-            layer_acts.append(x)
-            inner_acts.append(inner_act)
+            layer_acts[f"layer_{i}"] = x
+            inner_acts[f"layer_{i}"] = inner_act
         return x, layer_acts, inner_acts
 
     def forward_topk(
@@ -143,17 +144,17 @@ class DeepLinearComponentModel(SPDModel):
         topk_mask: Bool[Tensor, "batch n_instances k"],
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
-        list[Float[Tensor, "batch n_instances n_features"]],
-        list[Float[Tensor, "batch n_instances k"]],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k"]],
     ]:
         """Performs a forward pass using only the top-k subnetwork activations."""
-        layer_acts = []
-        inner_acts_topk = []
-        for layer in self.layers:
+        layer_acts = {}
+        inner_acts_topk = {}
+        for i, layer in enumerate(self.layers):
             assert isinstance(layer, DeepLinearParamComponents)
             x, inner_act_topk = layer.forward_topk(x, topk_mask)
-            layer_acts.append(x)
-            inner_acts_topk.append(inner_act_topk)
+            layer_acts[f"layer_{i}"] = x
+            inner_acts_topk[f"layer_{i}"] = inner_act_topk
         return x, layer_acts, inner_acts_topk
 
     @classmethod
@@ -279,15 +280,15 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
         x: Float[Tensor, "batch n_instances n_features"],
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
-        list[Float[Tensor, "batch n_instances n_features"]],
-        list[Float[Tensor, "batch n_instances k n_features"]],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k n_features"]],
     ]:
-        layer_acts = []
-        inner_acts = []
-        for layer in self.layers:
+        layer_acts = {}
+        inner_acts = {}
+        for i, layer in enumerate(self.layers):
             x, inner_act = layer(x)
-            layer_acts.append(x)
-            inner_acts.append(inner_act)
+            layer_acts[f"layer_{i}"] = x
+            inner_acts[f"layer_{i}"] = inner_act
         return x, layer_acts, inner_acts
 
     def forward_topk(
@@ -296,17 +297,17 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
         topk_mask: Bool[Tensor, "batch n_instances k"],
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
-        list[Float[Tensor, "batch n_instances n_features"]],
-        list[Float[Tensor, "batch n_instances k n_features"]],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k n_features"]],
     ]:
         """Performs a forward pass using only the top-k subnetwork activations."""
-        layer_acts = []
-        inner_acts_topk = []
-        for layer in self.layers:
+        layer_acts = {}
+        inner_acts_topk = {}
+        for i, layer in enumerate(self.layers):
             assert isinstance(layer, DeepLinearParamComponentsFullRank)
             x, inner_act_topk = layer.forward_topk(x, topk_mask)
-            layer_acts.append(x)
-            inner_acts_topk.append(inner_act_topk)
+            layer_acts[f"layer_{i}"] = x
+            inner_acts_topk[f"layer_{i}"] = inner_act_topk
         return x, layer_acts, inner_acts_topk
 
     @classmethod

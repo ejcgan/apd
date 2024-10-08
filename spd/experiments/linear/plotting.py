@@ -50,7 +50,7 @@ def _collect_permuted_subnetwork_attributions(
     out, test_layer_acts, test_inner_acts = model(test_batch)
     if isinstance(model, DeepLinearComponentModel):
         layer_attributions = calc_grad_attributions_rank_one_per_layer(
-            out=out, inner_acts=test_inner_acts
+            out=out, inner_acts_vals=list(test_inner_acts.values())
         )
     else:
         assert isinstance(model, DeepLinearComponentFullRankModel)

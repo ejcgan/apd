@@ -151,15 +151,17 @@ def plot_components(
     # Forward pass to get the output and inner activations
     out, layer_acts, inner_acts = model(x)
     # Calculate attribution scores
-    attribution_scores = calc_attributions_rank_one(out=out, inner_acts=inner_acts)
+    attribution_scores = calc_attributions_rank_one(
+        out=out, inner_acts_vals=list(inner_acts.values())
+    )
     attribution_scores_normed = attribution_scores / attribution_scores.std(dim=1, keepdim=True)
     # Get As and Bs and ABs
     n_layers = model.n_layers
     all_As_and_Bs = model.all_As_and_Bs()
     assert len(all_As_and_Bs) % 2 == 0, "A and B matrices must have an even length (MLP in + out)"
     assert len(all_As_and_Bs) // 2 == n_layers, "Number of A and B matrices must be 2*n_layers"
-    As = [tup[0] for tup in all_As_and_Bs]
-    Bs = [tup[1] for tup in all_As_and_Bs]
+    As = [tup[0] for tup in all_As_and_Bs.values()]
+    Bs = [tup[1] for tup in all_As_and_Bs.values()]
     ABs = [torch.einsum("...fk,...kg->...fg", As[i], Bs[i]) for i in range(len(As))]
     ABs_by_k = [torch.einsum("...fk,...kg->...kfg", As[i], Bs[i]) for i in range(len(As))]
 
@@ -257,10 +259,10 @@ class SPDoutputs(NamedTuple):
     target_model_output: torch.Tensor | None
     spd_model_output: torch.Tensor
     spd_topk_model_output: torch.Tensor
-    layer_acts: list[torch.Tensor]
-    topk_layer_acts: list[torch.Tensor]
-    inner_acts: list[torch.Tensor]
-    topk_inner_acts: list[torch.Tensor]
+    layer_acts: dict[str, torch.Tensor]
+    topk_layer_acts: dict[str, torch.Tensor]
+    inner_acts: dict[str, torch.Tensor]
+    topk_inner_acts: dict[str, torch.Tensor]
     attribution_scores: torch.Tensor
     topk_mask: torch.Tensor
 
@@ -291,7 +293,7 @@ def run_spd_forward_pass(
             )
         else:
             attribution_scores = calc_attributions_rank_one(
-                out=model_output_spd, inner_acts=inner_acts
+                out=model_output_spd, inner_acts_vals=list(inner_acts.values())
             )
     topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
     model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model.forward_topk(
@@ -423,24 +425,24 @@ def plot_model_functions(
                     label=f"cb={cb}, k_cb={k}",
                 )
                 assert len(inner_acts) <= 2, "Didn't implement more than 2 SPD 'layers' yet"
-                for j in range(len(inner_acts)):
+                for j, layer_name in enumerate(inner_acts.keys()):
                     ls = ["-", "--"][j]
                     if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
                         ax_inner.plot(
                             input_xs[s],
-                            inner_acts[j].cpu().detach()[s][:, k],
+                            inner_acts[layer_name].cpu().detach()[s][:, k],
                             color=color0,
                             ls=ls,
                             label=f"cb={cb}, k_cb={k}" if j == 0 else None,
                         )
             else:
                 ax_attrib.plot(input_xs[s], attribution_scores[s][:, k], color=color0, alpha=0.2)
-                for j in range(len(inner_acts)):
+                for j, layer_name in enumerate(inner_acts.keys()):
                     ls = ["-", "--"][j]
                     if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
                         ax_inner.plot(
                             input_xs[s],
-                            inner_acts[j].cpu().detach()[s][:, k],
+                            inner_acts[layer_name].cpu().detach()[s][:, k],
                             color="k",
                             ls=ls,
                             lw=0.2,
