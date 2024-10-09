@@ -980,6 +980,17 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
             # Check that the sum of the biases in each subnetwork is equal to the target bias
             assert torch.allclose(mlp.linear1.bias.data.sum(dim=0), target_bias)
 
+    def set_subnet_to_target(self, target_transformer: PiecewiseFunctionTransformer, dim: int = -1):
+        """Set the subnetwork and index dim to the target transformer."""
+        for i, mlp in enumerate(self.mlps):
+            mlp.linear1.subnetwork_params.data[dim, :, :] = target_transformer.mlps[
+                i
+            ].input_layer.weight.T
+            mlp.linear1.bias.data[dim, :] = target_transformer.mlps[i].input_layer.bias
+            mlp.linear2.subnetwork_params.data[dim, :, :] = target_transformer.mlps[
+                i
+            ].output_layer.weight.T
+
     def all_subnetwork_params(
         self,
     ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight

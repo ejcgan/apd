@@ -275,6 +275,7 @@ def run_spd_forward_pass(
     ablation_attributions: bool,
     batch_topk: bool,
     topk: float,
+    distil_from_target: bool,
 ) -> SPDoutputs:
     # non-SPD model, and SPD-model non-topk forward pass
     if target_model is not None:
@@ -299,7 +300,17 @@ def run_spd_forward_pass(
             attribution_scores = calc_attributions_rank_one(
                 out=model_output_spd, inner_acts_vals=list(inner_acts.values())
             )
-    topk_mask = calc_topk_mask(attribution_scores, topk, batch_topk=batch_topk)
+
+    # We always assume the final subnetwork is the one we want to distil
+    topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores
+    topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=batch_topk)
+    if distil_from_target:
+        # Add back the final subnetwork index to the topk mask and set it to True
+        last_subnet_mask = torch.ones(
+            (*topk_mask.shape[:-1], 1), dtype=torch.bool, device=attribution_scores.device
+        )
+        topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
+
     model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model.forward_topk(
         input_array, topk_mask=topk_mask
     )
@@ -327,6 +338,7 @@ def plot_model_functions(
     start: float,
     stop: float,
     print_info: bool = False,
+    distil_from_target: bool = False,
 ) -> dict[str, plt.Figure]:
     fig, axes = plt.subplots(nrows=3, figsize=(12, 12), constrained_layout=True)
     assert isinstance(axes, np.ndarray)
@@ -364,6 +376,7 @@ def plot_model_functions(
         ablation_attributions=ablation_attributions,
         batch_topk=batch_topk,
         topk=topk,
+        distil_from_target=distil_from_target,
     )
     model_output_hardcoded = spd_outputs.target_model_output
     model_output_spd = spd_outputs.spd_model_output
@@ -497,6 +510,7 @@ def plot_subnetwork_correlations(
             ablation_attributions=config.ablation_attributions,
             batch_topk=config.batch_topk,
             topk=config.topk,
+            distil_from_target=config.distil_from_target,
         )
         topk_masks.append(spd_outputs.topk_mask)
         if len(topk_masks) > n_forward_passes:

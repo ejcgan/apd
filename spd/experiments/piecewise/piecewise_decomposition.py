@@ -66,6 +66,7 @@ def piecewise_plot_results_fn(
             start=config.task_config.range_min,
             stop=config.task_config.range_max,
             print_info=False,
+            distil_from_target=config.distil_from_target,
         )
         fig_dict.update(fig_dict_functions)
         fig_dict_network = plot_piecewise_network(model)
@@ -181,6 +182,13 @@ def get_model_and_dataloader(
     ).to(device)
     piecewise_model.eval()
 
+    # Assert that the output bias is 0
+    for i in range(piecewise_model.n_layers):
+        assert torch.allclose(
+            piecewise_model.mlps[i].output_layer.bias,
+            torch.zeros_like(piecewise_model.mlps[i].output_layer.bias),
+        )
+
     # For rank 1, we initialise with the input biases from the original model
     input_biases = [
         piecewise_model.mlps[i].input_layer.bias.detach().clone()
@@ -209,7 +217,15 @@ def get_model_and_dataloader(
             )
             rank_one_spd_model.set_handcoded_spd_params(piecewise_model)
             piecewise_model_spd.set_handcoded_spd_params(rank_one_spd_model)
+        if config.distil_from_target:
+            piecewise_model_spd.set_subnet_to_target(piecewise_model)
 
+        for i in range(piecewise_model_spd.n_layers):
+            # Assert output bias is 0
+            assert piecewise_model_spd.mlps[i].linear2.bias is None or torch.allclose(
+                piecewise_model_spd.mlps[i].linear2.bias,
+                torch.zeros_like(piecewise_model_spd.mlps[i].linear2.bias),
+            )
     else:
         piecewise_model_spd = PiecewiseFunctionSPDTransformer(
             n_inputs=piecewise_model.n_inputs,
