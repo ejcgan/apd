@@ -77,10 +77,7 @@ class PiecewiseLinear(nn.Module):
         ), f"{len(biases)=}, num_neurons = {self.neurons_per_function}, {biases=}"
 
         self.input_layer.bias.data = torch.tensor(biases, dtype=torch.float32)
-        # -torch.tensor(
-        #     np.linspace(start-self.interval, end, num_neurons), dtype=torch.float32
-        # )[:-1] + self.interval
-        # print("neuron bias", self.neurons.bias.data)
+
         self.input_layer.weight.data = torch.ones(self.neurons_per_function, 1, dtype=torch.float32)
 
         self.output_layer.bias.data = torch.tensor(0, dtype=torch.float32)
@@ -234,11 +231,33 @@ class MLP(nn.Module):
         self.output_layer.weight.data = torch.zeros(self.d_model, self.d_mlp)
         self.output_layer.bias.data = torch.zeros(self.d_model)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.input_layer(x)
-        x = self.relu(x)
-        x = self.output_layer(x)
-        return x
+    def forward(
+        self, x: Float[Tensor, "... d_model"]
+    ) -> tuple[
+        Float[Tensor, "... d_model"],
+        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"] | None],
+        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"]],
+    ]:
+        """Run a forward pass and cache pre and post activations for each parameter.
+
+        Note that we don't need to cache pre activations for the biases. We also don't care about
+        the output bias which is always zero.
+        """
+        out1_pre_relu = self.input_layer(x)
+        out1 = self.relu(out1_pre_relu)
+        out2 = self.output_layer(out1)
+
+        pre_acts = {
+            "input_layer.weight": x,
+            "input_layer.bias": None,
+            "output_layer.weight": out1,
+        }
+        post_acts = {
+            "input_layer.weight": out1_pre_relu,
+            "input_layer.bias": out1_pre_relu,
+            "output_layer.weight": out2,
+        }
+        return out2, pre_acts, post_acts
 
 
 class ControlledResNet(nn.Module):
@@ -359,7 +378,8 @@ class ControlledResNet(nn.Module):
 
         assert x.shape[1] == self.d_model
         for i in range(self.n_layers):
-            x = x + self.mlps[i](x)
+            mlp_out, _, _ = self.mlps[i](x)
+            x = x + mlp_out
         return x
 
     def partial_forward(
@@ -462,11 +482,24 @@ class PiecewiseFunctionTransformer(Model):
 
         self.mlps = nn.ModuleList([MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(n_layers)])
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Float[Tensor, "batch d_model_in"]
+    ) -> tuple[
+        Float[Tensor, "batch d_model_out"],
+        dict[str, Float[Tensor, " d_model"] | Float[Tensor, " d_mlp"]],
+        dict[str, Float[Tensor, " d_model"] | Float[Tensor, " d_mlp"]],
+    ]:
+        layer_pre_acts = {}
+        layer_post_acts = {}
         residual = self.W_E(x)
-        for layer in self.mlps:
-            residual = residual + layer(residual)
-        return self.W_U(residual)
+        for i, layer in enumerate(self.mlps):
+            out, pre_acts_i, post_acts_i = layer(residual)
+            for k, v in pre_acts_i.items():
+                layer_pre_acts[f"mlp_{i}.{k}"] = v
+            for k, v in post_acts_i.items():
+                layer_post_acts[f"mlp_{i}.{k}"] = v
+            residual = residual + out
+        return self.W_U(residual), layer_pre_acts, layer_post_acts
 
     def all_decomposable_params(
         self,
@@ -571,7 +604,7 @@ class PiecewiseFunctionTransformer(Model):
         labels = torch.einsum("bo,bo->b", control_bits_expanded, function_outputs)
 
         axs.plot(x, labels, label="f(x)")
-        outputs = self.forward(inputs_with_control)
+        outputs, _, _ = self.forward(inputs_with_control)
         axs.plot(x, outputs[:, 0].detach().numpy(), label="NN(x)")
         axs.legend()
         axs.set_title("Piecewise Linear Approximation of function")

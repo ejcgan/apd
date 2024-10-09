@@ -452,7 +452,9 @@ def calc_ablation_attributions(
 
 
 def calc_topk_mask(
-    attribution_scores: Float[Tensor, "batch ... k"], topk: float, batch_topk: bool
+    attribution_scores: Float[Tensor, "batch ... k"],
+    topk: float,
+    batch_topk: bool,
 ) -> Float[Tensor, "batch ... k"]:
     """Calculate the top-k mask.
 
@@ -478,6 +480,7 @@ def calc_topk_mask(
 
     if batch_topk:
         topk_mask = einops.rearrange(topk_mask, "... (b k) -> b ... k", b=batch_size)
+
     return topk_mask
 
 

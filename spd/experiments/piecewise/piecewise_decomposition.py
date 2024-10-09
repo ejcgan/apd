@@ -132,6 +132,8 @@ def get_run_name(config: Config) -> str:
             run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
         if config.topk_l2_coeff is not None:
             run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
+        if config.topk_param_attrib_coeff is not None:
+            run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
         if config.task_config.handcoded_AB:
             run_suffix += "hAB_"
         run_suffix += f"lr{config.lr:.2e}_"
@@ -207,6 +209,7 @@ def get_model_and_dataloader(
             )
             rank_one_spd_model.set_handcoded_spd_params(piecewise_model)
             piecewise_model_spd.set_handcoded_spd_params(rank_one_spd_model)
+
     else:
         piecewise_model_spd = PiecewiseFunctionSPDTransformer(
             n_inputs=piecewise_model.n_inputs,
@@ -300,7 +303,7 @@ def main(
     for i, (batch, labels) in enumerate(test_dataloader):
         if i >= n_batches:
             break
-        hardcoded_out = piecewise_model(batch.to(device))
+        hardcoded_out, _, _ = piecewise_model(batch.to(device))
         loss += calc_recon_mse(hardcoded_out, labels.to(device))
     loss /= n_batches
     logger.info(f"Loss of hardcoded model on 5 batches: {loss}")

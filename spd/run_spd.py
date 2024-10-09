@@ -98,6 +98,7 @@ class Config(BaseModel):
     topk_recon_coeff: NonNegativeFloat | None = None
     topk_l2_coeff: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
+    topk_param_attrib_coeff: NonNegativeFloat | None = None
     pnorm: PositiveFloat | None = None
     pnorm_end: PositiveFloat | None = None
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"] = "constant"
@@ -193,6 +194,11 @@ class Config(BaseModel):
             and self.task_config.decompose_bias
         ):
             raise ValueError("Cannot decompose bias in rank 1 case")
+
+        if self.topk_param_attrib_coeff is not None and not isinstance(
+            self.task_config, PiecewiseConfig
+        ):
+            raise ValueError("topk_param_attrib_coeff is currenlty only suppported for piecewise")
 
         return self
 
@@ -525,6 +531,87 @@ def calc_lp_sparsity_loss_full_rank(
     return lp_sparsity_loss
 
 
+def calc_topk_param_attrib_loss(
+    target_out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
+    target_params: dict[str, Tensor],
+    subnetwork_params: dict[str, Tensor],
+    topk_mask: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
+    target_layer_pre_acts: dict[str, Tensor],
+    target_layer_post_acts: dict[str, Tensor],
+    has_instance_dim: bool,
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    """Reconstruction loss between the parameters of the topk subnets between the SPD and target
+    models.
+
+    The loss is weighted by the gradient of the true model w.r.t the true activations at
+    the same position.
+
+    Formula:
+        d(f(x, theta)) / d(a(x, theta)) * (theta - spd_theta) * p(x, theta)
+    where
+    - a(x, theta) are the activations after the parameter matrix is applied in the target model,
+    - p(x, theta) are the activations before the parameter matrix is applied in the SPD model (
+        this is set to 1 if theta is a bias parameter)
+    - f(x, theta) is the output of the target model.
+
+    Args:
+        target_out: The output of the target model for the batch.
+        target_params: The parameters of the target model which are decomposable.
+        subnetwork_params: The parameters of the SPD model.
+        topk_mask: The topk mask for the SPD model on the batch.
+        target_layer_pre_acts: The activations before the parameter matrix is applied in the target
+            model.
+        target_layer_post_acts: The activations after the parameter matrix is applied in the target
+            model.
+        has_instance_dim: Whether the model has an n_instances dimension.
+
+    Returns:
+        The topk parameter attribution loss. Will have an n_instances dimension if the model has an
+            n_instances dimension.
+    """
+    assert target_params.keys() == target_layer_pre_acts.keys() == target_layer_post_acts.keys()
+    # Every parameter that we are decomposing must have an entry in target_params
+    assert set(target_params.keys()) <= set(subnetwork_params.keys())
+
+    device = next(iter(subnetwork_params.values())).device
+    loss = torch.tensor(0.0, device=device)
+    for out_idx in range(target_out.shape[-1]):
+        # Get the derivative of the output w.r.t. the target_layer_post_acts
+        dout_d_post_acts = torch.autograd.grad(
+            target_out[..., out_idx].sum(), list(target_layer_post_acts.values()), retain_graph=True
+        )
+        loss_out_idx = torch.tensor(0.0, device=device)
+        for i, k in enumerate(subnetwork_params):
+            # Sum over the subnetwork dim
+            ein_str = "k i ..., b i k -> b i ..." if has_instance_dim else "k ..., b k -> b ..."
+            topk_subnet = einops.einsum(
+                subnetwork_params[k], topk_mask.to(dtype=subnetwork_params[k].dtype), ein_str
+            )
+            param_diff = target_params[k] - topk_subnet
+
+            if "bias" in k:
+                # Derivative @ param_diff
+                ein_str = "b i d_out, b i d_out -> i" if has_instance_dim else "b d_out, b d_out ->"
+                loss_k = einops.einsum(dout_d_post_acts[i].detach(), param_diff, ein_str)
+            else:
+                # Derivative @ param_diff @ pre_acts
+                ein_str = (
+                    "b i d_out, b i d_in d_out, b i d_in -> i"
+                    if has_instance_dim
+                    else "b d_out, b d_in d_out, b d_in ->"
+                )
+                loss_k = einops.einsum(
+                    dout_d_post_acts[i].detach(), param_diff, target_layer_pre_acts[k], ein_str
+                )
+
+            # Accumulate loss (normalized by number of params)
+            loss_out_idx = loss_out_idx + loss_k / (target_params[k].numel())
+
+        loss = loss + (loss_out_idx / len(subnetwork_params)) ** 2
+    loss = (loss / target_out.shape[-1] + 1e-16).sqrt()
+    return loss
+
+
 def optimize(
     model: SPDModel | SPDFullRankModel,
     config: Config,
@@ -578,6 +665,8 @@ def optimize(
         batch = batch.to(device=device)
         labels = labels.to(device=device)
 
+        layer_pre_acts = None
+        layer_post_acts = None
         if pretrained_model is not None:
             if config.param_match_coeff is not None:
                 assert param_map is not None, "Need a param_map for param_match loss"
@@ -587,10 +676,8 @@ def optimize(
                 )
                 assert set(param_map.values()) == set(model.all_subnetwork_params_summed().keys())
 
-            pretrained_model.requires_grad_(False)
             pretrained_model.to(device=device)
-            with torch.inference_mode():
-                labels = pretrained_model(batch)
+            labels, layer_pre_acts, layer_post_acts = pretrained_model(batch)
 
         total_samples += batch.shape[0]
 
@@ -648,7 +735,13 @@ def optimize(
                     step_pnorm=step_pnorm,
                 )
 
-        out_topk, topk_l2_loss, topk_recon_loss, topk_mask = None, None, None, None
+        (
+            out_topk,
+            topk_l2_loss,
+            topk_recon_loss,
+            topk_mask,
+            topk_param_attrib_loss,
+        ) = None, None, None, None, None
         if config.topk is not None:
             if config.ablation_attributions:
                 attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
@@ -687,6 +780,19 @@ def optimize(
                 assert out_topk is not None
                 topk_recon_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
+            if config.topk_param_attrib_coeff is not None:
+                assert pretrained_model is not None, "Need target model for topk_param_attrib_loss"
+                assert layer_pre_acts is not None and layer_post_acts is not None
+                topk_param_attrib_loss = calc_topk_param_attrib_loss(
+                    target_out=labels,
+                    target_params=pretrained_model.all_decomposable_params(),
+                    subnetwork_params=model.all_subnetwork_params(),
+                    topk_mask=topk_mask,
+                    target_layer_pre_acts=layer_pre_acts,
+                    target_layer_post_acts=layer_post_acts,
+                    has_instance_dim=has_instance_dim,
+                )
+
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
         if orthog_loss is not None:
@@ -706,6 +812,9 @@ def optimize(
         if topk_l2_loss is not None:
             assert config.topk_l2_coeff is not None
             loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()
+        if topk_param_attrib_loss is not None:
+            assert config.topk_param_attrib_coeff is not None
+            loss = loss + config.topk_param_attrib_coeff * topk_param_attrib_loss.mean()
 
         # Logging
         if step % config.print_freq == 0:
@@ -726,6 +835,8 @@ def optimize(
                 tqdm.write(f"Param match loss:{nl}{param_match_loss}")
             if orthog_loss is not None:
                 tqdm.write(f"Orthog loss:{nl}{orthog_loss}")
+            if topk_param_attrib_loss is not None:
+                tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
             if config.wandb_project:
                 wandb.log(
                     {
@@ -747,6 +858,9 @@ def optimize(
                         else None,
                         "orthog_loss": orthog_loss.mean().item()
                         if orthog_loss is not None
+                        else None,
+                        "topk_param_attrib_loss": topk_param_attrib_loss.mean().item()
+                        if topk_param_attrib_loss is not None
                         else None,
                     },
                     step=step,

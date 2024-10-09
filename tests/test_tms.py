@@ -176,14 +176,14 @@ def test_train_tms_happy_path():
 
     # Calculate initial loss
     batch, labels = next(iter(dataloader))
-    initial_out = model(batch)
+    initial_out, _, _ = model(batch)
     initial_loss = torch.mean((labels.abs() - initial_out) ** 2)
 
     # Run optimize function
     train(model, dataloader, steps=config.steps, print_freq=1000)
 
     # Calculate final loss
-    final_out = model(batch)
+    final_out, _, _ = model(batch)
     final_loss = torch.mean((labels.abs() - final_out) ** 2)
 
     # Assert that the final loss is lower than the initial loss

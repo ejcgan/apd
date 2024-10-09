@@ -25,14 +25,27 @@ class TMSModel(Model):
         nn.init.xavier_normal_(self.W)
         self.b_final = nn.Parameter(torch.zeros((n_instances, n_features), device=device))
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, features: Float[Tensor, "... n_instances n_features"]
+    ) -> tuple[
+        Float[Tensor, "... n_instances n_features"],
+        dict[
+            str,
+            Float[Tensor, "... n_instances n_features"] | Float[Tensor, "... n_instances n_hidden"],
+        ],
+        dict[
+            str,
+            Float[Tensor, "... n_instances n_features"] | Float[Tensor, "... n_instances n_hidden"],
+        ],
+    ]:
         # features: [..., instance, n_features]
         # W: [instance, n_features, n_hidden]
         hidden = torch.einsum("...if,ifh->...ih", features, self.W)
-        out = torch.einsum("...ih,ifh->...if", hidden, self.W)
-        out = out + self.b_final
-        out = F.relu(out)
-        return out
+        out_pre_relu = torch.einsum("...ih,ifh->...if", hidden, self.W) + self.b_final
+        out = F.relu(out_pre_relu)
+        pre_acts = {"W": features, "W_T": hidden}
+        post_acts = {"W": hidden, "W_T": out_pre_relu}
+        return out, pre_acts, post_acts
 
     def all_decomposable_params(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
         """Dictionary of all parameters which will be decomposed with SPD."""

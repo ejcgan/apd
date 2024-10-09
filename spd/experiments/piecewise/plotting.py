@@ -277,7 +277,11 @@ def run_spd_forward_pass(
     topk: float,
 ) -> SPDoutputs:
     # non-SPD model, and SPD-model non-topk forward pass
-    model_output_hardcoded = target_model(input_array) if target_model is not None else None
+    if target_model is not None:
+        model_output_hardcoded, _, _ = target_model(input_array)
+    else:
+        model_output_hardcoded = None
+
     model_output_spd, layer_acts, inner_acts = spd_model(input_array)
 
     if ablation_attributions:

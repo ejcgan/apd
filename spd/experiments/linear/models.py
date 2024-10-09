@@ -25,10 +25,20 @@ class DeepLinearModel(Model):
         for layer in self.layers:
             nn.init.kaiming_normal_(layer)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers:
-            x = torch.einsum("bif,ifj->bij", x, layer)
-        return x
+    def forward(
+        self, x: Float[Tensor, "... n_instances n_features"]
+    ) -> tuple[
+        Float[Tensor, "... n_instances n_features"],
+        dict[str, Float[Tensor, "... n_instances n_features"]],
+        dict[str, Float[Tensor, "... n_instances n_features"]],
+    ]:
+        layer_pre_acts = {}
+        layer_post_acts = {}
+        for i, layer in enumerate(self.layers):
+            layer_pre_acts[f"layer_{i}"] = x
+            x = torch.einsum("...if,ifj->...ij", x, layer)
+            layer_post_acts[f"layer_{i}"] = x
+        return x, layer_pre_acts, layer_post_acts
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":
