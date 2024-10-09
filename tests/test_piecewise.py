@@ -235,7 +235,7 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
         topk_mask = calc_topk_mask(attribution_scores, config.topk, batch_topk=config.batch_topk)
 
         # Do a forward pass with only the topk subnetworks
-        out_topk, _, inner_acts_topk = piecewise_model_spd.forward_topk(batch, topk_mask=topk_mask)
+        out_topk, _, inner_acts_topk = piecewise_model_spd(batch, topk_mask=topk_mask)
         assert len(inner_acts_topk) == piecewise_model_spd.n_param_matrices
 
         initial_topk_recon_loss = calc_recon_mse(out_topk, labels, has_instance_dim=False)

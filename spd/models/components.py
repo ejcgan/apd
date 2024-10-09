@@ -48,32 +48,13 @@ class ParamComponents(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch dim1"],
+        topk_mask: Bool[Tensor, "batch k"] | None = None,
     ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k"]]:
-        inner_acts = torch.einsum("bf,fk->bk", x, self.A)
-        out = torch.einsum("bk,kg->bg", inner_acts, self.B)
+        inner_acts = einops.einsum(x, self.A, "batch dim1, dim1 k -> batch k")
+        if topk_mask is not None:
+            inner_acts = einops.einsum(inner_acts, topk_mask, "batch k, batch k -> batch k")
+        out = einops.einsum(inner_acts, self.B, "batch k, k dim2 -> batch dim2")
         return out, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch dim1"],
-        topk_mask: Bool[Tensor, "batch k"],
-    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k"]]:
-        """
-        Performs a forward pass using only the top-k subnetwork activations.
-
-        Args:
-            x: Input tensor
-            topk_mask: Boolean tensor indicating which subnetwork activations to keep.
-
-        Returns:
-            out: Output tensor
-            inner_acts: Subnetwork activations
-        """
-
-        inner_acts = torch.einsum("bf,fk->bk", x, self.A)
-        inner_acts_topk = inner_acts * topk_mask
-        out = torch.einsum("bk,kg->bg", inner_acts_topk, self.B)
-        return out, inner_acts_topk
 
 
 class ParamComponentsFullRank(nn.Module):
@@ -93,44 +74,20 @@ class ParamComponentsFullRank(nn.Module):
         self.bias = nn.Parameter(torch.zeros(k, out_dim)) if bias else None
 
     def forward(
-        self,
-        x: Float[Tensor, "batch dim1"],
+        self, x: Float[Tensor, "batch dim1"], topk_mask: Bool[Tensor, "batch k"] | None = None
     ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k dim2"]]:
         inner_acts = einops.einsum(
             x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
         )
         if self.bias is not None:
             inner_acts += self.bias
+
+        if topk_mask is not None:
+            inner_acts = einops.einsum(
+                inner_acts, topk_mask, "batch k dim2, batch k -> batch k dim2"
+            )
         out = einops.einsum(inner_acts, "batch k dim2 -> batch dim2")
         return out, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch dim1"],
-        topk_mask: Bool[Tensor, "batch k"],
-    ) -> tuple[Float[Tensor, "batch dim2"], Float[Tensor, "batch k dim2"]]:
-        """
-        Performs a forward pass using only the top-k subnetwork activations.
-
-        Args:
-            x: Input tensor
-            topk_mask: Boolean tensor indicating which subnetwork activations to keep.
-
-        Returns:
-            out: Output tensor
-            inner_acts: Subnetwork activations
-        """
-
-        inner_acts = einops.einsum(
-            x, self.subnetwork_params, "batch dim1, k dim1 dim2 -> batch k dim2"
-        )
-        if self.bias is not None:
-            inner_acts += self.bias
-        inner_acts_topk = einops.einsum(
-            inner_acts, topk_mask, "batch k dim2, batch k -> batch k dim2"
-        )
-        out = einops.einsum(inner_acts_topk, "batch k dim2 -> batch dim2")
-        return out, inner_acts_topk
 
 
 class MLPComponents(nn.Module):
@@ -174,7 +131,7 @@ class MLPComponents(nn.Module):
             self.bias1.data[:] = input_bias.detach().clone()
 
     def forward(
-        self, x: Float[Tensor, "... d_embed"]
+        self, x: Float[Tensor, "... d_embed"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... d_embed"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -192,57 +149,15 @@ class MLPComponents(nn.Module):
         """
         inner_acts = []
         layer_acts = []
-        x, inner_acts_linear1 = self.linear1(x)
-        x += self.bias1
-        inner_acts.append(inner_acts_linear1)
-        layer_acts.append(x)
-
-        x, inner_acts_linear2 = self.linear2(torch.nn.functional.relu(x))
-        inner_acts.append(inner_acts_linear2)
-        layer_acts.append(x)
-        return x, layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... d_embed"],
-        topk_mask: Bool[Tensor, "... k"],
-    ) -> tuple[
-        Float[Tensor, "... d_embed"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
-    ]:
-        """
-        Performs a forward pass using only the top-k components for each linear layer.
-
-        Note that "inner_acts" represents the activations after multiplcation by A in the rank 1
-        case, and after multiplication by subnetwork_params (but before summing over k) in the
-        full-rank case.
-
-        Args:
-            x: Input tensor
-            topk_mask: Boolean tensor indicating which components to keep.
-        Returns:
-            x: The output of the MLP
-            layer_acts: The activations of each linear layer
-            inner_acts: The component activations inside each linear layer (i.e. after multiplying
-                by A)
-        """
-        inner_acts = []
-        layer_acts = []
-
-        # First linear layer
-        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk_mask)
+        x, inner_acts_linear1 = self.linear1(x, topk_mask)
         x += self.bias1
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
 
         x = torch.nn.functional.relu(x)
-
-        # Second linear layer
-        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_mask)
+        x, inner_acts_linear2 = self.linear2(x, topk_mask)
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
-
         return x, layer_acts, inner_acts
 
 
@@ -269,7 +184,7 @@ class MLPComponentsFullRank(nn.Module):
         )
 
     def forward(
-        self, x: Float[Tensor, "... d_embed"]
+        self, x: Float[Tensor, "... d_embed"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... d_embed"],
         list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -278,6 +193,7 @@ class MLPComponentsFullRank(nn.Module):
         """
         Args:
             x: Input tensor
+            topk_mask: Boolean tensor indicating which subnetworks to keep.
         Returns:
             x: The output of the MLP
             layer_acts: The activations at the output of each layer after summing over the
@@ -286,46 +202,12 @@ class MLPComponentsFullRank(nn.Module):
         """
         inner_acts = []
         layer_acts = []
-        x, inner_acts_linear1 = self.linear1(x)
-        inner_acts.append(inner_acts_linear1)
-        layer_acts.append(x)
-
-        x, inner_acts_linear2 = self.linear2(torch.nn.functional.relu(x))
-        inner_acts.append(inner_acts_linear2)
-        layer_acts.append(x)
-        return x, layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... d_embed"],
-        topk_mask: Bool[Tensor, "... k"],
-    ) -> tuple[
-        Float[Tensor, "... d_embed"],
-        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        list[Float[Tensor, "... k"]] | list[Float[Tensor, "... k d_embed"]],
-    ]:
-        """Performs a forward pass using only the top-k components for each linear layer.
-
-        Args:
-            x: Input tensor
-            topk_mask: Boolean tensor indicating which components to keep.
-        Returns:
-            x: The output of the MLP
-            layer_acts: The activations at the output of each layer after summing over the
-                subnetwork dimension.
-            inner_acts: The activations at the output of each subnetwork before summing.
-        """
-        inner_acts = []
-        layer_acts = []
-
-        x, inner_acts_linear1 = self.linear1.forward_topk(x, topk_mask)
+        x, inner_acts_linear1 = self.linear1(x, topk_mask)
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
 
         x = torch.nn.functional.relu(x)
-
-        x, inner_acts_linear2 = self.linear2.forward_topk(x, topk_mask)
+        x, inner_acts_linear2 = self.linear2(x, topk_mask)
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
-
         return x, layer_acts, inner_acts

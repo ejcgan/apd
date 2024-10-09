@@ -195,12 +195,9 @@ def test_ablation_attributions():
             )
             self.k = 2
 
-        def forward(self, x):  # type: ignore
+        def forward(self, x, topk_mask=None):  # type: ignore
             out = torch.einsum("i,ki->", x, self.subnetwork_params)
             return out, None, None
-
-        def forward_topk(self, x, topk_mask):  # type: ignore
-            raise NotImplementedError
 
         @classmethod
         def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":

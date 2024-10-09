@@ -311,7 +311,7 @@ def run_spd_forward_pass(
         )
         topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
 
-    model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model.forward_topk(
+    model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model(
         input_array, topk_mask=topk_mask
     )
     assert len(inner_acts_topk) == spd_model.n_param_matrices

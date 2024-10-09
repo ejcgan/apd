@@ -788,7 +788,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
             assert torch.allclose(AB_out, target_transformer.mlps[i].output_layer.weight)
 
     def forward(
-        self, x: Float[Tensor, "... inputs"]
+        self, x: Float[Tensor, "... inputs"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... outputs"],
         dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -805,42 +805,7 @@ class PiecewiseFunctionSPDTransformer(SPDModel):
         inner_acts = {}
         residual = self.W_E(x)
         for i, layer in enumerate(self.mlps):
-            layer_out, layer_acts_i, inner_acts_i = layer(residual)
-            residual = residual + layer_out
-            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
-            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
-            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
-            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
-        return self.W_U(residual), layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... inputs"],
-        topk_mask: Bool[Tensor, "... k"],
-    ) -> tuple[
-        Float[Tensor, "... outputs"],
-        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        dict[str, Float[Tensor, "... k"]],
-    ]:
-        """
-        Performs a forward pass using only the top-k subnetwork activations.
-
-        Args:
-            x: Input tensor
-            topk_mask: A boolean mask indicating which subnetwork activations to keep.
-
-        Returns:
-            output: The output of the transformer
-            layer_acts: A dictionary of activations for each layer in each MLP
-            inner_acts: A dictionary of component activations (just after the A matrix) for each
-                layer in each MLP.
-        """
-        layer_acts = {}
-        inner_acts = {}
-        residual = self.W_E(x)
-        for i, layer in enumerate(self.mlps):
-            assert isinstance(layer, MLPComponents)
-            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_mask)
+            layer_out, layer_acts_i, inner_acts_i = layer(residual, topk_mask)
             residual = residual + layer_out
             layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
             layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
@@ -1014,7 +979,7 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         return params
 
     def forward(
-        self, x: Float[Tensor, "... inputs"]
+        self, x: Float[Tensor, "... inputs"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... outputs"],
         dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
@@ -1031,44 +996,8 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
         inner_acts = {}
         residual = self.W_E(x)
         for i, layer in enumerate(self.mlps):
-            layer_out, layer_acts_i, inner_acts_i = layer(residual)
+            layer_out, layer_acts_i, inner_acts_i = layer(residual, topk_mask)
             assert len(layer_acts_i) == len(inner_acts_i) == 2
-            residual = residual + layer_out
-            layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
-            layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]
-            inner_acts[f"mlp_{i}.input_layer.weight"] = inner_acts_i[0]
-            inner_acts[f"mlp_{i}.output_layer.weight"] = inner_acts_i[1]
-        return self.W_U(residual), layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... inputs"],
-        topk_mask: Bool[Tensor, "... k"],
-    ) -> tuple[
-        Float[Tensor, "... outputs"],
-        dict[str, Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
-        dict[str, Float[Tensor, "... k d_embed"]],
-    ]:
-        """
-        Performs a forward pass using only the top-k subnetwork activations.
-
-        Args:
-            x: Input tensor
-            topk_mask: A boolean mask indicating which subnetwork activations to keep.
-
-        Returns:
-            output: The output of the transformer
-            layer_acts: A dictionary of activations for each layer in each MLP
-            inner_acts: A dictionary of component activations (just after the A matrix) for each
-                layer in each MLP
-        """
-        layer_acts = {}
-        inner_acts = {}
-        residual = self.W_E(x)
-
-        for i, layer in enumerate(self.mlps):
-            assert isinstance(layer, MLPComponentsFullRank)
-            layer_out, layer_acts_i, inner_acts_i = layer.forward_topk(residual, topk_mask)
             residual = residual + layer_out
             layer_acts[f"mlp_{i}.input_layer.weight"] = layer_acts_i[0]
             layer_acts[f"mlp_{i}.output_layer.weight"] = layer_acts_i[1]

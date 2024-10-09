@@ -8,17 +8,7 @@ from torch import Tensor, nn
 class SPDModel(ABC, nn.Module):
     @abstractmethod
     def forward(
-        self, x: Float[Tensor, "... d_model_in"]
-    ) -> tuple[
-        Float[Tensor, "... d_model_out"],  # output
-        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
-        dict[str, Float[Tensor, "... k"]],  # inner activations
-    ]:
-        pass
-
-    @abstractmethod
-    def forward_topk(
-        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
+        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
         dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
@@ -64,17 +54,7 @@ class SPDModel(ABC, nn.Module):
 class SPDFullRankModel(ABC, nn.Module):
     @abstractmethod
     def forward(
-        self, x: Float[Tensor, "... d_model_in"]
-    ) -> tuple[
-        Float[Tensor, "... d_model_out"],  # output
-        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
-        dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
-    ]:
-        pass
-
-    @abstractmethod
-    def forward_topk(
-        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"]
+        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... d_model_out"],  # output
         dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations

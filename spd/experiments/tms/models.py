@@ -105,49 +105,30 @@ class TMSSPDModel(SPDModel):
         return {"W": W, "W_T": rearrange(W, "i f h -> i h f")}
 
     def forward(
-        self, x: Float[Tensor, "... i f"]
+        self, x: Float[Tensor, "... i f"], topk_mask: Bool[Tensor, "... k"] | None = None
     ) -> tuple[
         Float[Tensor, "... i f"],
         dict[str, Float[Tensor, "... i d_layer_out"]],
         dict[str, Float[Tensor, "... i k"]],
     ]:
         inner_act_0 = torch.einsum("...if,ifk->...ik", x, self.A)
+        if topk_mask is not None:
+            assert topk_mask.shape == inner_act_0.shape
+            inner_act_0 = torch.einsum("...ik,...ik->...ik", inner_act_0, topk_mask)
         layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0, self.B)
 
         inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
+        if topk_mask is not None:
+            assert topk_mask.shape == inner_act_1.shape
+            inner_act_1 = torch.einsum("...ik,...ik->...ik", inner_act_1, topk_mask)
         layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, self.A)
         pre_relu = layer_act_1 + self.b_final
 
         out = F.relu(pre_relu)
         # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
         # operations we care about (dout/d(inner_act_1)).
-        return out, {"W": layer_act_0, "W_T": layer_act_1}, {"W": inner_act_0, "W_T": inner_act_1}
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... i f"],
-        topk_mask: Bool[Tensor, "... n_instances k"],
-    ) -> tuple[
-        Float[Tensor, "... i f"],
-        dict[str, Float[Tensor, "... i d_layer_out"]],
-        dict[str, Float[Tensor, "... i k"]],
-    ]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-        inner_act_0 = torch.einsum("...if,ifk->...ik", x, self.A)
-        assert topk_mask.shape == inner_act_0.shape
-        inner_act_0_topk = inner_act_0 * topk_mask
-        layer_act_0 = torch.einsum("...ik,ikh->...ih", inner_act_0_topk, self.B)
-
-        inner_act_1 = torch.einsum("...ih,ikh->...ik", layer_act_0, self.B)
-        assert topk_mask.shape == inner_act_1.shape
-        inner_act_1_topk = inner_act_1 * topk_mask
-        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1_topk, self.A)
-
-        pre_relu = layer_act_1 + self.b_final
-        out = F.relu(pre_relu)
-
         layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
-        inner_acts = {"W": inner_act_0_topk, "W_T": inner_act_1_topk}
+        inner_acts = {"W": inner_act_0, "W_T": inner_act_1}
         return out, layer_acts, inner_acts
 
     @classmethod
@@ -223,50 +204,33 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         return {"W": summed_params, "W_T": rearrange(summed_params, "i f h -> i h f")}
 
     def forward(
-        self, x: Float[Tensor, "... n_instances n_features"]
+        self,
+        x: Float[Tensor, "... n_instances n_features"],
+        topk_mask: Bool[Tensor, "... k"] | None = None,
     ) -> tuple[
         Float[Tensor, "... n_instances n_features"],
         dict[str, Float[Tensor, "... n_instances n_features"]],
         dict[str, Float[Tensor, "... n_instances k"]],
     ]:
         inner_act_0 = torch.einsum("...if,ikfh->...ikh", x, self.subnetwork_params)
+        if topk_mask is not None:
+            assert topk_mask.shape == inner_act_0.shape[:-1]
+            inner_act_0 = torch.einsum("...ikh,...ik->...ikh", inner_act_0, topk_mask)
         layer_act_0 = torch.einsum("...ikh->...ih", inner_act_0)
 
         inner_act_1 = torch.einsum("...ih,ikfh->...ikf", layer_act_0, self.subnetwork_params)
+        if topk_mask is not None:
+            assert topk_mask.shape == inner_act_1.shape[:-1]
+            inner_act_1 = torch.einsum("...ikf,...ik->...ikf", inner_act_1, topk_mask)
         layer_act_1 = torch.einsum("...ikf->...if", inner_act_1)
+
         pre_relu = layer_act_1 + self.b_final
 
         out = F.relu(pre_relu)
         # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
         # operations we care about (dout/d(inner_act_1)).
-        return out, {"W": layer_act_0, "W_T": layer_act_1}, {"W": inner_act_0, "W_T": inner_act_1}
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "... n_instances n_features"],
-        topk_mask: Bool[Tensor, "... n_instances k"],
-    ) -> tuple[
-        Float[Tensor, "... n_instances n_features"],
-        dict[str, Float[Tensor, "... n_instances n_features"]],
-        dict[str, Float[Tensor, "... n_instances k"]],
-    ]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-
-        inner_act_0 = torch.einsum("...if,ikfh->...ikh", x, self.subnetwork_params)
-        assert topk_mask.shape == inner_act_0.shape[:-1]
-        inner_act_0_topk = torch.einsum("...ikh,...ik->...ikh", inner_act_0, topk_mask)
-        layer_act_0 = torch.einsum("...ikh->...ih", inner_act_0_topk)
-
-        inner_act_1 = torch.einsum("...ih,ikfh->...ikf", layer_act_0, self.subnetwork_params)
-        assert topk_mask.shape == inner_act_1.shape[:-1]
-        inner_act_1_topk = torch.einsum("...ikf,...ik->...ikf", inner_act_1, topk_mask)
-        layer_act_1 = torch.einsum("...ikf->...if", inner_act_1_topk)
-
-        pre_relu = layer_act_1 + self.b_final
-        out = F.relu(pre_relu)
-
         layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
-        inner_acts = {"W": inner_act_0_topk, "W_T": inner_act_1_topk}
+        inner_acts = {"W": inner_act_0, "W_T": inner_act_1}
         return out, layer_acts, inner_acts
 
     @classmethod

@@ -67,21 +67,25 @@ class DeepLinearParamComponents(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
     ) -> tuple[Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances k"]]:
-        inner_acts = torch.einsum("bif,ifk->bik", x, self.A)
-        out = torch.einsum("bik,ikg->big", inner_acts, self.B)
+        inner_acts = einops.einsum(
+            x,
+            self.A,
+            "batch n_instances n_features, n_instances n_features k -> batch n_instances k",
+        )
+        if topk_mask is not None:
+            inner_acts = einops.einsum(
+                inner_acts,
+                topk_mask,
+                "batch n_instances k, batch n_instances k -> batch n_instances k",
+            )
+        out = einops.einsum(
+            inner_acts,
+            self.B,
+            "batch n_instances k, n_instances k n_features -> batch n_instances n_features",
+        )
         return out, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"],
-    ) -> tuple[Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances k"]]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-        inner_acts = torch.einsum("bif,ifk->bik", x, self.A)
-        inner_acts_topk = inner_acts * topk_mask
-        out = torch.einsum("bik,ikg->big", inner_acts_topk, self.B)
-        return out, inner_acts_topk
 
 
 class DeepLinearComponentModel(SPDModel):
@@ -135,6 +139,7 @@ class DeepLinearComponentModel(SPDModel):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
         dict[str, Float[Tensor, "batch n_instances n_features"]],
@@ -143,29 +148,10 @@ class DeepLinearComponentModel(SPDModel):
         layer_acts = {}
         inner_acts = {}
         for i, layer in enumerate(self.layers):
-            x, inner_act = layer(x)
+            x, inner_act = layer(x, topk_mask)
             layer_acts[f"layer_{i}"] = x
             inner_acts[f"layer_{i}"] = inner_act
         return x, layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"],
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"],
-        dict[str, Float[Tensor, "batch n_instances n_features"]],
-        dict[str, Float[Tensor, "batch n_instances k"]],
-    ]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-        layer_acts = {}
-        inner_acts_topk = {}
-        for i, layer in enumerate(self.layers):
-            assert isinstance(layer, DeepLinearParamComponents)
-            x, inner_act_topk = layer.forward_topk(x, topk_mask)
-            layer_acts[f"layer_{i}"] = x
-            inner_acts_topk[f"layer_{i}"] = inner_act_topk
-        return x, layer_acts, inner_acts_topk
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentModel":
@@ -212,6 +198,7 @@ class DeepLinearParamComponentsFullRank(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
         Float[Tensor, "batch n_instances k n_features"],
@@ -221,30 +208,14 @@ class DeepLinearParamComponentsFullRank(nn.Module):
             self.subnetwork_params,
             "batch n_instances dim1, n_instances k dim1 dim2 -> batch n_instances k dim2",
         )
+        if topk_mask is not None:
+            inner_acts = einops.einsum(
+                inner_acts,
+                topk_mask,
+                "batch n_instances k dim2, batch n_instances k -> batch n_instances k dim2",
+            )
         out = einops.einsum(inner_acts, "batch n_instances k dim2 -> batch n_instances dim2")
         return out, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"],
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"],
-        Float[Tensor, "batch n_instances k n_features"],
-    ]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-        inner_acts = einops.einsum(
-            x,
-            self.subnetwork_params,
-            "batch n_instances dim1, n_instances k dim1 dim2 -> batch n_instances k dim2",
-        )
-        inner_acts_topk = einops.einsum(
-            inner_acts,
-            topk_mask,
-            "batch n_instances k dim2, batch n_instances k -> batch n_instances k dim2",
-        )
-        out = einops.einsum(inner_acts_topk, "batch n_instances k dim2 -> batch n_instances dim2")
-        return out, inner_acts_topk
 
 
 class DeepLinearComponentFullRankModel(SPDFullRankModel):
@@ -288,6 +259,7 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"],
         dict[str, Float[Tensor, "batch n_instances n_features"]],
@@ -296,29 +268,10 @@ class DeepLinearComponentFullRankModel(SPDFullRankModel):
         layer_acts = {}
         inner_acts = {}
         for i, layer in enumerate(self.layers):
-            x, inner_act = layer(x)
+            x, inner_act = layer(x, topk_mask)
             layer_acts[f"layer_{i}"] = x
             inner_acts[f"layer_{i}"] = inner_act
         return x, layer_acts, inner_acts
-
-    def forward_topk(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"],
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"],
-        dict[str, Float[Tensor, "batch n_instances n_features"]],
-        dict[str, Float[Tensor, "batch n_instances k n_features"]],
-    ]:
-        """Performs a forward pass using only the top-k subnetwork activations."""
-        layer_acts = {}
-        inner_acts_topk = {}
-        for i, layer in enumerate(self.layers):
-            assert isinstance(layer, DeepLinearParamComponentsFullRank)
-            x, inner_act_topk = layer.forward_topk(x, topk_mask)
-            layer_acts[f"layer_{i}"] = x
-            inner_acts_topk[f"layer_{i}"] = inner_act_topk
-        return x, layer_acts, inner_acts_topk
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentFullRankModel":
