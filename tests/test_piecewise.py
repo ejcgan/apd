@@ -245,6 +245,7 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
     # Initial param match loss
     pretrained_weights = piecewise_model.all_decomposable_params()
 
+    n_params = sum(p.numel() for p in pretrained_weights.values())
     param_map = {}
     for i in range(piecewise_model_spd.n_layers):
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
@@ -257,6 +258,7 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
         subnetwork_params_summed=piecewise_model_spd.all_subnetwork_params_summed(),
         param_map=param_map,
         has_instance_dim=False,
+        n_params=n_params,
     )
 
     # Rank 1 so layer_acts is None
@@ -289,6 +291,7 @@ def test_piecewise_batch_topk_rank_one_simple_bias_false_loss_stable() -> None:
         subnetwork_params_summed=piecewise_model_spd.all_subnetwork_params_summed(),
         param_map=param_map,
         has_instance_dim=False,
+        n_params=n_params,
     )
 
     out, _, inner_acts = piecewise_model_spd(batch)

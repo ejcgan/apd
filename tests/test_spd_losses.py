@@ -18,24 +18,32 @@ class TestCalcTopkL2:
         topk_mask: Float[Tensor, "batch=1 k=2"] = torch.tensor(
             [[True, False, False]], dtype=torch.bool
         )
-        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
+        n_params = 2 * 3 * 2
+        result = calc_topk_l2_rank_one(
+            As_and_Bs_vals=[(A, B)], topk_mask=topk_mask, n_params=n_params
+        )
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 0, 0], [1, 0, 0]]])
         # AB_topk = torch.tensor([[[1, 1], [1, 1]]])
-        expected = torch.tensor(1.0)
+        # Sum and then divide by n_params: 4 / 12 = 1/3
+        expected = torch.tensor(1.0 / 3.0)
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
     def test_calc_topk_l2_rank_one_single_instance_single_param_true_and_true(self):
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
         topk_mask = torch.tensor([[True, True, True]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
+        n_params = 2 * 3 * 2
+        result = calc_topk_l2_rank_one(
+            As_and_Bs_vals=[(A, B)], topk_mask=topk_mask, n_params=n_params
+        )
 
         # Below we write what the intermediate values are
         # A_topk = torch.tensor([[[1, 1, 1], [1, 1, 1]]])
         # AB_topk = torch.tensor([[[3, 3], [3, 3]]])
-        expected = torch.tensor(9.0)
+        # Square it, sum it and divide by n_params: 9*4 / 12 = 3
+        expected = torch.tensor(3.0)
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
     def test_calc_topk_l2_rank_one_multiple_instances(self):
@@ -43,7 +51,10 @@ class TestCalcTopkL2:
         B = torch.ones(2, 2, 1)
         # topk_mask: [batch=2, n_instances=2, k=2]
         topk_mask = torch.tensor([[[1, 0], [0, 1]], [[0, 1], [1, 1]]], dtype=torch.bool)
-        result = calc_topk_l2_rank_one(As_and_Bs_vals=[(A, B)], topk_mask=topk_mask)
+        n_params = 1 * 2 * 1
+        result = calc_topk_l2_rank_one(
+            As_and_Bs_vals=[(A, B)], topk_mask=topk_mask, n_params=n_params
+        )
 
         # Below we write what the intermediate values are
         # A: [n_instances=2, d_in=1, k=2] = torch.tensor(
@@ -86,8 +97,8 @@ class TestCalcTopkL2:
         #     [1, 1],
         #     [1, 4]
         # ])
-        # topk_l2_penalty (post-reduction): [n_instances=2] = torch.tensor([1, 2.5])
-        expected = torch.tensor([1.0, 2.5])
+        # topk_l2_penalty (post-reduction): [n_instances=2] = torch.tensor([0.5, 1.25])
+        expected = torch.tensor([0.5, 1.25])
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
 
@@ -95,6 +106,7 @@ class TestCalcParamMatchLoss:
     def test_calc_param_match_loss_single_instance_single_param(self):
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
+        n_params = 2 * 3 * 2
         pretrained_weights = {"layer1": torch.tensor([[1.0, 1.0], [1.0, 1.0]])}
         subnetwork_params = {"layer1": A @ B}
         param_map = {"layer1": "layer1"}
@@ -103,18 +115,20 @@ class TestCalcParamMatchLoss:
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
             has_instance_dim=False,
+            n_params=n_params,
         )
 
         # A: [2, 3], B: [3, 2], both filled with ones
         # AB: [[3, 3], [3, 3]]
         # (AB - pretrained_weights)^2: [[4, 4], [4, 4]]
-        # Mean: 4
-        expected = torch.tensor(4.0)
+        # Sum and divide by n_params: 16 / 12 = 4/3
+        expected = torch.tensor(4.0 / 3.0)
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
     def test_calc_param_match_loss_single_instance_multiple_params(self):
         As = [torch.ones(2, 3), torch.ones(3, 3)]
         Bs = [torch.ones(3, 3), torch.ones(3, 2)]
+        n_params = 2 * 3 * 3 + 3 * 3 * 2
         pretrained_weights = {
             "layer1": torch.tensor([[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]]),
             "layer2": torch.tensor([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]),
@@ -129,17 +143,20 @@ class TestCalcParamMatchLoss:
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
             has_instance_dim=False,
+            n_params=n_params,
         )
 
         # First layer: AB1: [[3, 3, 3], [3, 3, 3]], diff^2: [[1, 1, 1], [1, 1, 1]]
         # Second layer: AB2: [[3, 3], [3, 3], [3, 3]], diff^2: [[4, 4], [4, 4], [4, 4]]
-        # Average of both layers: (1 + 4) / 2 = 2.5
-        expected = torch.tensor(2.5)
+        # Add together 24 + 6 = 30
+        # Divide by n_params: 30 / (18+18) = 5/6
+        expected = torch.tensor(5.0 / 6.0)
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
     def test_calc_param_match_loss_multiple_instances(self):
         As = [torch.ones(2, 2, 3)]
         Bs = [torch.ones(2, 3, 2)]
+        n_params = 2 * 3 * 2
         pretrained_weights = {
             "layer1": torch.tensor([[[2.0, 2.0], [2.0, 2.0]], [[1.0, 1.0], [1.0, 1.0]]])
         }
@@ -150,12 +167,13 @@ class TestCalcParamMatchLoss:
             subnetwork_params_summed=subnetwork_params,
             param_map=param_map,
             has_instance_dim=True,
+            n_params=n_params,
         )
 
         # AB [n_instances=2, d_in=2, d_out=2]: [[[3, 3], [3, 3]], [[3, 3], [3, 3]]]
         # diff^2: [[[1, 1], [1, 1]], [[4, 4], [4, 4]]]
-        # mean: [1, 4]
-        expected = torch.tensor([1.0, 4.0])
+        # Sum together and divide by n_params: [4, 16] / 12 = [1/3, 4/3]
+        expected = torch.tensor([1.0 / 3.0, 4.0 / 3.0])
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
 
