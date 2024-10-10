@@ -286,9 +286,8 @@ def calc_topk_l2_rank_one(
         The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
             deep linear toy models).
     """
-    batch_size = topk_mask.shape[0]
     n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
-    accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
+    accumulate_shape = (n_instances,) if n_instances is not None else ()
 
     topk_l2_penalty = torch.zeros(accumulate_shape, device=As_and_Bs_vals[0][0].device)
     for A, B in As_and_Bs_vals:
@@ -328,8 +327,7 @@ def calc_topk_l2_full_rank(
     """
     assert len(subnet_param_vals) > 0, "No subnetwork parameters provided"
 
-    batch_size = topk_mask.shape[0]
-    accumulate_shape = (batch_size,) if n_instances is None else (batch_size, n_instances)
+    accumulate_shape = (n_instances,) if n_instances is not None else ()
 
     topk_mask = topk_mask.to(subnet_param_vals[0].dtype)
     topk_l2_penalty = torch.zeros(accumulate_shape, device=subnet_param_vals[0].device)
