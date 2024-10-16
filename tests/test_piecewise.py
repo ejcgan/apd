@@ -2,7 +2,9 @@ import torch
 from jaxtyping import Float
 
 from spd.experiments.piecewise.models import (
+    PiecewiseFunctionSPDFullRankTransformer,
     PiecewiseFunctionSPDTransformer,
+    PiecewiseFunctionTransformer,
 )
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
@@ -378,3 +380,58 @@ def test_calc_neuron_indices():
     for i in range(2):
         for j in range(4):
             torch.testing.assert_close(indices[i][j], expected_indices[i][j])
+
+
+def test_piecewise_spd_full_rank_equivalence() -> None:
+    device = "cpu"
+    set_seed(0)
+
+    batch_size = 4
+    n_inputs = 4  # 3 functions + 1 input
+    d_mlp = 6
+    n_layers = 2
+    k = 1  # Single subnetwork
+
+    # Create a target PiecewiseFunctionTransformer
+    target_model = PiecewiseFunctionTransformer(
+        n_inputs=n_inputs,
+        d_mlp=d_mlp,
+        n_layers=n_layers,
+        decompose_bias=True,
+    ).to(device)
+
+    # Create the SPD model with k=1
+    spd_model = PiecewiseFunctionSPDFullRankTransformer(
+        n_inputs=n_inputs,
+        d_mlp=d_mlp,
+        n_layers=n_layers,
+        k=k,
+        init_scale=1.0,
+        decompose_bias=True,
+    ).to(device)
+
+    # Copy parameters from target model to SPD model
+    spd_model.set_subnet_to_target(target_model, dim=0)
+
+    # Create a random input
+    input_data: Float[torch.Tensor, "batch n_inputs"] = torch.rand(
+        batch_size, n_inputs, device=device
+    )
+
+    # Forward pass through both models
+    target_output, _, target_post_acts = target_model(input_data)
+    # Note that the target_post_acts should be the same as the "layer_acts" from the SPD model
+    spd_output, spd_layer_acts, _ = spd_model(input_data)
+
+    # Assert outputs are the same
+    assert torch.allclose(target_output, spd_output, atol=1e-6), "Outputs do not match"
+
+    # Assert activations are the same for all the matching activations that we have stored
+    # We haven't stored the post/layer-activations for the biases in the SPD model, so we only
+    # compare the activations for values that we have stored
+    for layer_name, target_act in target_post_acts.items():
+        if layer_name in spd_layer_acts:
+            spd_act = spd_layer_acts[layer_name]
+            assert torch.allclose(
+                target_act, spd_act, atol=1e-6
+            ), f"Activations do not match for layer {layer_name}"

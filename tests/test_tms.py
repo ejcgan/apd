@@ -1,6 +1,7 @@
 import torch
+from jaxtyping import Float
 
-from spd.experiments.tms.models import TMSModel, TMSSPDModel
+from spd.experiments.tms.models import TMSModel, TMSSPDFullRankModel, TMSSPDModel
 from spd.experiments.tms.train_tms import TMSTrainConfig, train
 from spd.experiments.tms.utils import TMSDataset
 from spd.run_spd import Config, TMSConfig, optimize
@@ -190,3 +191,57 @@ def test_train_tms_happy_path():
     assert (
         final_loss < initial_loss
     ), f"Final loss ({final_loss:.2e}) is not lower than initial loss ({initial_loss:.2e})"
+
+
+def test_tms_spd_full_rank_equivalence() -> None:
+    set_seed(0)
+
+    batch_size = 4
+    n_features = 3
+    n_hidden = 2
+    n_instances = 1
+    k = 1  # Single subnetwork
+
+    device = "cpu"
+
+    # Create a target TMSModel
+    target_model = TMSModel(
+        n_instances=n_instances,
+        n_features=n_features,
+        n_hidden=n_hidden,
+        device=device,
+    )
+
+    # Create the SPD model with k=1
+    spd_model = TMSSPDFullRankModel(
+        n_instances=n_instances,
+        n_features=n_features,
+        n_hidden=n_hidden,
+        k=k,
+        train_bias=True,
+        bias_val=0.0,
+        device=device,
+    )
+
+    # Copy parameters from target model to SPD model
+    spd_model.subnetwork_params.data[:, 0, :, :] = target_model.W.data
+    spd_model.b_final.data[:, :] = target_model.b_final.data
+
+    # Create a random input
+    input_data: Float[torch.Tensor, "batch n_instances n_features"] = torch.rand(
+        batch_size, n_instances, n_features, device=device
+    )
+
+    # Forward pass through both models
+    target_output, _, target_post_acts = target_model(input_data)
+    spd_output, spd_layer_acts, _ = spd_model(input_data)
+
+    # Assert outputs are the same
+    assert torch.allclose(target_output, spd_output, atol=1e-6), "Outputs do not match"
+
+    # Assert activations are the same for all layers
+    for layer_name, target_act in target_post_acts.items():
+        spd_act = spd_layer_acts[layer_name]
+        assert torch.allclose(
+            target_act, spd_act, atol=1e-6
+        ), f"Activations do not match for layer {layer_name}"
