@@ -134,6 +134,8 @@ def get_run_name(config: Config) -> str:
             run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
         if config.topk_param_attrib_coeff is not None:
             run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
+        if config.topk_act_recon_coeff is not None:
+            run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
         if config.task_config.handcoded_AB:
             run_suffix += "hAB_"
         run_suffix += f"lr{config.lr:.2e}_"

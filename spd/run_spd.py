@@ -104,6 +104,7 @@ class Config(BaseModel):
     lr: PositiveFloat
     orthog_coeff: NonNegativeFloat | None = None
     out_recon_coeff: NonNegativeFloat | None = None
+    topk_act_recon_coeff: NonNegativeFloat | None = None
     param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
     topk_l2_coeff: NonNegativeFloat | None = None
@@ -552,8 +553,8 @@ def calc_topk_param_attrib_loss(
     target_params: dict[str, Tensor],
     subnetwork_params: dict[str, Tensor],
     topk_mask: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
-    target_layer_pre_acts: dict[str, Tensor],
-    target_layer_post_acts: dict[str, Tensor],
+    target_pre_acts: dict[str, Tensor],
+    target_post_acts: dict[str, Tensor],
     has_instance_dim: bool,
     n_params: int,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
@@ -578,9 +579,9 @@ def calc_topk_param_attrib_loss(
         target_params: The parameters of the target model which are decomposable.
         subnetwork_params: The parameters of the SPD model.
         topk_mask: The topk mask for the SPD model on the batch.
-        target_layer_pre_acts: The activations before the parameter matrix is applied in the target
+        target_pre_acts: The activations before the parameter matrix is applied in the target
             model.
-        target_layer_post_acts: The activations after the parameter matrix is applied in the target
+        target_post_acts: The activations after the parameter matrix is applied in the target
             model.
         has_instance_dim: Whether the model has an n_instances dimension.
         n_params: The number of decomposable parameters in the model.
@@ -589,16 +590,16 @@ def calc_topk_param_attrib_loss(
         The topk parameter attribution loss. Will have an n_instances dimension if the model has an
             n_instances dimension.
     """
-    assert target_params.keys() == target_layer_pre_acts.keys() == target_layer_post_acts.keys()
+    assert target_params.keys() == target_pre_acts.keys() == target_post_acts.keys()
     # Every parameter that we are decomposing must have an entry in target_params
     assert set(target_params.keys()) <= set(subnetwork_params.keys())
 
     device = next(iter(subnetwork_params.values())).device
     loss = torch.tensor(0.0, device=device)
     for out_idx in range(target_out.shape[-1]):
-        # Get the derivative of the output w.r.t. the target_layer_post_acts
+        # Get the derivative of the output w.r.t. the target_post_acts
         dout_d_post_acts = torch.autograd.grad(
-            target_out[..., out_idx].sum(), list(target_layer_post_acts.values()), retain_graph=True
+            target_out[..., out_idx].sum(), list(target_post_acts.values()), retain_graph=True
         )
         loss_out_idx = torch.tensor(0.0, device=device)
         for i, param_name in enumerate(subnetwork_params):
@@ -627,7 +628,7 @@ def calc_topk_param_attrib_loss(
                 param_loss = einops.einsum(
                     dout_d_post_acts[i].detach(),
                     param_diff,
-                    target_layer_pre_acts[param_name],
+                    target_pre_acts[param_name],
                     ein_str,
                 )
 
@@ -636,6 +637,41 @@ def calc_topk_param_attrib_loss(
         loss = loss + loss_out_idx**2
     loss = (loss / target_out.shape[-1] + 1e-16).mean(dim=0)  # Mean over the batch dim
     return loss / n_params
+
+
+def calc_topk_act_recon(
+    target_post_acts: dict[
+        str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]
+    ],
+    layer_acts_topk: dict[
+        str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]
+    ],
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    """MSE between all target model activations and the sum of the topk subnetwork activations.
+
+    Args:
+        target_post_acts: The activations after each layer in the target model.
+        layer_acts_topk: The activations after each subnetwork in the SPD model summed over the topk
+            subnetworks.
+
+    Returns:
+        The activation reconstruction loss. Will have an n_instances dimension if the model has an
+            n_instances dimension, otherwise a scalar.
+    """
+    assert target_post_acts.keys() == layer_acts_topk.keys(), "Layer keys must match"
+
+    device = next(iter(layer_acts_topk.values())).device
+
+    total_act_dim = 0  # Accumulate the d_out over all layers for normalization
+    loss = torch.zeros(1, device=device)
+    for layer_name in target_post_acts:
+        total_act_dim += target_post_acts[layer_name].shape[-1]
+
+        error = ((target_post_acts[layer_name] - layer_acts_topk[layer_name]) ** 2).sum(dim=-1)
+        loss = loss + error
+
+    # Normalize by the total number of output dimensions and mean over the batch dim
+    return (loss / total_act_dim).mean(dim=0)
 
 
 def optimize(
@@ -704,10 +740,10 @@ def optimize(
         batch = batch.to(device=device)
         labels = labels.to(device=device)
 
-        layer_pre_acts = None
-        layer_post_acts = None
+        pre_acts = None
+        post_acts = None
         if pretrained_model is not None:
-            labels, layer_pre_acts, layer_post_acts = pretrained_model(batch)
+            labels, pre_acts, post_acts = pretrained_model(batch)
 
         total_samples += batch.shape[0]
 
@@ -778,7 +814,8 @@ def optimize(
             topk_recon_loss,
             topk_mask,
             topk_param_attrib_loss,
-        ) = None, None, None, None, None
+            topk_act_recon_loss,
+        ) = None, None, None, None, None, None
         if config.topk is not None:
             if config.attribution_type == "ablation":
                 attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
@@ -792,7 +829,7 @@ def optimize(
                         out=out, inner_acts_vals=list(inner_acts.values())
                     )
             elif config.attribution_type == "activation":
-                assert layer_post_acts is not None
+                assert post_acts is not None
                 assert config.full_rank, "Activation attributions only supported for full rank"
                 attribution_scores = calc_activation_attributions(inner_acts=inner_acts)
             else:
@@ -811,7 +848,7 @@ def optimize(
                 topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
 
             # Do a forward pass with only the topk subnetworks
-            out_topk, _, _ = model(batch, topk_mask=topk_mask)
+            out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
 
             if config.topk_l2_coeff is not None:
                 if config.full_rank:
@@ -835,16 +872,23 @@ def optimize(
 
             if config.topk_param_attrib_coeff is not None:
                 assert pretrained_model is not None, "Need target model for topk_param_attrib_loss"
-                assert layer_pre_acts is not None and layer_post_acts is not None
+                assert pre_acts is not None and post_acts is not None
                 topk_param_attrib_loss = calc_topk_param_attrib_loss(
                     target_out=labels,
                     target_params=pretrained_model.all_decomposable_params(),
                     subnetwork_params=model.all_subnetwork_params(),
                     topk_mask=topk_mask,
-                    target_layer_pre_acts=layer_pre_acts,
-                    target_layer_post_acts=layer_post_acts,
+                    target_pre_acts=pre_acts,
+                    target_post_acts=post_acts,
                     has_instance_dim=has_instance_dim,
                     n_params=n_params,
+                )
+
+            if config.topk_act_recon_coeff is not None:
+                assert layer_acts_topk is not None
+                assert post_acts is not None
+                topk_act_recon_loss = calc_topk_act_recon(
+                    target_post_acts=post_acts, layer_acts_topk=layer_acts_topk
                 )
 
         # Add up the loss terms
@@ -869,6 +913,9 @@ def optimize(
         if topk_param_attrib_loss is not None:
             assert config.topk_param_attrib_coeff is not None
             loss = loss + config.topk_param_attrib_coeff * topk_param_attrib_loss.mean()
+        if topk_act_recon_loss is not None:
+            assert config.topk_act_recon_coeff is not None
+            loss = loss + config.topk_act_recon_coeff * topk_act_recon_loss.mean()
 
         # Logging
         if step % config.print_freq == 0:
@@ -891,6 +938,8 @@ def optimize(
                 tqdm.write(f"Orthog loss:{nl}{orthog_loss}")
             if topk_param_attrib_loss is not None:
                 tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
+            if topk_act_recon_loss is not None:
+                tqdm.write(f"Topk act recon loss:{nl}{topk_act_recon_loss}")
             if config.wandb_project:
                 wandb.log(
                     {

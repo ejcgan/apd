@@ -32,13 +32,13 @@ class DeepLinearModel(Model):
         dict[str, Float[Tensor, "... n_instances n_features"]],
         dict[str, Float[Tensor, "... n_instances n_features"]],
     ]:
-        layer_pre_acts = {}
-        layer_post_acts = {}
+        pre_acts = {}
+        post_acts = {}
         for i, layer in enumerate(self.layers):
-            layer_pre_acts[f"layer_{i}"] = x
+            pre_acts[f"layer_{i}"] = x
             x = torch.einsum("...if,ifj->...ij", x, layer)
-            layer_post_acts[f"layer_{i}"] = x
-        return x, layer_pre_acts, layer_post_acts
+            post_acts[f"layer_{i}"] = x
+        return x, pre_acts, post_acts
 
     @classmethod
     def from_pretrained(cls, path: str | Path) -> "DeepLinearModel":

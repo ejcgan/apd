@@ -7,6 +7,7 @@ from spd.run_spd import (
     calc_lp_sparsity_loss_rank_one,
     calc_orthog_loss_full_rank,
     calc_param_match_loss,
+    calc_topk_act_recon,
     calc_topk_l2_rank_one,
 )
 
@@ -239,3 +240,43 @@ class TestCalcOrthogLoss:
         result = calc_orthog_loss_full_rank(subnet_param_vals=[subnet])
         # Note that we take the dot product, then abs, then mean over the subnetwork indices
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
+
+
+class TestCalcActReconLoss:
+    def test_calc_topk_act_recon_simple(self):
+        # Batch size 2, d_out 2
+        target_post_acts = {"layer1": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
+        layer_acts_topk = {"layer1": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
+        expected = torch.tensor(0.0)
+
+        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        torch.testing.assert_close(result, expected)
+
+    def test_calc_topk_act_recon_different_d_out(self):
+        # Batch size 2, d_out 2/3
+        target_post_acts = {
+            "layer1": torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            "layer2": torch.tensor([[5.0, 6.0, 7.0], [8.0, 9.0, 10.0]]),
+        }
+        layer_acts_topk = {
+            "layer1": torch.tensor([[1.5, 2.5], [4.0, 5.0]]),
+            "layer2": torch.tensor([[5.5, 6.5, 7.5], [9.0, 10.0, 11.0]]),
+        }
+        expected = torch.tensor((0.25 + 1) / 2)  # ((0.5^2 * 5) / 5 + (1^2 * 5) / 5) / 2
+
+        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        torch.testing.assert_close(result, expected)
+
+    def test_calc_topk_act_recon_with_n_instances(self):
+        target_post_acts = {
+            "layer1": torch.tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]),
+            "layer2": torch.tensor([[[9.0, 10.0], [11.0, 12.0]], [[13.0, 14.0], [15.0, 16.0]]]),
+        }
+        layer_acts_topk = {
+            "layer1": torch.tensor([[[1.5, 2.5], [3.5, 4.5]], [[5.5, 6.5], [7.5, 8.5]]]),
+            "layer2": torch.tensor([[[9.5, 10.5], [11.5, 12.5]], [[13.5, 14.5], [15.5, 16.5]]]),
+        }
+        expected = torch.tensor([0.25, 0.25])  # (0.5^2 * 8) / 8 for each instance
+
+        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        torch.testing.assert_close(result, expected)

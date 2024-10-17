@@ -45,6 +45,8 @@ def get_run_name(config: Config, n_features: int) -> str:
             run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
         if config.topk_l2_coeff is not None:
             run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
+        if config.topk_act_recon_coeff is not None:
+            run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
         run_suffix += f"lr{config.lr:.2e}_"
         run_suffix += f"bs{config.batch_size}_"
         run_suffix += f"ft{n_features}"

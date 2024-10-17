@@ -450,17 +450,17 @@ class PiecewiseFunctionTransformer(Model):
         dict[str, Float[Tensor, " d_model"] | Float[Tensor, " d_mlp"]],
         dict[str, Float[Tensor, " d_model"] | Float[Tensor, " d_mlp"]],
     ]:
-        layer_pre_acts = {}
-        layer_post_acts = {}
+        pre_acts = {}
+        post_acts = {}
         residual = self.W_E(x)
         for i, layer in enumerate(self.mlps):
             out, pre_acts_i, post_acts_i = layer(residual)
             for k, v in pre_acts_i.items():
-                layer_pre_acts[f"mlp_{i}.{k}"] = v
+                pre_acts[f"mlp_{i}.{k}"] = v
             for k, v in post_acts_i.items():
-                layer_post_acts[f"mlp_{i}.{k}"] = v
+                post_acts[f"mlp_{i}.{k}"] = v
             residual = residual + out
-        return self.W_U(residual), layer_pre_acts, layer_post_acts
+        return self.W_U(residual), pre_acts, post_acts
 
     def all_decomposable_params(
         self,
