@@ -1,5 +1,8 @@
+from collections.abc import Callable
+
 import einops
 import torch
+import torch.nn.functional as F
 from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
@@ -21,7 +24,7 @@ class ParamComponents(nn.Module):
             in_dim: Input dimension of the parameter to be replaced with AB.
             out_dim: Output dimension of the parameter to be replaced with AB.
             k: Number of subnetworks.
-            resid_component: Predefined component matrix of shape (d_resid, k) if A or (k, d_resid)
+            resid_component: Predefined component matrix of shape (d_embed, k) if A or (k, d_embed)
                 if B.
             resid_dim: Dimension in which to use the predefined component.
         """
@@ -88,6 +91,44 @@ class ParamComponentsFullRank(nn.Module):
             )
         out = einops.einsum(inner_acts, "batch k dim2 -> batch dim2")
         return out, inner_acts
+
+
+class MLP(nn.Module):
+    def __init__(self, d_model: int, d_mlp: int, act_fn: Callable[[Tensor], Tensor] = F.relu):
+        super().__init__()
+        self.d_model = d_model
+        self.d_mlp = d_mlp
+        self.input_layer = nn.Linear(d_model, d_mlp)
+        self.output_layer = nn.Linear(d_mlp, d_model)
+        self.act_fn = act_fn
+
+    def forward(
+        self, x: Float[Tensor, "... d_model"]
+    ) -> tuple[
+        Float[Tensor, "... d_model"],
+        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"] | None],
+        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"]],
+    ]:
+        """Run a forward pass and cache pre and post activations for each parameter.
+
+        Note that we don't need to cache pre activations for the biases. We also don't care about
+        the output bias which is always zero.
+        """
+        out1_pre_act_fn = self.input_layer(x)
+        out1 = self.act_fn(out1_pre_act_fn)
+        out2 = self.output_layer(out1)
+
+        pre_acts = {
+            "input_layer.weight": x,
+            "input_layer.bias": None,
+            "output_layer.weight": out1,
+        }
+        post_acts = {
+            "input_layer.weight": out1_pre_act_fn,
+            "input_layer.bias": out1_pre_act_fn,
+            "output_layer.weight": out2,
+        }
+        return out2, pre_acts, post_acts
 
 
 class MLPComponents(nn.Module):
@@ -174,13 +215,17 @@ class MLPComponentsFullRank(nn.Module):
         d_mlp: int,
         k: int,
         init_scale: float,
+        in_bias: bool = True,
+        out_bias: bool = False,
+        act_fn: Callable[[Tensor], Tensor] = F.relu,
     ):
         super().__init__()
+        self.act_fn = act_fn
         self.linear1 = ParamComponentsFullRank(
-            in_dim=d_embed, out_dim=d_mlp, k=k, bias=True, init_scale=init_scale
+            in_dim=d_embed, out_dim=d_mlp, k=k, bias=in_bias, init_scale=init_scale
         )
         self.linear2 = ParamComponentsFullRank(
-            in_dim=d_mlp, out_dim=d_embed, k=k, bias=False, init_scale=init_scale
+            in_dim=d_mlp, out_dim=d_embed, k=k, bias=out_bias, init_scale=init_scale
         )
 
     def forward(
@@ -206,7 +251,8 @@ class MLPComponentsFullRank(nn.Module):
         inner_acts.append(inner_acts_linear1)
         layer_acts.append(x)
 
-        x = torch.nn.functional.relu(x)
+        x = self.act_fn(x)
+
         x, inner_acts_linear2 = self.linear2(x, topk_mask)
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)

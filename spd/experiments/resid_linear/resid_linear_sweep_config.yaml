@@ -1,0 +1,20 @@
+program: spd/experiments/resid_linear/resid_linear_decomposition.py
+method: grid
+metric:
+  name: total_loss
+  goal: minimize
+parameters:
+  seed:
+    values: [0]
+  lr:
+    values: [1e-2]
+  topk_recon_coeff:
+    values: [1e-1, 1e-2]
+  topk_l2_coeff:
+    values: [1e-2, 1e-3]
+
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/experiments/resid_linear/resid_linear_topk_full_rank_config.yaml

@@ -12,7 +12,7 @@ from torch import Tensor
 
 from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDModel
-from spd.models.components import MLPComponents, MLPComponentsFullRank
+from spd.models.components import MLP, MLPComponents, MLPComponentsFullRank
 from spd.utils import calc_neuron_indices, remove_grad_parallel_to_subnetwork_vecs
 
 
@@ -214,52 +214,6 @@ class ControlledPiecewiseLinear(nn.Module):
         return x
 
 
-class MLP(nn.Module):
-    def __init__(self, d_model: int, d_mlp: int, initialise_zero=True):
-        super().__init__()
-        self.d_model = d_model
-        self.d_mlp = d_mlp
-        self.input_layer = nn.Linear(d_model, d_mlp)
-        self.relu = nn.ReLU()
-        self.output_layer = nn.Linear(d_mlp, d_model)
-        if initialise_zero:
-            self.initialise_zero()
-
-    def initialise_zero(self):
-        self.input_layer.weight.data = torch.zeros(self.d_mlp, self.d_model)
-        self.input_layer.bias.data = torch.zeros(self.d_mlp)
-        self.output_layer.weight.data = torch.zeros(self.d_model, self.d_mlp)
-        self.output_layer.bias.data = torch.zeros(self.d_model)
-
-    def forward(
-        self, x: Float[Tensor, "... d_model"]
-    ) -> tuple[
-        Float[Tensor, "... d_model"],
-        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"] | None],
-        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"]],
-    ]:
-        """Run a forward pass and cache pre and post activations for each parameter.
-
-        Note that we don't need to cache pre activations for the biases. We also don't care about
-        the output bias which is always zero.
-        """
-        out1_pre_relu = self.input_layer(x)
-        out1 = self.relu(out1_pre_relu)
-        out2 = self.output_layer(out1)
-
-        pre_acts = {
-            "input_layer.weight": x,
-            "input_layer.bias": None,
-            "output_layer.weight": out1,
-        }
-        post_acts = {
-            "input_layer.weight": out1_pre_relu,
-            "input_layer.bias": out1_pre_relu,
-            "output_layer.weight": out2,
-        }
-        return out2, pre_acts, post_acts
-
-
 class ControlledResNet(nn.Module):
     """
     Same inputs as ControlledPiecewiseLinear, but also takes in an input n_layers. Now it creates
@@ -308,6 +262,10 @@ class ControlledResNet(nn.Module):
             rng = np.random.default_rng()
         if torch_gen is None:
             torch_gen = torch.Generator()
+
+        # First, initialise all params to 0
+        for param in self.mlps.parameters():
+            param.data = torch.zeros_like(param.data)
 
         if self.d_control == self.num_functions:
             self.control_W_E = torch.eye(self.d_control)
@@ -481,6 +439,9 @@ class PiecewiseFunctionTransformer(Model):
         initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
         self.mlps = nn.ModuleList([MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(n_layers)])
+        # Initialize MLP params to zero
+        for param in self.mlps.parameters():
+            param.data = torch.zeros_like(param.data)
 
     def forward(
         self, x: Float[Tensor, "batch d_model_in"]

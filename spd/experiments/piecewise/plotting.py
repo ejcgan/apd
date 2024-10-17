@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal
 
 import einops
 import matplotlib.pyplot as plt
@@ -19,15 +19,11 @@ from spd.experiments.piecewise.models import (
 )
 from spd.models.components import ParamComponents, ParamComponentsFullRank
 from spd.run_spd import (
-    Config,
     calc_recon_mse,
 )
 from spd.utils import (
-    BatchedDataLoader,
-    calc_ablation_attributions,
-    calc_attributions_full_rank,
     calc_attributions_rank_one,
-    calc_topk_mask,
+    run_spd_forward_pass,
 )
 
 
@@ -255,82 +251,6 @@ def plot_components(
     return {"attrib_scores": fig_a, **{f"matrices_layer{n}": fig for n, fig in enumerate(figs)}}
 
 
-class SPDoutputs(NamedTuple):
-    target_model_output: torch.Tensor | None
-    spd_model_output: torch.Tensor
-    spd_topk_model_output: torch.Tensor
-    layer_acts: dict[str, torch.Tensor]
-    topk_layer_acts: dict[str, torch.Tensor]
-    inner_acts: dict[str, torch.Tensor]
-    topk_inner_acts: dict[str, torch.Tensor]
-    attribution_scores: torch.Tensor
-    topk_mask: torch.Tensor
-
-
-def run_spd_forward_pass(
-    spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
-    target_model: PiecewiseFunctionTransformer | None,
-    input_array: torch.Tensor,
-    full_rank: bool,
-    attribution_type: Literal["gradient", "ablation"],
-    batch_topk: bool,
-    topk: float,
-    distil_from_target: bool,
-) -> SPDoutputs:
-    # non-SPD model, and SPD-model non-topk forward pass
-    if target_model is not None:
-        model_output_hardcoded, _, _ = target_model(input_array)
-    else:
-        model_output_hardcoded = None
-
-    model_output_spd, layer_acts, inner_acts = spd_model(input_array)
-
-    if attribution_type == "ablation":
-        attribution_scores = calc_ablation_attributions(
-            model=spd_model, batch=input_array, out=model_output_spd
-        )
-    elif attribution_type == "gradient":
-        if full_rank:
-            attribution_scores = calc_attributions_full_rank(
-                out=model_output_spd,
-                inner_acts=inner_acts,
-                layer_acts=layer_acts,
-            )
-        else:
-            attribution_scores = calc_attributions_rank_one(
-                out=model_output_spd, inner_acts_vals=list(inner_acts.values())
-            )
-    else:
-        raise ValueError(f"Invalid attribution type for run_spd_forward_pass: {attribution_type}")
-
-    # We always assume the final subnetwork is the one we want to distil
-    topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores
-    topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=batch_topk)
-    if distil_from_target:
-        # Add back the final subnetwork index to the topk mask and set it to True
-        last_subnet_mask = torch.ones(
-            (*topk_mask.shape[:-1], 1), dtype=torch.bool, device=attribution_scores.device
-        )
-        topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
-
-    model_output_spd_topk, layer_acts_topk, inner_acts_topk = spd_model(
-        input_array, topk_mask=topk_mask
-    )
-    assert len(inner_acts_topk) == spd_model.n_param_matrices
-    attribution_scores = attribution_scores.cpu().detach()
-    return SPDoutputs(
-        target_model_output=model_output_hardcoded,
-        spd_model_output=model_output_spd,
-        spd_topk_model_output=model_output_spd_topk,
-        layer_acts=layer_acts,
-        topk_layer_acts=layer_acts_topk,
-        inner_acts=inner_acts,
-        topk_inner_acts=inner_acts_topk,
-        attribution_scores=attribution_scores,
-        topk_mask=topk_mask,
-    )
-
-
 def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
@@ -375,7 +295,7 @@ def plot_model_functions(
         target_model=target_model,
         input_array=input_array,
         full_rank=full_rank,
-        attribution_type=attribution_type,
+        ablation_attributions=attribution_type == "ablation",
         batch_topk=batch_topk,
         topk=topk,
         distil_from_target=distil_from_target,
@@ -493,56 +413,6 @@ def plot_model_functions(
     return {"model_functions": fig}
 
 
-def plot_subnetwork_correlations(
-    dataloader: BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
-    spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
-    config: Config,
-    device: str,
-    n_forward_passes: int = 100,
-) -> dict[str, plt.Figure]:
-    topk_masks = []
-    for batch, _ in dataloader:
-        batch = batch.to(device=device)
-        assert config.topk is not None
-        spd_outputs = run_spd_forward_pass(
-            spd_model=spd_model,
-            target_model=None,
-            input_array=batch,
-            full_rank=config.full_rank,
-            attribution_type=config.attribution_type,
-            batch_topk=config.batch_topk,
-            topk=config.topk,
-            distil_from_target=config.distil_from_target,
-        )
-        topk_masks.append(spd_outputs.topk_mask)
-        if len(topk_masks) > n_forward_passes:
-            break
-    topk_masks = torch.cat(topk_masks).float()
-    # Calculate correlation matrix
-    corr_matrix = torch.corrcoef(topk_masks.T).cpu()
-    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
-    im = ax.matshow(corr_matrix)
-    ax.xaxis.set_ticks_position("bottom")
-    for i in range(corr_matrix.shape[0]):
-        for j in range(corr_matrix.shape[1]):
-            ax.text(
-                j,
-                i,
-                f"{corr_matrix[i, j]:.2f}",
-                ha="center",
-                va="center",
-                color="#EE7777",
-                fontsize=8,
-            )
-    divider = make_axes_locatable(plt.gca())
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(im, cax=cax)
-    ax.set_title("Subnetwork Correlation Matrix")
-    ax.set_xlabel("Subnetwork")
-    ax.set_ylabel("Subnetwork")
-    return {"subnetwork_correlation_matrix": fig}
-
-
 def plot_single_network(ax: plt.Axes, weights: list[dict[str, Float[Tensor, "i j"]]]) -> None:
     n_layers = len(weights)
     d_embed = weights[0]["W_in"].shape[0]
@@ -643,32 +513,3 @@ def plot_piecewise_network(
     for lay in range(n_layers):
         axs[0].text(1, 2 * lay + 1, "MLP", ha="left", va="center")
     return {"subnetworks_graph_plots": fig}
-
-
-def plot_subnetwork_attributions_statistics(
-    topk_mask: Float[Tensor, "batch_size k"],
-) -> dict[str, plt.Figure]:
-    """Plot a vertical bar chart of the number of active subnetworks over the batch."""
-    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
-    assert topk_mask.ndim == 2
-    values = topk_mask.sum(dim=1).cpu().detach().numpy()
-    bins = list(range(int(values.min().item()), int(values.max().item()) + 2))
-    counts, _ = np.histogram(values, bins=bins)
-    bars = ax.bar(bins[:-1], counts, align="center", width=0.8)
-    ax.set_xticks(bins[:-1])
-    ax.set_xticklabels([str(b) for b in bins[:-1]])
-    ax.set_title(f"Active subnetworks on current batch (batch_size={topk_mask.shape[0]})")
-    ax.set_xlabel("Number of active subnetworks")
-    ax.set_ylabel("Count")
-
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(
-            f"{height}",
-            xy=(bar.get_x() + bar.get_width() / 2, height),
-            xytext=(0, 3),  # 3 points vertical offset
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-        )
-    return {"subnetwork_attributions_statistics": fig}

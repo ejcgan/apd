@@ -1,0 +1,28 @@
+wandb_project: spd-resid-linear
+wandb_run_name: null
+wandb_run_name_prefix: "fr_"
+full_rank: true
+unit_norm_matrices: false
+seed: 0
+topk: 1
+batch_topk: false
+param_match_coeff: 1.0
+topk_recon_coeff: 1
+topk_l2_coeff: 1e-3
+ablation_attributions: false
+lr: 1e-2
+batch_size: 1024
+steps: 30_000
+print_freq: 500
+image_freq: 10_000
+slow_images: true
+save_freq: 30_000
+lr_warmup_pct: 0.01
+lr_schedule: cosine
+task_config:
+  task_name: residual_linear
+  init_scale: 1.0
+  k: 1
+  feature_probability: 0.5
+  one_feature_active: true
+  pretrained_model_path: spd/experiments/resid_linear/out/resid_linear_identity_n-features2_d-resid2_d-mlp2_n-layers1_seed0/target_model.pth

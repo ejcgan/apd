@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from jaxtyping import Bool, Float
 from torch import Tensor, nn
@@ -14,11 +13,6 @@ class SPDModel(ABC, nn.Module):
         dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
         dict[str, Float[Tensor, "... k"]],  # inner activations
     ]:
-        pass
-
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path: str | Path) -> "SPDModel":
         pass
 
     @abstractmethod
@@ -60,11 +54,6 @@ class SPDFullRankModel(ABC, nn.Module):
         dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
         dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
     ]:
-        pass
-
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":
         pass
 
     @abstractmethod

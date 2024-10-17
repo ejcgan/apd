@@ -15,11 +15,9 @@ from spd.experiments.piecewise.plotting import (
     plot_components_fullrank,
     plot_model_functions,
     plot_piecewise_network,
-    plot_subnetwork_correlations,
 )
-
-# plot_subnetwork_correlations,
 from spd.experiments.piecewise.trig_functions import create_trig_function
+from spd.plotting import plot_subnetwork_correlations
 from spd.run_spd import (
     Config,
     PiecewiseConfig,
