@@ -121,12 +121,9 @@ class TMSSPDModel(SPDModel):
         if topk_mask is not None:
             assert topk_mask.shape == inner_act_1.shape
             inner_act_1 = torch.einsum("...ik,...ik->...ik", inner_act_1, topk_mask)
-        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, self.A)
-        pre_relu = layer_act_1 + self.b_final
+        layer_act_1 = torch.einsum("...ik,ifk->...if", inner_act_1, self.A) + self.b_final
 
-        out = F.relu(pre_relu)
-        # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
-        # operations we care about (dout/d(inner_act_1)).
+        out = F.relu(layer_act_1)
         layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
         inner_acts = {"W": inner_act_0, "W_T": inner_act_1}
         return out, layer_acts, inner_acts
@@ -222,13 +219,9 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         if topk_mask is not None:
             assert topk_mask.shape == inner_act_1.shape[:-1]
             inner_act_1 = torch.einsum("...ikf,...ik->...ikf", inner_act_1, topk_mask)
-        layer_act_1 = torch.einsum("...ikf->...if", inner_act_1)
+        layer_act_1 = torch.einsum("...ikf->...if", inner_act_1) + self.b_final
 
-        pre_relu = layer_act_1 + self.b_final
-
-        out = F.relu(pre_relu)
-        # Can pass layer_act_1 or pre_relu to layer_acts[1] as they're the same for the gradient
-        # operations we care about (dout/d(inner_act_1)).
+        out = F.relu(layer_act_1)
         layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
         inner_acts = {"W": inner_act_0, "W_T": inner_act_1}
         return out, layer_acts, inner_acts

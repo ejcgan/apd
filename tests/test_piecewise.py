@@ -400,6 +400,15 @@ def test_piecewise_spd_full_rank_equivalence() -> None:
         decompose_bias=True,
     ).to(device)
 
+    # Init all params to random values
+    for name, param in target_model.named_parameters():
+        # Except for the output_layer biases which should remain zero (that's the standard
+        # setup we're using for piecewise)
+        if "output_layer.bias" in name:
+            param.data = torch.zeros_like(param.data)
+        else:
+            param.data = torch.randn_like(param.data)
+
     # Create the SPD model with k=1
     spd_model = PiecewiseFunctionSPDFullRankTransformer(
         n_inputs=n_inputs,
@@ -411,6 +420,8 @@ def test_piecewise_spd_full_rank_equivalence() -> None:
     ).to(device)
 
     # Copy parameters from target model to SPD model
+    spd_model.W_E.weight.data = target_model.W_E.weight.data
+    spd_model.W_U.weight.data = target_model.W_U.weight.data
     spd_model.set_subnet_to_target(target_model, dim=0)
 
     # Create a random input

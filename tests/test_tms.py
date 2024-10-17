@@ -212,6 +212,9 @@ def test_tms_spd_full_rank_equivalence() -> None:
         device=device,
     )
 
+    # Make the biases non-zero
+    target_model.b_final.data = torch.randn_like(target_model.b_final.data)
+
     # Create the SPD model with k=1
     spd_model = TMSSPDFullRankModel(
         n_instances=n_instances,

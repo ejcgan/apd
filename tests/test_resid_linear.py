@@ -124,10 +124,13 @@ def test_resid_linear_spd_equivalence() -> None:
 
     device = "cpu"
 
-    # Create a target ResidualLinearModel
     target_model = ResidualLinearModel(
         n_features=n_features, d_embed=d_embed, d_mlp=d_mlp, n_layers=n_layers
     ).to(device)
+
+    # Init all params to random values
+    for param in target_model.parameters():
+        param.data = torch.randn_like(param.data)
 
     # Create the SPD model with k=1
     spd_model = ResidualLinearSPDFullRankModel(
