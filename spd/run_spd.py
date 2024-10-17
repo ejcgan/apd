@@ -633,7 +633,7 @@ def calc_topk_param_attrib_loss(
             loss_out_idx = loss_out_idx + param_loss
 
         loss = loss + loss_out_idx**2
-    loss = (loss / target_out.shape[-1] + 1e-16).sum(dim=0)  # Sum over the batch dim
+    loss = (loss / target_out.shape[-1] + 1e-16).mean(dim=0)  # Mean over the batch dim
     return loss / n_params
 
 
