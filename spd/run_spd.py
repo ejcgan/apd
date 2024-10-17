@@ -965,6 +965,9 @@ def optimize(
                         "topk_param_attrib_loss": topk_param_attrib_loss.mean().item()
                         if topk_param_attrib_loss is not None
                         else None,
+                        "topk_act_recon_loss": topk_act_recon_loss.mean().item()
+                        if topk_act_recon_loss is not None
+                        else None,
                     },
                     step=step,
                 )
