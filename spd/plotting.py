@@ -58,7 +58,7 @@ def plot_subnetwork_correlations(
             target_model=None,
             input_array=batch,
             full_rank=config.full_rank,
-            ablation_attributions=config.attribution_type == "ablation",
+            attribution_type=config.attribution_type,
             batch_topk=config.batch_topk,
             topk=config.topk,
             distil_from_target=config.distil_from_target,

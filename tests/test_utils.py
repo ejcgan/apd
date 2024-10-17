@@ -8,7 +8,8 @@ from torch import Tensor, nn
 from spd.models.base import SPDFullRankModel
 from spd.utils import (
     calc_ablation_attributions,
-    calc_attributions_rank_one,
+    calc_activation_attributions,
+    calc_grad_attributions_rank_one,
     calc_topk_mask,
     calculate_closeness_to_identity,
     permute_to_identity,
@@ -78,7 +79,7 @@ def test_calc_attributions_rank_one_one_inner_act():
     out = torch.matmul(weights, inner_acts[0])
 
     # Calculate attributions
-    attributions = calc_attributions_rank_one(out, inner_acts)
+    attributions = calc_grad_attributions_rank_one(out, inner_acts)
 
     # Expected attributions
     expected_attributions = torch.zeros_like(inner_acts[0])
@@ -116,7 +117,7 @@ def test_calc_attributions_rank_one_two_inner_acts():
     )
 
     # Calculate attributions
-    attributions = calc_attributions_rank_one(out, inner_acts)
+    attributions = calc_grad_attributions_rank_one(out, inner_acts)
 
     # Expected attributions
     expected_attributions = torch.zeros_like(inner_acts[0])
@@ -228,3 +229,43 @@ def test_ablation_attributions():
     # 1. (10 - 3) ** 2 = 49
     expected_attributions = torch.tensor([9.0, 49.0])
     torch.testing.assert_close(attributions, expected_attributions)
+
+
+def test_calc_activation_attributions_obvious():
+    inner_acts = {"layer1": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])}
+    expected = torch.tensor([[1.0, 1.0]])
+
+    result = calc_activation_attributions(inner_acts)
+    torch.testing.assert_close(result, expected)
+
+
+def test_calc_activation_attributions_different_d_out():
+    inner_acts = {
+        "layer1": torch.tensor([[[1.0, 2.0], [3.0, 4.0]]]),
+        "layer2": torch.tensor([[[5.0, 6.0, 7.0], [8.0, 9.0, 10.0]]]),
+    }
+    expected = torch.tensor(
+        [[1.0**2 + 2**2 + 5**2 + 6**2 + 7**2, 3**2 + 4**2 + 8**2 + 9**2 + 10**2]]
+    )
+
+    result = calc_activation_attributions(inner_acts)
+    torch.testing.assert_close(result, expected)
+
+
+def test_calc_activation_attributions_with_n_instances():
+    # Batch=1, n_instances=2, k=2, d_out=2
+    inner_acts = {
+        "layer1": torch.tensor([[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]),
+        "layer2": torch.tensor([[[[9.0, 10.0], [11.0, 12.0]], [[13.0, 14.0], [15.0, 16.0]]]]),
+    }
+    expected = torch.tensor(
+        [
+            [
+                [1.0**2 + 2**2 + 9**2 + 10**2, 3**2 + 4**2 + 11**2 + 12**2],
+                [5**2 + 6**2 + 13**2 + 14**2, 7**2 + 8**2 + 15**2 + 16**2],
+            ]
+        ]
+    )
+
+    result = calc_activation_attributions(inner_acts)
+    torch.testing.assert_close(result, expected)

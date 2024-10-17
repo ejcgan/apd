@@ -22,7 +22,7 @@ from spd.run_spd import (
     calc_recon_mse,
 )
 from spd.utils import (
-    calc_attributions_rank_one,
+    calc_grad_attributions_rank_one,
     run_spd_forward_pass,
 )
 
@@ -147,7 +147,7 @@ def plot_components(
     # Forward pass to get the output and inner activations
     out, layer_acts, inner_acts = model(x)
     # Calculate attribution scores
-    attribution_scores = calc_attributions_rank_one(
+    attribution_scores = calc_grad_attributions_rank_one(
         out=out, inner_acts_vals=list(inner_acts.values())
     )
     attribution_scores_normed = attribution_scores / attribution_scores.std(dim=1, keepdim=True)
@@ -255,7 +255,7 @@ def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
     full_rank: bool,
-    attribution_type: Literal["gradient", "ablation"],
+    attribution_type: Literal["gradient", "ablation", "activation"],
     device: str,
     start: float,
     stop: float,
@@ -295,7 +295,7 @@ def plot_model_functions(
         target_model=target_model,
         input_array=input_array,
         full_rank=full_rank,
-        ablation_attributions=attribution_type == "ablation",
+        attribution_type=attribution_type,
         batch_topk=batch_topk,
         topk=topk,
         distil_from_target=distil_from_target,

@@ -28,8 +28,9 @@ from spd.models.base import Model, SPDFullRankModel, SPDModel
 from spd.types import Probability, RootPath
 from spd.utils import (
     calc_ablation_attributions,
-    calc_attributions_full_rank,
-    calc_attributions_rank_one,
+    calc_activation_attributions,
+    calc_grad_attributions_full_rank,
+    calc_grad_attributions_rank_one,
     calc_topk_mask,
 )
 
@@ -117,7 +118,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
-    attribution_type: Literal["gradient", "ablation"] = "gradient"
+    attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
     task_config: DeepLinearConfig | PiecewiseConfig | TMSConfig | ResidualLinearConfig = Field(
         ..., discriminator="task_name"
     )
@@ -534,7 +535,7 @@ def calc_lp_sparsity_loss_full_rank(
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
             dimension.
     """
-    attributions = calc_attributions_full_rank(out, inner_acts, layer_acts)
+    attributions = calc_grad_attributions_full_rank(out, inner_acts, layer_acts)
 
     # Average the attributions over the output dimensions
     d_model_out = out.shape[-1]
@@ -783,13 +784,17 @@ def optimize(
                 attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
             elif config.attribution_type == "gradient":
                 if config.full_rank:
-                    attribution_scores = calc_attributions_full_rank(
+                    attribution_scores = calc_grad_attributions_full_rank(
                         out=out, inner_acts=inner_acts, layer_acts=layer_acts
                     )
                 else:
-                    attribution_scores = calc_attributions_rank_one(
+                    attribution_scores = calc_grad_attributions_rank_one(
                         out=out, inner_acts_vals=list(inner_acts.values())
                     )
+            elif config.attribution_type == "activation":
+                assert layer_post_acts is not None
+                assert config.full_rank, "Activation attributions only supported for full rank"
+                attribution_scores = calc_activation_attributions(inner_acts=inner_acts)
             else:
                 raise ValueError(f"Invalid attribution type: {config.attribution_type}")
 

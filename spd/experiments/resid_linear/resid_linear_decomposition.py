@@ -23,8 +23,8 @@ from spd.plotting import plot_subnetwork_attributions_statistics, plot_subnetwor
 from spd.run_spd import Config, ResidualLinearConfig, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
-    calc_attributions_full_rank,
-    calc_attributions_rank_one,
+    calc_grad_attributions_full_rank,
+    calc_grad_attributions_rank_one,
     init_wandb,
     load_config,
     save_config_to_wandb,
@@ -79,11 +79,11 @@ def _collect_subnetwork_attributions(
     out, test_layer_acts, test_inner_acts = model(test_batch)
 
     if full_rank:
-        attribution_scores = calc_attributions_full_rank(
+        attribution_scores = calc_grad_attributions_full_rank(
             out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
         )
     else:
-        attribution_scores = calc_attributions_rank_one(
+        attribution_scores = calc_grad_attributions_rank_one(
             out=out, inner_acts_vals=list(test_inner_acts.values())
         )
     return attribution_scores

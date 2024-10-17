@@ -4,7 +4,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Generic, NamedTuple, TypeVar
+from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 import einops
 import numpy as np
@@ -250,7 +250,7 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
             yield batch[0], label[0]
 
 
-def calc_attributions_rank_one(
+def calc_grad_attributions_rank_one(
     out: Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"],
     inner_acts_vals: list[Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]],
 ) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
@@ -333,7 +333,7 @@ def calc_grad_attributions_rank_one_per_layer(
     return layer_attribution_scores
 
 
-def calc_attributions_full_rank(
+def calc_grad_attributions_full_rank(
     out: Float[Tensor, "... out_dim"],
     inner_acts: dict[str, Float[Tensor, "... k d_out"]],
     layer_acts: dict[str, Float[Tensor, "... d_out"]],
@@ -452,6 +452,29 @@ def calc_ablation_attributions(
     return attributions
 
 
+def calc_activation_attributions(
+    inner_acts: dict[
+        str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
+    ],
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+    """Calculate the attributions by taking the L2 norm of the activations in each subnetwork.
+
+    Args:
+        inner_acts: The activations at the output of each subnetwork before being summed.
+    Returns:
+        The attributions for each subnetwork.
+    """
+    first_param = inner_acts[next(iter(inner_acts.keys()))]
+    assert len(first_param.shape) in (3, 4)
+
+    attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
+        torch.zeros(first_param.shape[:-1], device=first_param.device, dtype=first_param.dtype)
+    )
+    for param_matrix in inner_acts.values():
+        attribution_scores += param_matrix.pow(2).sum(dim=-1)
+    return attribution_scores
+
+
 def calc_topk_mask(
     attribution_scores: Float[Tensor, "batch ... k"],
     topk: float,
@@ -567,7 +590,7 @@ def run_spd_forward_pass(
     target_model: Model | None,
     input_array: Float[Tensor, "batch n_inputs"],
     full_rank: bool,
-    ablation_attributions: bool,
+    attribution_type: Literal["gradient", "ablation", "activation"],
     batch_topk: bool,
     topk: float,
     distil_from_target: bool,
@@ -580,21 +603,25 @@ def run_spd_forward_pass(
 
     model_output_spd, layer_acts, inner_acts = spd_model(input_array)
 
-    if ablation_attributions:
+    if attribution_type == "ablation":
         attribution_scores = calc_ablation_attributions(
             model=spd_model, batch=input_array, out=model_output_spd
         )
-    else:
+    elif attribution_type == "gradient":
         if full_rank:
-            attribution_scores = calc_attributions_full_rank(
+            attribution_scores = calc_grad_attributions_full_rank(
                 out=model_output_spd,
                 inner_acts=inner_acts,
                 layer_acts=layer_acts,
             )
         else:
-            attribution_scores = calc_attributions_rank_one(
+            attribution_scores = calc_grad_attributions_rank_one(
                 out=model_output_spd, inner_acts_vals=list(inner_acts.values())
             )
+    elif attribution_type == "activation":
+        attribution_scores = calc_activation_attributions(inner_acts=inner_acts)
+    else:
+        raise ValueError(f"Invalid attribution type: {attribution_type}")
 
     # We always assume the final subnetwork is the one we want to distil
     topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores

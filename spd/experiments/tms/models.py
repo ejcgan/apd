@@ -209,8 +209,8 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         topk_mask: Bool[Tensor, "... k"] | None = None,
     ) -> tuple[
         Float[Tensor, "... n_instances n_features"],
-        dict[str, Float[Tensor, "... n_instances n_features"]],
-        dict[str, Float[Tensor, "... n_instances k"]],
+        dict[str, Float[Tensor, "... n_instances d_out"]],
+        dict[str, Float[Tensor, "... n_instances k d_out"]],
     ]:
         inner_act_0 = torch.einsum("...if,ikfh->...ikh", x, self.subnetwork_params)
         if topk_mask is not None:
