@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import einops
 import matplotlib.pyplot as plt
@@ -272,7 +272,7 @@ def run_spd_forward_pass(
     target_model: PiecewiseFunctionTransformer | None,
     input_array: torch.Tensor,
     full_rank: bool,
-    ablation_attributions: bool,
+    attribution_type: Literal["gradient", "ablation"],
     batch_topk: bool,
     topk: float,
     distil_from_target: bool,
@@ -285,11 +285,11 @@ def run_spd_forward_pass(
 
     model_output_spd, layer_acts, inner_acts = spd_model(input_array)
 
-    if ablation_attributions:
+    if attribution_type == "ablation":
         attribution_scores = calc_ablation_attributions(
             model=spd_model, batch=input_array, out=model_output_spd
         )
-    else:
+    elif attribution_type == "gradient":
         if full_rank:
             attribution_scores = calc_attributions_full_rank(
                 out=model_output_spd,
@@ -300,6 +300,8 @@ def run_spd_forward_pass(
             attribution_scores = calc_attributions_rank_one(
                 out=model_output_spd, inner_acts_vals=list(inner_acts.values())
             )
+    else:
+        raise ValueError(f"Invalid attribution type for run_spd_forward_pass: {attribution_type}")
 
     # We always assume the final subnetwork is the one we want to distil
     topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores
@@ -333,7 +335,7 @@ def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
     target_model: PiecewiseFunctionTransformer | None,
     full_rank: bool,
-    ablation_attributions: bool,
+    attribution_type: Literal["gradient", "ablation"],
     device: str,
     start: float,
     stop: float,
@@ -373,7 +375,7 @@ def plot_model_functions(
         target_model=target_model,
         input_array=input_array,
         full_rank=full_rank,
-        ablation_attributions=ablation_attributions,
+        attribution_type=attribution_type,
         batch_topk=batch_topk,
         topk=topk,
         distil_from_target=distil_from_target,
@@ -507,7 +509,7 @@ def plot_subnetwork_correlations(
             target_model=None,
             input_array=batch,
             full_rank=config.full_rank,
-            ablation_attributions=config.ablation_attributions,
+            attribution_type=config.attribution_type,
             batch_topk=config.batch_topk,
             topk=config.topk,
             distil_from_target=config.distil_from_target,

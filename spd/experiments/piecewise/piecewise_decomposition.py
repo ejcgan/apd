@@ -61,7 +61,7 @@ def piecewise_plot_results_fn(
             spd_model=model,
             target_model=target_model,
             full_rank=isinstance(model, PiecewiseFunctionSPDFullRankTransformer),
-            ablation_attributions=config.ablation_attributions,
+            attribution_type=config.attribution_type,
             device=device,
             start=config.task_config.range_min,
             stop=config.task_config.range_max,

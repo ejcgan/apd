@@ -108,7 +108,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
-    ablation_attributions: bool = False
+    attribution_type: Literal["gradient", "ablation"] = "gradient"
     task_config: DeepLinearConfig | PiecewiseConfig | TMSConfig = Field(
         ..., discriminator="task_name"
     )
@@ -177,9 +177,6 @@ class Config(BaseModel):
 
         if self.full_rank:
             assert not self.unit_norm_matrices, "Can't unit norm matrices if full rank"
-
-        if self.ablation_attributions:
-            assert self.topk is not None, "ablation_attributions is only compatible with topk"
 
         if (
             self.full_rank
@@ -775,9 +772,9 @@ def optimize(
             topk_param_attrib_loss,
         ) = None, None, None, None, None
         if config.topk is not None:
-            if config.ablation_attributions:
+            if config.attribution_type == "ablation":
                 attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
-            else:
+            elif config.attribution_type == "gradient":
                 if config.full_rank:
                     attribution_scores = calc_attributions_full_rank(
                         out=out, inner_acts=inner_acts, layer_acts=layer_acts
@@ -786,6 +783,8 @@ def optimize(
                     attribution_scores = calc_attributions_rank_one(
                         out=out, inner_acts_vals=list(inner_acts.values())
                     )
+            else:
+                raise ValueError(f"Invalid attribution type: {config.attribution_type}")
 
             # We always assume the final subnetwork is the one we want to distil
             topk_attrs = (

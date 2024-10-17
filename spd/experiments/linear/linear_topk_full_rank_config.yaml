@@ -8,7 +8,7 @@ topk: 1
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1
-topk_l2_coeff: 3.0 # 6.0 works best for ablation_attributions=true
+topk_l2_coeff: 3.0 # 6.0 works best for attribution_type=ablation
 batch_size: 1024
 steps: 15_000
 print_freq: 500
