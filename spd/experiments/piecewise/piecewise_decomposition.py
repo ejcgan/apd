@@ -28,7 +28,13 @@ from spd.experiments.piecewise.plotting import (
 from spd.experiments.piecewise.trig_functions import generate_trig_functions
 from spd.log import logger
 from spd.plotting import plot_subnetwork_attributions_statistics, plot_subnetwork_correlations
-from spd.run_spd import Config, PiecewiseConfig, calc_recon_mse, optimize
+from spd.run_spd import (
+    Config,
+    PiecewiseConfig,
+    calc_recon_mse,
+    get_common_run_name_suffix,
+    optimize,
+)
 from spd.utils import (
     BatchedDataLoader,
     init_wandb,
@@ -113,34 +119,15 @@ def piecewise_plot_results_fn(
 
 def get_run_name(config: Config) -> str:
     """Generate a run name based on the config."""
-    run_suffix = ""
     if config.wandb_run_name:
         run_suffix = config.wandb_run_name
     else:
         assert isinstance(config.task_config, PiecewiseConfig)
-        run_suffix += f"seed{config.seed}_"
+        run_suffix = get_common_run_name_suffix(config)
         if config.task_config.target_seed is not None:
             run_suffix += f"target-seed{config.task_config.target_seed}_"
-        if config.orthog_coeff is not None:
-            run_suffix += f"orth{config.orthog_coeff:.2e}_"
-        if config.pnorm is not None:
-            run_suffix += f"p{config.pnorm:.2e}_"
-        if config.lp_sparsity_coeff is not None:
-            run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
-        if config.topk is not None:
-            run_suffix += f"topk{config.topk:.2e}_"
-        if config.topk_recon_coeff is not None:
-            run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
-        if config.topk_l2_coeff is not None:
-            run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
-        if config.topk_param_attrib_coeff is not None:
-            run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
-        if config.topk_act_recon_coeff is not None:
-            run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
         if config.task_config.handcoded_AB:
             run_suffix += "hAB_"
-        run_suffix += f"lr{config.lr:.2e}_"
-        run_suffix += f"bs{config.batch_size}"
         run_suffix += f"lay{config.task_config.n_layers}"
 
     return config.wandb_run_name_prefix + run_suffix

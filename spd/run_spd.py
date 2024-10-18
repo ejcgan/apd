@@ -215,6 +215,32 @@ class Config(BaseModel):
         return self
 
 
+def get_common_run_name_suffix(config: Config) -> str:
+    """Generate a run suffix based on Config that is common to all experiments."""
+    run_suffix = ""
+    if config.pnorm is not None:
+        run_suffix += f"p{config.pnorm:.2e}_"
+    if config.lp_sparsity_coeff is not None:
+        run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
+    if config.orthog_coeff is not None:
+        run_suffix += f"orth{config.orthog_coeff:.2e}_"
+    if config.topk is not None:
+        run_suffix += f"topk{config.topk:.2e}_"
+    if config.topk_recon_coeff is not None:
+        run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
+    if config.topk_l2_coeff is not None:
+        run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
+    if config.topk_act_recon_coeff is not None:
+        run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
+    if config.topk_param_attrib_coeff is not None:
+        run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
+    run_suffix += f"sd{config.seed}_"
+    run_suffix += f"attr-{config.attribution_type[:3]}_"
+    run_suffix += f"lr{config.lr:.2e}_"
+    run_suffix += f"bs{config.batch_size}_"
+    return run_suffix
+
+
 def get_lr_schedule_fn(
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"],
     lr_exponential_halflife: PositiveFloat | None = None,

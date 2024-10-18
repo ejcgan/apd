@@ -17,7 +17,7 @@ from tqdm import tqdm
 from spd.experiments.tms.models import TMSModel, TMSSPDFullRankModel, TMSSPDModel
 from spd.experiments.tms.utils import TMSDataset, plot_A_matrix
 from spd.log import logger
-from spd.run_spd import Config, TMSConfig, optimize
+from spd.run_spd import Config, TMSConfig, get_common_run_name_suffix, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
     init_wandb,
@@ -32,24 +32,10 @@ wandb.require("core")
 
 def get_run_name(config: Config, task_config: TMSConfig) -> str:
     """Generate a run name based on the config."""
-    run_suffix = ""
     if config.wandb_run_name:
         run_suffix = config.wandb_run_name
     else:
-        if config.pnorm is not None:
-            run_suffix += f"p{config.pnorm:.2e}_"
-        if config.lp_sparsity_coeff is not None:
-            run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
-        if config.topk is not None:
-            run_suffix += f"topk{config.topk:.2e}_"
-        if config.topk_recon_coeff is not None:
-            run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
-        if config.topk_l2_coeff is not None:
-            run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
-        if config.topk_act_recon_coeff is not None:
-            run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
-        run_suffix += f"lr{config.lr:.2e}_"
-        run_suffix += f"bs{config.batch_size}_"
+        run_suffix = get_common_run_name_suffix(config)
         run_suffix += f"ft{task_config.n_features}_"
         run_suffix += f"hid{task_config.n_hidden}"
     return config.wandb_run_name_prefix + run_suffix
