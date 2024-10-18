@@ -177,6 +177,7 @@ def main(
         n_features=task_config.n_features,
         feature_probability=task_config.feature_probability,
         device=device,
+        one_feature_active=task_config.one_feature_active,
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 

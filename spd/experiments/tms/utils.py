@@ -46,19 +46,46 @@ class TMSDataset(
         n_features: int,
         feature_probability: float,
         device: str,
+        one_feature_active: bool = False,
     ):
         self.n_instances = n_instances
         self.n_features = n_features
         self.feature_probability = feature_probability
         self.device = device
+        self.one_feature_active = one_feature_active
 
     def __len__(self) -> int:
         return 2**31
 
     def generate_batch(
         self, batch_size: int
-    ) -> tuple[Float[Tensor, "n_instances n_features"], Float[Tensor, "n_instances n_features"]]:
+    ) -> tuple[
+        Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances n_features"]
+    ]:
+        if self.one_feature_active:
+            batch = self._generate_one_feature_active_batch(batch_size)
+        else:
+            batch = self._generate_multi_feature_batch(batch_size)
+        return batch, batch.clone().detach()
+
+    def _generate_one_feature_active_batch(
+        self, batch_size: int
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch with one feature active per sample and instance."""
+        batch = torch.zeros(batch_size, self.n_instances, self.n_features, device=self.device)
+
+        active_features = torch.randint(
+            0, self.n_features, (batch_size, self.n_instances), device=self.device
+        )
+        random_values = torch.rand(batch_size, self.n_instances, 1, device=self.device)
+        batch.scatter_(dim=2, index=active_features.unsqueeze(-1), src=random_values)
+        return batch
+
+    def _generate_multi_feature_batch(
+        self, batch_size: int
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch where each feature activates independently with probability
+        `feature_probability`."""
         batch = torch.rand(batch_size, self.n_instances, self.n_features, device=self.device)
         mask = torch.rand_like(batch) < self.feature_probability
-        batch = batch * mask
-        return batch, batch.clone().detach()
+        return batch * mask
