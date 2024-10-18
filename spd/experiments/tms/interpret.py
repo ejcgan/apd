@@ -1,9 +1,8 @@
-import json
-
 import matplotlib.collections as mc
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import yaml
 from jaxtyping import Float
 from torch import Tensor
 
@@ -224,11 +223,14 @@ def plot_networks(
 
 
 if __name__ == "__main__":
-    pretrained_path = REPO_ROOT / "spd/experiments/tms/demo_spd_model/model_30000.pth"
+    # pretrained_path = REPO_ROOT / "spd/experiments/tms/demo_spd_model/model_30000.pth"
+    pretrained_path = (
+        REPO_ROOT
+        / "spd/experiments/tms/out/fr_topk2.80e-01_topkrecon1.00e+01_topkl2_1.00e+00_sd0_attr-gra_lr1.00e-02_bs2048_ft5_hid2/model_20000.pth"
+    )
 
-    with open(pretrained_path.parent / "config.json") as f:
-        config_dict = json.load(f)
-        config = Config(**config_dict)
+    with open(pretrained_path.parent / "final_config.yaml") as f:
+        config = Config(**yaml.safe_load(f))
 
     assert config.full_rank, "This script only works for full rank models"
     model = torch.load(pretrained_path, map_location="cpu", weights_only=True)

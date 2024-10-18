@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import torch
+import yaml
 
 from spd.experiments.piecewise.models import (
     PiecewiseFunctionSPDFullRankTransformer,
@@ -25,9 +26,8 @@ from spd.run_spd import (
 from spd.utils import REPO_ROOT
 
 pretrained_path = REPO_ROOT / "spd/experiments/piecewise/demo_spd_model/model_50000.pth"
-with open(pretrained_path.parent / "config.json") as f:
-    config_dict = json.load(f)
-    config = Config(**config_dict)
+with open(pretrained_path.parent / "final_config.yaml") as f:
+    config = Config(**yaml.safe_load(f))
 
 with open(pretrained_path.parent / "function_params.json") as f:
     function_params = json.load(f)

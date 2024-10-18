@@ -5,6 +5,7 @@ from pathlib import Path
 import fire
 import torch
 import wandb
+import yaml
 
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
 from spd.experiments.linear.models import (
@@ -97,6 +98,9 @@ def main(
         wandb.run.name = run_name
     out_dir = Path(__file__).parent / "out" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(out_dir / "final_config.yaml", "w") as f:
+        yaml.dump(config.model_dump(mode="json"), f, indent=2)
 
     if config.full_rank:
         dlc_model = DeepLinearComponentFullRankModel(

@@ -10,6 +10,7 @@ import fire
 import matplotlib.pyplot as plt
 import torch
 import wandb
+import yaml
 from matplotlib.colors import CenteredNorm
 from tqdm import tqdm
 
@@ -140,6 +141,9 @@ def main(
         wandb.run.name = run_name
     out_dir = Path(__file__).parent / "out" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(out_dir / "final_config.yaml", "w") as f:
+        yaml.dump(config.model_dump(mode="json"), f, indent=2)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if config.full_rank:

@@ -8,6 +8,7 @@ import fire
 import matplotlib.pyplot as plt
 import torch
 import wandb
+import yaml
 from jaxtyping import Float
 from torch import Tensor
 from tqdm import tqdm
@@ -308,6 +309,9 @@ def main(
 
     out_dir = Path(__file__).parent / "out" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(out_dir / "final_config.yaml", "w") as f:
+        yaml.dump(config.model_dump(mode="json"), f, indent=2)
 
     piecewise_model, piecewise_model_spd, dataloader, test_dataloader = get_model_and_dataloader(
         config, device, out_dir
