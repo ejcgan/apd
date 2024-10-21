@@ -47,6 +47,7 @@ class TMSConfig(BaseModel):
     bias_val: float
     pretrained_model_path: RootPath | None = None
     one_feature_active: bool = False
+    handcoded: bool = False
 
 
 class DeepLinearConfig(BaseModel):

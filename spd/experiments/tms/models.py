@@ -230,6 +230,18 @@ class TMSSPDFullRankModel(SPDFullRankModel):
     def from_pretrained(cls, path: str | RootPath) -> "TMSSPDFullRankModel":  # type: ignore
         pass
 
+    def set_handcoded_spd_params(self, target_model: TMSModel):
+        # Initialize the subnetwork params such that the kth subnetwork contains a single row of W
+        # and the rest of the rows are zero
+        assert self.n_features == self.k
+        self.subnetwork_params.data = torch.zeros_like(self.subnetwork_params.data)
+        for subnet_idx in range(self.k):
+            feature_idx = subnet_idx
+            self.subnetwork_params.data[:, subnet_idx, feature_idx, :] = target_model.W.data[
+                :, feature_idx, :
+            ]
+        self.b_final.data = target_model.b_final.data
+
     def set_subnet_to_zero(
         self, subnet_idx: int
     ) -> dict[str, Float[Tensor, "n_instances n_features n_hidden"]]:
