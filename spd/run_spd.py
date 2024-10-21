@@ -494,12 +494,15 @@ def calc_lp_sparsity_loss_rank_one(
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
 
-    Unlike the attributions we calculate for topk in `spd.utils.calc_attributions`, in this function
-    we calculate the derivative w.r.t. the layer activations and multiply by that layer's B matrix.
-    This will give the same gradient as taking the derivative w.r.t. the inner_acts using the chain
-    rule, but importantly it puts the B matrix in the computational graph for this calculation so
-    backprop can pass through it (autograd.grad will not build a computational graph from
-    intermediate tensors
+    Note that this always uses the gradient form of the attributions. We do not support other
+    attributions for this lp sparsity loss.
+
+    Unlike the attributions we calculate for topk in `spd.utils.calc_grad_attributions_rank_one`,
+    in this function we calculate the derivative w.r.t. the layer activations and multiply by that
+    layer's B matrix. This will give the same gradient as taking the derivative w.r.t. the
+    inner_acts using the chain rule, but importantly it puts the B matrix in the computational graph
+    for this calculation so backprop can pass through it (autograd.grad will not build a
+    computational graph from intermediate tensors
     https://gist.github.com/danbraunai-apollo/388c3c76be92922cf7b2a2f7da7d0d43). This is a
     (somewhat arbitrary) decision to include this layer's B matrix but not future layer parameters
     in the sparsity loss. We don't do this in topk because topk isn't a differentiable operation
@@ -547,25 +550,19 @@ def calc_lp_sparsity_loss_rank_one(
 
 def calc_lp_sparsity_loss_full_rank(
     out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    layer_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
-    inner_acts: dict[
-        str, Float[Tensor, "batch n_instances k d_out"] | Float[Tensor, "batch k d_out"]
-    ],
+    attributions: Float[Tensor, "batch n_instances k d_out"] | Float[Tensor, "batch k d_out"],
     step_pnorm: float,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
 
     Args:
         out: The output of the model.
-        layer_acts: The activations of each layer (after summing over the subnetworks).
-        inner_acts: The activations of each subnetwork (before summing over the subnetworks).
+        attributions: The attributions to use for the sparsity loss.
         step_pnorm: The pnorm to use for the sparsity loss.
     Returns:
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
             dimension.
     """
-    attributions = calc_grad_attributions_full_rank(out, inner_acts, layer_acts)
-
     # Average the attributions over the output dimensions
     d_model_out = out.shape[-1]
     attributions = attributions / d_model_out
@@ -702,6 +699,34 @@ def calc_topk_act_recon(
     return (loss / total_act_dim).mean(dim=0)
 
 
+def calculate_attributions(
+    config: Config,
+    model: SPDModel | SPDFullRankModel,
+    batch: Float[Tensor, "... n_features"],
+    out: Float[Tensor, "... n_features"],
+    inner_acts: dict[str, Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]],
+    layer_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
+) -> Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]:
+    attributions = None
+    if config.attribution_type == "ablation":
+        attributions = calc_ablation_attributions(model=model, batch=batch, out=out)
+    elif config.attribution_type == "gradient":
+        if config.full_rank:
+            attributions = calc_grad_attributions_full_rank(
+                out=out, inner_acts=inner_acts, layer_acts=layer_acts
+            )
+        else:
+            attributions = calc_grad_attributions_rank_one(
+                out=out, inner_acts_vals=list(inner_acts.values())
+            )
+    elif config.attribution_type == "activation":
+        assert config.full_rank, "Activation attributions only supported for full rank"
+        attributions = calc_activation_attributions(inner_acts=inner_acts)
+    else:
+        raise ValueError(f"Invalid attribution type: {config.attribution_type}")
+    return attributions
+
+
 def optimize(
     model: SPDModel | SPDFullRankModel,
     config: Config,
@@ -820,12 +845,20 @@ def optimize(
                 has_instance_dim=has_instance_dim,
             )
 
+        attributions = calculate_attributions(
+            config=config,
+            model=model,
+            batch=batch,
+            out=out,
+            inner_acts=inner_acts,
+            layer_acts=layer_acts,
+        )
         lp_sparsity_loss = None
         if config.lp_sparsity_coeff is not None:
             step_pnorm = config.pnorm or get_step_pnorm(step, config.steps, config.pnorm_end)
             if config.full_rank:
                 lp_sparsity_loss = calc_lp_sparsity_loss_full_rank(
-                    out=out, layer_acts=layer_acts, inner_acts=inner_acts, step_pnorm=step_pnorm
+                    out=out, attributions=attributions, step_pnorm=step_pnorm
                 )
             else:
                 lp_sparsity_loss = calc_lp_sparsity_loss_rank_one(
@@ -845,28 +878,8 @@ def optimize(
             topk_act_recon_loss,
         ) = None, None, None, None, None, None
         if config.topk is not None:
-            if config.attribution_type == "ablation":
-                attribution_scores = calc_ablation_attributions(model=model, batch=batch, out=out)
-            elif config.attribution_type == "gradient":
-                if config.full_rank:
-                    attribution_scores = calc_grad_attributions_full_rank(
-                        out=out, inner_acts=inner_acts, layer_acts=layer_acts
-                    )
-                else:
-                    attribution_scores = calc_grad_attributions_rank_one(
-                        out=out, inner_acts_vals=list(inner_acts.values())
-                    )
-            elif config.attribution_type == "activation":
-                assert post_acts is not None
-                assert config.full_rank, "Activation attributions only supported for full rank"
-                attribution_scores = calc_activation_attributions(inner_acts=inner_acts)
-            else:
-                raise ValueError(f"Invalid attribution type: {config.attribution_type}")
-
             # We always assume the final subnetwork is the one we want to distil
-            topk_attrs = (
-                attribution_scores[..., :-1] if config.distil_from_target else attribution_scores
-            )
+            topk_attrs = attributions[..., :-1] if config.distil_from_target else attributions
             topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
                 # Add back the final subnetwork index to the topk mask and set it to True
