@@ -66,8 +66,8 @@ def piecewise_plot_results_fn(
         fig_dict_functions = plot_model_functions(
             spd_model=model,
             target_model=target_model,
-            full_rank=isinstance(model, PiecewiseFunctionSPDFullRankTransformer),
             attribution_type=config.attribution_type,
+            spd_type=config.spd_type,
             device=device,
             start=config.task_config.range_min,
             stop=config.task_config.range_max,
@@ -185,7 +185,7 @@ def get_model_and_dataloader(
     ]
 
     set_seed(config.seed)
-    if config.full_rank:
+    if config.spd_type == "full_rank":
         piecewise_model_spd = PiecewiseFunctionSPDFullRankTransformer(
             n_inputs=piecewise_model.n_inputs,
             d_mlp=piecewise_model.d_mlp,
@@ -232,9 +232,9 @@ def get_model_and_dataloader(
 
     # Set requires_grad to False for params we want to fix (embeds, sometimes biases)
     for i in range(piecewise_model_spd.n_layers):
-        if config.full_rank and not config.task_config.decompose_bias:
+        if config.spd_type == "full_rank" and not config.task_config.decompose_bias:
             piecewise_model_spd.mlps[i].linear1.bias.requires_grad_(False)
-        elif not config.full_rank:
+        elif config.spd_type == "rank_one":
             piecewise_model_spd.mlps[i].bias1.requires_grad_(False)
 
     piecewise_model_spd.W_E.requires_grad_(False)
@@ -326,7 +326,7 @@ def main(
     param_map = {}
     for i in range(piecewise_model_spd.n_layers):
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
-        if config.full_rank and config.task_config.decompose_bias:
+        if config.spd_type == "full_rank" and config.task_config.decompose_bias:
             param_map[f"mlp_{i}.input_layer.bias"] = f"mlp_{i}.input_layer.bias"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 

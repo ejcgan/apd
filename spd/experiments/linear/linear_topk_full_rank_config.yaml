@@ -1,7 +1,7 @@
 wandb_project: spd-linear
 wandb_run_name: null
 wandb_run_name_prefix: "fr_"
-full_rank: true
+spd_type: full_rank
 unit_norm_matrices: false
 seed: 0
 topk: 1

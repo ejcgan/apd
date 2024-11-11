@@ -36,7 +36,7 @@ if __name__ == "__main__":
         feature_probability=config.task_config.feature_probability,
         device=device,
         label_coeffs=label_coeffs,
-        one_feature_active=config.task_config.one_feature_active,
+        data_generation_type=config.task_config.data_generation_type,
     )
     batch, labels = dataset.generate_batch(config.batch_size)
     # Print some basic information about the model
@@ -52,8 +52,8 @@ if __name__ == "__main__":
         spd_model=model,
         target_model=target_model,
         input_array=batch,
-        full_rank=config.full_rank,
         attribution_type=config.attribution_type,
+        spd_type=config.spd_type,
         batch_topk=config.batch_topk,
         topk=config.topk,
         distil_from_target=config.distil_from_target,

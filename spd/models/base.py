@@ -69,6 +69,46 @@ class SPDFullRankModel(ABC, nn.Module):
         pass
 
 
+class SPDRankPenaltyModel(ABC, nn.Module):
+    @abstractmethod
+    def forward(
+        self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"] | None = None
+    ) -> tuple[
+        Float[Tensor, "... d_model_out"],  # output
+        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
+        dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
+    ]:
+        pass
+
+    @abstractmethod
+    def all_As_and_Bs(
+        self,
+    ) -> dict[str, tuple[Float[Tensor, "... d_layer_in k"], Float[Tensor, "... k d_layer_out"]]]:
+        pass
+
+    @abstractmethod
+    def all_subnetwork_params(self) -> dict[str, Tensor]:
+        pass
+
+    @abstractmethod
+    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
+        pass
+
+    @abstractmethod
+    def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Tensor]) -> None:
+        pass
+
+    @abstractmethod
+    def set_matrices_to_unit_norm(self) -> None:
+        """Set the matrices that need to be normalized to unit norm."""
+        pass
+
+    @abstractmethod
+    def fix_normalized_adam_gradients(self) -> None:
+        """Modify the gradient by subtracting it's component parallel to the activation."""
+        pass
+
+
 class Model(ABC, nn.Module):
     @abstractmethod
     def all_decomposable_params(self) -> dict[str, Tensor]:

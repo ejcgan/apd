@@ -40,7 +40,7 @@ def main():
             n_features is not None and n_layers is not None and n_instances is not None
         ), "n_features, n_layers, and n_instances must be set"
 
-    if config.full_rank:
+    if config.spd_type == "full_rank":
         dlc_model = DeepLinearComponentFullRankModel(
             n_features=n_features,
             n_layers=n_layers,

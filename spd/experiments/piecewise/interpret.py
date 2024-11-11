@@ -50,7 +50,7 @@ spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_loc
 # spd_model.set_handcoded_spd_params(hardcoded_model)
 
 
-if config.full_rank:
+if config.spd_type == "full_rank":
     assert isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer)
     fig_dict = plot_components_fullrank(model=spd_model, step=-1, out_dir=None, slow_images=True)
 else:
@@ -66,8 +66,8 @@ if config.topk is not None:
         **plot_model_functions(
             spd_model=spd_model,
             target_model=hardcoded_model,
-            full_rank=config.full_rank,
             attribution_type=config.attribution_type,
+            spd_type=config.spd_type,
             device=device,
             start=config.task_config.range_min,
             stop=config.task_config.range_max,

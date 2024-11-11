@@ -87,7 +87,7 @@ def main(
     with open(out_dir / "final_config.yaml", "w") as f:
         yaml.dump(config.model_dump(mode="json"), f, indent=2)
 
-    if config.full_rank:
+    if config.spd_type == "full_rank":
         dlc_model = DeepLinearComponentFullRankModel(
             n_features=n_features,
             n_layers=n_layers,

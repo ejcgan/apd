@@ -257,3 +257,121 @@ class MLPComponentsFullRank(nn.Module):
         inner_acts.append(inner_acts_linear2)
         layer_acts.append(x)
         return x, layer_acts, inner_acts
+
+
+class ParamComponentsRankPenalty(nn.Module):
+    """A linear layer decomposed into A and B matrices for rank penalty SPD.
+
+    The weight matrix W is decomposed as W = A @ B, where A and B are learned parameters.
+    """
+
+    def __init__(self, in_dim: int, out_dim: int, k: int, bias: bool, init_scale: float = 1.0):
+        super().__init__()
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.k = k
+        self.m = min(in_dim, out_dim)  # Use min dimension for m as in ParamComponentsSchatten
+
+        # Initialize A and B matrices
+        self.A = nn.Parameter(torch.empty(k, in_dim, self.m))
+        self.B = nn.Parameter(torch.empty(k, self.m, out_dim))
+        self.bias = nn.Parameter(torch.zeros(k, out_dim)) if bias else None
+
+        init_param_(self.A, scale=init_scale)
+        init_param_(self.B, scale=init_scale)
+
+    def forward(
+        self, x: Float[Tensor, "batch d_in"], topk_mask: Bool[Tensor, "batch k"] | None = None
+    ) -> tuple[Float[Tensor, "batch d_out"], Float[Tensor, "batch k d_out"]]:
+        """Forward pass through the layer.
+
+        Args:
+            x: Input tensor
+            topk_mask: Boolean tensor indicating which subnetworks to keep
+        Returns:
+            output: The summed output across all subnetworks
+            inner_acts: The output of each subnetwork before summing
+        """
+        # First multiply by A to get to intermediate dimension m
+        # pre_inner_acts = torch.einsum("...d,kfm->...km", x, self.A)
+        pre_inner_acts = einops.einsum(x, self.A, "batch d_in, k d_in m -> batch k m")
+        if topk_mask is not None:
+            assert topk_mask.shape == pre_inner_acts.shape[:-1]
+            pre_inner_acts = einops.einsum(
+                pre_inner_acts, topk_mask, "batch k m, batch k -> batch k m"
+            )
+
+        # Then multiply by B to get to output dimension
+        inner_acts = einops.einsum(pre_inner_acts, self.B, "batch k m, k m h -> batch k h")
+
+        # Add the bias if it exists
+        if self.bias is not None:
+            inner_acts += self.bias
+
+        if topk_mask is not None:
+            inner_acts = einops.einsum(inner_acts, topk_mask, "batch k h, batch k -> batch k h")
+
+        # Sum over subnetwork dimension
+        out = einops.einsum(inner_acts, "batch k h -> batch h")
+        return out, inner_acts
+
+
+class MLPComponentsRankPenalty(nn.Module):
+    """A module that contains two linear layers with an activation in between for rank penalty SPD.
+
+    Each linear layer is decomposed into A and B matrices, where the weight matrix W = A @ B.
+    The biases are (optionally) part of the "linear" layers, and have a subnetwork dimension.
+    """
+
+    def __init__(
+        self,
+        d_embed: int,
+        d_mlp: int,
+        k: int,
+        init_scale: float,
+        in_bias: bool = True,
+        out_bias: bool = False,
+        act_fn: Callable[[Tensor], Tensor] = F.relu,
+    ):
+        super().__init__()
+        self.act_fn = act_fn
+        self.linear1 = ParamComponentsRankPenalty(
+            in_dim=d_embed, out_dim=d_mlp, k=k, bias=in_bias, init_scale=init_scale
+        )
+        self.linear2 = ParamComponentsRankPenalty(
+            in_dim=d_mlp, out_dim=d_embed, k=k, bias=out_bias, init_scale=init_scale
+        )
+
+    def forward(
+        self, x: Float[Tensor, "... d_embed"], topk_mask: Bool[Tensor, "... k"] | None = None
+    ) -> tuple[
+        Float[Tensor, "... d_embed"],
+        list[Float[Tensor, "... d_embed"] | Float[Tensor, "... d_mlp"]],
+        list[Float[Tensor, "... k d_embed"] | Float[Tensor, "... k d_mlp"]],
+    ]:
+        """Forward pass through the MLP.
+
+        Args:
+            x: Input tensor
+            topk_mask: Boolean tensor indicating which subnetworks to keep
+        Returns:
+            x: The output of the MLP
+            layer_acts: The activations at the output of each layer after summing over the
+                subnetwork dimension
+            inner_acts: The activations at the output of each subnetwork before summing
+        """
+        layer_acts = []
+        inner_acts = []
+
+        # First layer
+        x, inner_act = self.linear1(x, topk_mask)
+        inner_acts.append(inner_act)
+        layer_acts.append(x)
+        x = self.act_fn(x)
+
+        # Second layer
+        x, inner_act = self.linear2(x, topk_mask)
+        inner_acts.append(inner_act)
+        layer_acts.append(x)
+
+        return x, layer_acts, inner_acts

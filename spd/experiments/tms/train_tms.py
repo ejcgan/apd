@@ -1,13 +1,17 @@
 import json
+import warnings
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from jaxtyping import Float
 from matplotlib import collections as mc
 from pydantic import BaseModel, PositiveInt
+from torch import Tensor
 from tqdm import tqdm, trange
 
 from spd.experiments.tms.models import TMSModel
@@ -29,6 +33,8 @@ class TMSTrainConfig(BaseModel):
     batch_size: PositiveInt
     steps: PositiveInt
     seed: int = 0
+    lr: float
+    data_generation_type: Literal["at_least_zero_active", "exactly_one_active"]
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -116,6 +122,35 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
     plt.savefig(filepath)
 
 
+def calculate_feature_cosine_similarities(
+    model: TMSModel,
+) -> Float[Tensor, " n_instances"]:
+    """Calculate cosine similarities between feature vectors.
+
+    Returns:
+        tuple of (mean, min, max) cosine similarities for each instance
+    """
+    rows = model.W.detach()
+    rows /= rows.norm(dim=-1, keepdim=True)
+    cosine_sims = einops.einsum(rows, rows, "i f1 h, i f2 h -> i f1 f2")
+    # Remove self-similarities from consideration
+    mask = ~torch.eye(rows.shape[1], device=rows.device, dtype=torch.bool)
+    masked_sims = cosine_sims[:, mask].reshape(rows.shape[0], -1)
+
+    max_sims = masked_sims.max(dim=-1).values
+    theoretical_max = (1 / model.n_hidden) ** 0.5
+
+    if (max_sims > theoretical_max).any():
+        warnings.warn(
+            f"Maximum cosine similarity ({max_sims.max().item():.3f}) exceeds theoretical maximum "
+            f"of 1/√d_hidden = {theoretical_max:.3f}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    return max_sims
+
+
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = TMSTrainConfig(
@@ -126,6 +161,8 @@ if __name__ == "__main__":
         batch_size=1024,
         steps=5_000,
         seed=0,
+        lr=5e-3,
+        data_generation_type="at_least_zero_active",
     )
 
     set_seed(config.seed)
@@ -142,6 +179,7 @@ if __name__ == "__main__":
         n_features=config.n_features,
         feature_probability=config.feature_probability,
         device=device,
+        data_generation_type=config.data_generation_type,
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
     train(model, dataloader=dataloader, steps=config.steps)
@@ -163,3 +201,7 @@ if __name__ == "__main__":
     if config.n_hidden == 2:
         plot_intro_diagram(model, filepath=out_dir / run_name.replace(".pth", ".png"))
         print(f"Saved diagram to {out_dir / run_name.replace('.pth', '.png')}")
+
+    maxs = calculate_feature_cosine_similarities(model)
+    print(f"Cosine sims max: {maxs.tolist()}")
+    print(f"1/sqrt(n_hidden): {1 / np.sqrt(config.n_hidden)}")

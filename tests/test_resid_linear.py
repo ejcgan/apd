@@ -1,9 +1,14 @@
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 from jaxtyping import Float
 
-from spd.experiments.resid_linear.models import ResidualLinearModel, ResidualLinearSPDFullRankModel
+from spd.experiments.resid_linear.models import (
+    ResidualLinearModel,
+    ResidualLinearSPDFullRankModel,
+    ResidualLinearSPDRankPenaltyModel,
+)
 from spd.experiments.resid_linear.resid_linear_dataset import ResidualLinearDataset
 from spd.run_spd import Config, ResidualLinearConfig, optimize
 from spd.utils import DatasetGeneratedDataLoader, set_seed
@@ -29,7 +34,7 @@ def test_resid_linear_decomposition_happy_path() -> None:
     device = "cpu"
     config = Config(
         seed=0,
-        full_rank=True,
+        spd_type="full_rank",
         unit_norm_matrices=False,
         topk=1,
         batch_topk=True,
@@ -187,3 +192,95 @@ def test_resid_linear_spd_equivalence() -> None:
             assert torch.allclose(
                 target_act, spd_act, atol=1e-6
             ), f"Activations do not match for layer {layer_name}"
+
+
+def test_resid_linear_spd_rank_penalty_full_rank_equivalence() -> None:
+    """Test that ResidualLinearSPDRankPenaltyModel output and internal acts match
+    ResidualLinearSPDFullRankModel.
+
+    We set the bias as the same for both models.
+    We set the A and B matrices of ResidualLinearSPDRankPenaltyModel to be the SVD of the
+    subnetwork params of ResidualLinearSPDFullRankModel. We could instead use an identity and the
+    original subnetwork params, but this is a stronger test.
+    """
+    set_seed(0)
+
+    batch_size = 4
+    n_features = 3
+    d_embed = 2
+    d_mlp = 3
+    n_layers = 2
+    k = 2
+
+    device = "cpu"
+
+    # Create the full rank model
+    full_rank_model = ResidualLinearSPDFullRankModel(
+        n_features=n_features,
+        d_embed=d_embed,
+        d_mlp=d_mlp,
+        n_layers=n_layers,
+        k=k,
+        init_scale=1.0,
+    ).to(device)
+
+    # Create random parameters
+    for param in full_rank_model.parameters():
+        nn.init.xavier_normal_(param)
+
+    # Create the rank penalty model
+    rank_penalty_model = ResidualLinearSPDRankPenaltyModel(
+        n_features=n_features,
+        d_embed=d_embed,
+        d_mlp=d_mlp,
+        n_layers=n_layers,
+        k=k,
+        init_scale=1.0,
+    ).to(device)
+
+    # Copy embedding matrix and biases
+    rank_penalty_model.W_E.data = full_rank_model.W_E.data.clone()
+    for i in range(n_layers):
+        rank_penalty_model.layers[i].linear1.bias.data = full_rank_model.layers[
+            i
+        ].linear1.bias.data.clone()
+        rank_penalty_model.layers[i].linear2.bias.data = full_rank_model.layers[
+            i
+        ].linear2.bias.data.clone()
+
+    # For each layer and subnetwork, decompose the full rank parameters using SVD
+    for i in range(n_layers):
+        for j in range(k):
+            # Input layer
+            W_in = full_rank_model.layers[i].linear1.subnetwork_params[j]  # [d_embed, d_mlp]
+            U_in, S_in, Vh_in = torch.linalg.svd(W_in, full_matrices=False)
+            sqrt_S_in = torch.sqrt(S_in)
+            rank_penalty_model.layers[i].linear1.A.data[j] = U_in * sqrt_S_in.view(1, -1)
+            rank_penalty_model.layers[i].linear1.B.data[j] = sqrt_S_in.view(-1, 1) * Vh_in
+
+            # Output layer
+            W_out = full_rank_model.layers[i].linear2.subnetwork_params[j]  # [d_mlp, d_embed]
+            U_out, S_out, Vh_out = torch.linalg.svd(W_out, full_matrices=False)
+            sqrt_S_out = torch.sqrt(S_out)
+            rank_penalty_model.layers[i].linear2.A.data[j] = U_out * sqrt_S_out.view(1, -1)
+            rank_penalty_model.layers[i].linear2.B.data[j] = sqrt_S_out.view(-1, 1) * Vh_out
+
+    # Create a random input
+    input_data: Float[torch.Tensor, "batch n_features"] = torch.rand(
+        batch_size, n_features, device=device
+    )
+
+    # Forward pass through both models
+    full_rank_output, full_rank_layer_acts, _ = full_rank_model(input_data)
+    rank_penalty_output, rank_penalty_layer_acts, _ = rank_penalty_model(input_data)
+
+    # Assert outputs are the same
+    assert torch.allclose(full_rank_output, rank_penalty_output, atol=1e-6), "Outputs do not match"
+
+    # Assert activations are the same for all layers
+    for layer_name in full_rank_layer_acts:
+        full_rank_act = full_rank_layer_acts[layer_name]
+        rank_penalty_act = rank_penalty_layer_acts[layer_name]
+        assert torch.allclose(
+            full_rank_act, rank_penalty_act, atol=1e-6
+        ), f"Activations do not match for layer {layer_name}"

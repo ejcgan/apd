@@ -4,10 +4,12 @@ metric:
   name: final_closeness
   goal: minimize
 parameters:
-  topk_l2_coeff:
-    values: [3e-3, 1e-2, 3e-2, 3e-1, 1, 3]
+  # topk:
+  #   # values: [0.211, 0.239, 0.25, 0.261, 0.289]
+  seed:
+    values: [0, 1, 2, 3, 4]
 command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/tms/tms_topk_config.yaml
+- spd/experiments/tms/tms_topk_full_rank_config.yaml

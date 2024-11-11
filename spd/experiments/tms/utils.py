@@ -1,3 +1,5 @@
+from typing import Literal
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -46,13 +48,15 @@ class TMSDataset(
         n_features: int,
         feature_probability: float,
         device: str,
-        one_feature_active: bool = False,
+        data_generation_type: Literal[
+            "exactly_one_active", "at_least_zero_active"
+        ] = "at_least_zero_active",
     ):
         self.n_instances = n_instances
         self.n_features = n_features
         self.feature_probability = feature_probability
         self.device = device
-        self.one_feature_active = one_feature_active
+        self.data_generation_type = data_generation_type
 
     def __len__(self) -> int:
         return 2**31
@@ -62,10 +66,12 @@ class TMSDataset(
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances n_features"]
     ]:
-        if self.one_feature_active:
+        if self.data_generation_type == "exactly_one_active":
             batch = self._generate_one_feature_active_batch(batch_size)
-        else:
+        elif self.data_generation_type == "at_least_zero_active":
             batch = self._generate_multi_feature_batch(batch_size)
+        else:
+            raise ValueError(f"Invalid generation type: {self.data_generation_type}")
         return batch, batch.clone().detach()
 
     def _generate_one_feature_active_batch(

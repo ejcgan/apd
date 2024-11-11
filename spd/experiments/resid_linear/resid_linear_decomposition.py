@@ -7,14 +7,21 @@ from typing import Any
 
 import fire
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import wandb
 import yaml
 from jaxtyping import Float
+from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.resid_linear.models import ResidualLinearModel, ResidualLinearSPDFullRankModel
+# from spd.experiments.linear.plotting import plot_multiple_subnetwork_params
+from spd.experiments.resid_linear.models import (
+    ResidualLinearModel,
+    ResidualLinearSPDFullRankModel,
+    ResidualLinearSPDRankPenaltyModel,
+)
 from spd.experiments.resid_linear.resid_linear_dataset import (
     ResidualLinearDataset,
 )
@@ -79,7 +86,7 @@ def _collect_subnetwork_attributions(
 def plot_subnetwork_attributions(
     attribution_scores: Float[Tensor, "batch k"],
     out_dir: Path | None,
-    step: int,
+    step: int | None,
 ) -> dict[str, plt.Figure]:
     """Plot subnetwork attributions."""
     fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
@@ -102,13 +109,87 @@ def plot_subnetwork_attributions(
             )
     plt.colorbar(im)
     if out_dir:
-        fig.savefig(out_dir / f"subnetwork_attributions_s{step}.png", dpi=200)
+        filename = (
+            f"subnetwork_attributions_s{step}.png"
+            if step is not None
+            else "subnetwork_attributions.png"
+        )
+        fig.savefig(out_dir / filename, dpi=200)
     return {"subnetwork_attributions": fig}
+
+
+def plot_multiple_subnetwork_params(
+    model: ResidualLinearSPDFullRankModel | ResidualLinearSPDRankPenaltyModel,
+    out_dir: Path | None,
+    step: int | None = None,
+) -> dict[str, plt.Figure]:
+    """Plot each subnetwork parameter matrix."""
+    all_params = model.all_subnetwork_params()
+    # Each param (of which there are n_layers): [k, n_features, n_features]
+    n_params = len(all_params)
+    param_names = list(all_params.keys())
+
+    weight_param = [param for param_name, param in all_params.items() if "weight" in param_name][0]
+    k, dim1, dim2 = weight_param.shape
+
+    # Find global min and max for normalization
+    all_values = []
+    for param_name in param_names:
+        param_values = all_params[param_name].detach().cpu().numpy()
+        all_values.append(param_values)
+    all_values_concat = np.concatenate([v.flatten() for v in all_values])
+    vmax = np.abs(all_values_concat).max()
+    norm = CenteredNorm(vcenter=0, halfrange=vmax)
+
+    fig, axs = plt.subplots(
+        n_params,
+        k,
+        figsize=(2 * k, 1 * n_params),
+        constrained_layout=True,
+    )
+    axs = np.array(axs)
+
+    for param_idx in range(n_params):
+        param_name = param_names[param_idx]
+        for subnet_idx in range(k):
+            col_idx = subnet_idx
+            row_idx = param_idx
+
+            ax = axs[row_idx, col_idx]  # type: ignore
+            param = all_params[param_name][subnet_idx].detach().cpu().numpy()
+            # If it's a bias with a single dimension, unsqueeze it
+            if param.ndim == 1:
+                param = param[:, None]
+
+            # Set aspect ratio based on parameter dimensions
+            height, width = param.shape
+            aspect = width / height
+
+            im = ax.matshow(param, cmap="RdBu", norm=norm, aspect=aspect)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if col_idx == 0:
+                ax.set_ylabel(param_name, rotation=0, ha="right", va="center")
+
+            if row_idx == n_params - 1:
+                ax.set_xlabel(f"Subnet {subnet_idx}", rotation=0, ha="center", va="top")
+
+    # Add colorbar
+    fig.colorbar(im, ax=axs.ravel().tolist(), location="right")  # type: ignore
+
+    title_text = "Subnet Parameters"
+    if step is not None:
+        title_text += f" (Step {step})"
+    fig.suptitle(title_text)
+    if out_dir:
+        fig.savefig(out_dir / f"subnetwork_params_s{step}.png", dpi=200)
+    return {"subnetwork_params": fig}
 
 
 def resid_linear_plot_results_fn(
     model: ResidualLinearSPDFullRankModel,
-    step: int,
+    step: int | None,
     out_dir: Path | None,
     device: str,
     config: Config,
@@ -122,7 +203,8 @@ def resid_linear_plot_results_fn(
     assert isinstance(config.task_config, ResidualLinearConfig)
     fig_dict = {}
 
-    attribution_scores = _collect_subnetwork_attributions(model, device, config.full_rank)
+    assert config.spd_type in ("full_rank", "rank_penalty")
+    attribution_scores = _collect_subnetwork_attributions(model, device, full_rank=True)
     fig_dict_attributions = plot_subnetwork_attributions(attribution_scores, out_dir, step)
     fig_dict.update(fig_dict_attributions)
 
@@ -139,6 +221,9 @@ def resid_linear_plot_results_fn(
         assert topk_mask is not None
         fig_dict_attributions = plot_subnetwork_attributions_statistics(topk_mask=topk_mask)
         fig_dict.update(fig_dict_attributions)
+
+    fig_dict_params = plot_multiple_subnetwork_params(model=model, out_dir=out_dir, step=step)
+    fig_dict.update(fig_dict_params)
 
     # Save plots to files
     if out_dir:
@@ -216,14 +301,27 @@ def main(
         label_coeffs=label_coeffs,
     )
 
-    model = ResidualLinearSPDFullRankModel(
-        n_features=target_model.n_features,
-        d_embed=target_model.d_embed,
-        d_mlp=target_model.d_mlp,
-        n_layers=target_model.n_layers,
-        k=config.task_config.k,
-        init_scale=config.task_config.init_scale,
-    ).to(device)
+    # Create the SPD model
+    if config.spd_type == "full_rank":
+        model = ResidualLinearSPDFullRankModel(
+            n_features=target_model.n_features,
+            d_embed=target_model.d_embed,
+            d_mlp=target_model.d_mlp,
+            n_layers=target_model.n_layers,
+            k=config.task_config.k,
+            init_scale=config.task_config.init_scale,
+        ).to(device)
+    elif config.spd_type == "rank_penalty":
+        model = ResidualLinearSPDRankPenaltyModel(
+            n_features=target_model.n_features,
+            d_embed=target_model.d_embed,
+            d_mlp=target_model.d_mlp,
+            n_layers=target_model.n_layers,
+            k=config.task_config.k,
+            init_scale=config.task_config.init_scale,
+        ).to(device)
+    else:
+        raise ValueError(f"Unknown spd_type: {config.spd_type}")
 
     # Use the target_model's embedding matrix and don't train it further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()
@@ -244,7 +342,7 @@ def main(
         feature_probability=config.task_config.feature_probability,
         device=device,
         label_coeffs=label_coeffs,
-        one_feature_active=config.task_config.one_feature_active,
+        data_generation_type=config.task_config.data_generation_type,
     )
 
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)

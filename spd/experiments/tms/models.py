@@ -4,7 +4,7 @@ from jaxtyping import Bool, Float
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from spd.models.base import Model, SPDFullRankModel, SPDModel
+from spd.models.base import Model, SPDFullRankModel, SPDModel, SPDRankPenaltyModel
 from spd.types import RootPath
 from spd.utils import remove_grad_parallel_to_subnetwork_vecs
 
@@ -202,12 +202,12 @@ class TMSSPDFullRankModel(SPDFullRankModel):
 
     def forward(
         self,
-        x: Float[Tensor, "... n_instances n_features"],
-        topk_mask: Bool[Tensor, "... k"] | None = None,
+        x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
     ) -> tuple[
-        Float[Tensor, "... n_instances n_features"],
-        dict[str, Float[Tensor, "... n_instances d_out"]],
-        dict[str, Float[Tensor, "... n_instances k d_out"]],
+        Float[Tensor, "batch n_instances n_features"],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k n_features"]],
     ]:
         inner_act_0 = torch.einsum("...if,ikfh->...ikh", x, self.subnetwork_params)
         if topk_mask is not None:
@@ -257,3 +257,122 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         stored_vals: dict[str, Float[Tensor, "n_instances n_features n_hidden"]],
     ) -> None:
         self.subnetwork_params.data[:, subnet_idx, :, :] = stored_vals["subnetwork_params"]
+
+
+class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
+    def __init__(
+        self,
+        n_instances: int,
+        n_features: int,
+        n_hidden: int,
+        k: int | None,
+        bias_val: float,
+        train_bias: bool,
+        device: str = "cuda",
+    ):
+        super().__init__()
+        self.n_instances = n_instances
+        self.n_features = n_features
+        self.n_hidden = n_hidden
+        self.k = k if k is not None else n_features
+        self.bias_val = bias_val
+        self.train_bias = train_bias
+
+        self.m = min(n_features, n_hidden) + 1
+
+        self.A = nn.Parameter(torch.empty((n_instances, self.k, n_features, self.m), device=device))
+        self.B = nn.Parameter(torch.empty((n_instances, self.k, self.m, n_hidden), device=device))
+
+        bias_data = torch.zeros((n_instances, n_features), device=device) + bias_val
+        self.b_final = nn.Parameter(bias_data) if train_bias else bias_data
+
+        nn.init.xavier_normal_(self.A)
+        nn.init.xavier_normal_(self.B)
+
+        self.n_param_matrices = 2  # Two W matrices (even though they're tied)
+
+    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
+        """Get all subnetwork parameters."""
+        W = torch.einsum("ikfm,ikmh->ikfh", self.A, self.B)
+        return {"W": W, "W_T": rearrange(W, "i k f h -> i k h f")}
+
+    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
+        """All subnetwork params summed over the subnetwork dimension."""
+        W = torch.einsum("ikfm,ikmh->ifh", self.A, self.B)
+        return {"W": W, "W_T": rearrange(W, "i f h -> i h f")}
+
+    def forward(
+        self,
+        x: Float[Tensor, "batch n_instances n_features"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+    ) -> tuple[
+        Float[Tensor, "batch n_instances n_features"],
+        dict[str, Float[Tensor, "batch n_instances n_features"]],
+        dict[str, Float[Tensor, "batch n_instances k n_features"]],
+    ]:
+        # First layer: x -> A -> m dimension -> B -> hidden
+        pre_inner_act_0 = torch.einsum("bif,ikfm->bikm", x, self.A)
+        if topk_mask is not None:
+            assert topk_mask.shape == pre_inner_act_0.shape[:-1]
+            pre_inner_act_0 = torch.einsum("bikm,bik->bikm", pre_inner_act_0, topk_mask)
+        inner_act_0 = torch.einsum("bikm,ikmh->bikh", pre_inner_act_0, self.B)
+        layer_act_0 = torch.einsum("bikh->bih", inner_act_0)
+
+        # Second layer: hidden -> B.T -> m dimension -> A.T -> features
+        pre_inner_act_1 = torch.einsum("bih,ikmh->bikm", layer_act_0, self.B)
+        if topk_mask is not None:
+            assert topk_mask.shape == pre_inner_act_1.shape[:-1]
+            pre_inner_act_1 = torch.einsum("bikm,bik->bikm", pre_inner_act_1, topk_mask)
+        inner_act_1 = torch.einsum("bikm,ikfm->bikf", pre_inner_act_1, self.A)
+        layer_act_1 = torch.einsum("bikf->bif", inner_act_1) + self.b_final
+
+        out = F.relu(layer_act_1)
+        layer_acts = {"W": layer_act_0, "W_T": layer_act_1}
+        inner_acts = {"W": inner_act_0, "W_T": inner_act_1}
+        return out, layer_acts, inner_acts
+
+    def set_subnet_to_zero(
+        self, subnet_idx: int
+    ) -> dict[str, Float[Tensor, "n_instances n_features m"]]:
+        stored_vals = {
+            "A": self.A.data[:, subnet_idx, :, :].detach().clone(),
+            "B": self.B.data[:, subnet_idx, :, :].detach().clone(),
+        }
+        self.A.data[:, subnet_idx, :, :] = 0.0
+        self.B.data[:, subnet_idx, :, :] = 0.0
+        return stored_vals
+
+    def restore_subnet(
+        self,
+        subnet_idx: int,
+        stored_vals: dict[str, Float[Tensor, "n_instances n_features m"]],
+    ) -> None:
+        self.A.data[:, subnet_idx, :, :] = stored_vals["A"]
+        self.B.data[:, subnet_idx, :, :] = stored_vals["B"]
+
+    @classmethod
+    def from_pretrained(cls, path: str | RootPath) -> "TMSSPDRankPenaltyModel":  # type: ignore
+        pass
+
+    def all_As_and_Bs(
+        self,
+    ) -> dict[
+        str, tuple[Float[Tensor, "n_instances k d_in m"], Float[Tensor, "n_instances k m d_out"]]
+    ]:
+        """Get all A and B matrices. Note that this won't return bias components."""
+        return {
+            "W": (self.A, self.B),
+            "W_T": (
+                rearrange(self.B, "i k m h -> i k h m"),
+                rearrange(self.A, "i k f m -> i k m f"),
+            ),
+        }
+
+    def set_matrices_to_unit_norm(self) -> None:
+        """Set the matrices that need to be normalized to unit norm."""
+        self.A.data /= self.A.data.norm(p=2, dim=-2, keepdim=True)
+
+    def fix_normalized_adam_gradients(self) -> None:
+        """Modify the gradient by subtracting it's component parallel to the activation."""
+        assert self.A.grad is not None
+        remove_grad_parallel_to_subnetwork_vecs(self.A.data, self.A.grad)
