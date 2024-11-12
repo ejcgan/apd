@@ -35,7 +35,6 @@ def tms_decomposition_optimize_test(config: Config):
         n_features=config.task_config.n_features,
         n_hidden=config.task_config.n_hidden,
         k=config.task_config.k,
-        train_bias=config.task_config.train_bias,
         bias_val=config.task_config.bias_val,
         device=device,
     )
@@ -58,6 +57,9 @@ def tms_decomposition_optimize_test(config: Config):
 
     # Pick an arbitrary parameter to check that it changes
     initial_param = model.A.clone().detach()
+
+    if not config.task_config.train_bias:
+        model.b_final.requires_grad = False
 
     optimize(
         model=model,
@@ -236,7 +238,6 @@ def test_tms_spd_full_rank_equivalence() -> None:
         n_features=n_features,
         n_hidden=n_hidden,
         k=k,
-        train_bias=True,
         bias_val=0.0,
         device=device,
     )
@@ -360,7 +361,6 @@ def test_set_full_rank_handcoded_spd_params():
         n_features=n_features,
         n_hidden=n_hidden,
         k=k,
-        train_bias=True,
         bias_val=0.0,
         device=device,
     )
@@ -427,7 +427,6 @@ def test_tms_spd_rank_penalty_full_rank_equivalence() -> None:
         n_features=n_features,
         n_hidden=n_hidden,
         k=k,
-        train_bias=True,
         bias_val=0.0,
         device=device,
     )
@@ -442,7 +441,6 @@ def test_tms_spd_rank_penalty_full_rank_equivalence() -> None:
         n_features=n_features,
         n_hidden=n_hidden,
         k=k,
-        train_bias=True,
         bias_val=0.0,
         device=device,
     )

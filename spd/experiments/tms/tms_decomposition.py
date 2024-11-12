@@ -275,7 +275,6 @@ def main(
             n_features=task_config.n_features,
             n_hidden=task_config.n_hidden,
             k=task_config.k,
-            train_bias=task_config.train_bias,
             bias_val=task_config.bias_val,
             device=device,
         )
@@ -285,7 +284,6 @@ def main(
             n_features=task_config.n_features,
             n_hidden=task_config.n_hidden,
             k=task_config.k,
-            train_bias=task_config.train_bias,
             bias_val=task_config.bias_val,
             device=device,
         )
@@ -295,7 +293,6 @@ def main(
             n_features=task_config.n_features,
             n_hidden=task_config.n_hidden,
             k=task_config.k,
-            train_bias=task_config.train_bias,
             bias_val=task_config.bias_val,
             device=device,
         )
@@ -319,6 +316,9 @@ def main(
 
         # Manually set the bias for the SPD model from the bias in the pretrained model
         model.b_final.data[:] = pretrained_model.b_final.data.clone()
+
+    if not task_config.train_bias:
+        model.b_final.requires_grad = False
 
     param_map = None
     if task_config.pretrained_model_path:

@@ -60,7 +60,6 @@ class TMSSPDModel(SPDModel):
         n_hidden: int,
         k: int | None,
         bias_val: float,
-        train_bias: bool,
         device: str = "cuda",
     ):
         super().__init__()
@@ -69,13 +68,12 @@ class TMSSPDModel(SPDModel):
         self.n_hidden = n_hidden
         self.k = k if k is not None else n_features
         self.bias_val = bias_val
-        self.train_bias = train_bias
 
         self.A = nn.Parameter(torch.empty((n_instances, n_features, self.k), device=device))
         self.B = nn.Parameter(torch.empty((n_instances, self.k, n_hidden), device=device))
 
         bias_data = torch.zeros((n_instances, n_features), device=device) + bias_val
-        self.b_final = nn.Parameter(bias_data) if train_bias else bias_data
+        self.b_final = nn.Parameter(bias_data)
 
         nn.init.xavier_normal_(self.A)
         # Fix the first instance to the identity to compare losses
@@ -163,7 +161,6 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         n_hidden: int,
         k: int | None,
         bias_val: float,
-        train_bias: bool,
         device: str = "cuda",
     ):
         super().__init__()
@@ -172,14 +169,13 @@ class TMSSPDFullRankModel(SPDFullRankModel):
         self.n_hidden = n_hidden
         self.k = k if k is not None else n_features
         self.bias_val = bias_val
-        self.train_bias = train_bias
 
         self.subnetwork_params = nn.Parameter(
             torch.empty((n_instances, self.k, n_features, n_hidden), device=device)
         )
 
         bias_data = torch.zeros((n_instances, n_features), device=device) + bias_val
-        self.b_final = nn.Parameter(bias_data) if train_bias else bias_data
+        self.b_final = nn.Parameter(bias_data)
 
         nn.init.xavier_normal_(self.subnetwork_params)
 
@@ -267,7 +263,6 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         n_hidden: int,
         k: int | None,
         bias_val: float,
-        train_bias: bool,
         device: str = "cuda",
     ):
         super().__init__()
@@ -276,7 +271,6 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.n_hidden = n_hidden
         self.k = k if k is not None else n_features
         self.bias_val = bias_val
-        self.train_bias = train_bias
 
         self.m = min(n_features, n_hidden) + 1
 
@@ -284,7 +278,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.B = nn.Parameter(torch.empty((n_instances, self.k, self.m, n_hidden), device=device))
 
         bias_data = torch.zeros((n_instances, n_features), device=device) + bias_val
-        self.b_final = nn.Parameter(bias_data) if train_bias else bias_data
+        self.b_final = nn.Parameter(bias_data)
 
         nn.init.xavier_normal_(self.A)
         nn.init.xavier_normal_(self.B)
