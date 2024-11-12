@@ -26,12 +26,14 @@ from spd.experiments.resid_linear.resid_linear_dataset import (
     ResidualLinearDataset,
 )
 from spd.log import logger
-from spd.plotting import plot_subnetwork_attributions_statistics, plot_subnetwork_correlations
+from spd.plotting import (
+    plot_subnetwork_attributions_statistics,
+    plot_subnetwork_correlations,
+)
 from spd.run_spd import Config, ResidualLinearConfig, get_common_run_name_suffix, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
-    calc_grad_attributions_full_rank,
-    calc_grad_attributions_rank_one,
+    collect_subnetwork_attributions,
     init_wandb,
     load_config,
     save_config_to_wandb,
@@ -52,42 +54,11 @@ def get_run_name(config: Config, n_features: int, n_layers: int, d_resid: int, d
     return config.wandb_run_name_prefix + run_suffix
 
 
-def _collect_subnetwork_attributions(
-    model: ResidualLinearSPDFullRankModel, device: str, full_rank: bool
-) -> Float[Tensor, "batch k"]:
-    """
-    Collect subnetwork attributions.
-
-    This function creates a test batch using an identity matrix, passes it through the model,
-    and collects the attributions.
-
-    Args:
-        model (ResidualLinearSPDFullRankModel): The model to collect attributions on.
-        device (str): The device to run computations on.
-        full_rank (bool): Whether the model is full rank or rank one.
-    Returns:
-        The attribution scores.
-    """
-    test_batch = torch.eye(model.n_features, device=device)
-
-    out, test_layer_acts, test_inner_acts = model(test_batch)
-
-    if full_rank:
-        attribution_scores = calc_grad_attributions_full_rank(
-            out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
-        )
-    else:
-        attribution_scores = calc_grad_attributions_rank_one(
-            out=out, inner_acts_vals=list(test_inner_acts.values())
-        )
-    return attribution_scores
-
-
 def plot_subnetwork_attributions(
     attribution_scores: Float[Tensor, "batch k"],
     out_dir: Path | None,
     step: int | None,
-) -> dict[str, plt.Figure]:
+) -> plt.Figure:
     """Plot subnetwork attributions."""
     fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
     im = ax.matshow(attribution_scores.detach().cpu().numpy(), aspect="auto", cmap="Reds")
@@ -115,14 +86,14 @@ def plot_subnetwork_attributions(
             else "subnetwork_attributions.png"
         )
         fig.savefig(out_dir / filename, dpi=200)
-    return {"subnetwork_attributions": fig}
+    return fig
 
 
 def plot_multiple_subnetwork_params(
     model: ResidualLinearSPDFullRankModel | ResidualLinearSPDRankPenaltyModel,
     out_dir: Path | None,
     step: int | None = None,
-) -> dict[str, plt.Figure]:
+) -> plt.Figure:
     """Plot each subnetwork parameter matrix."""
     all_params = model.all_subnetwork_params()
     # Each param (of which there are n_layers): [k, n_features, n_features]
@@ -184,7 +155,7 @@ def plot_multiple_subnetwork_params(
     fig.suptitle(title_text)
     if out_dir:
         fig.savefig(out_dir / f"subnetwork_params_s{step}.png", dpi=200)
-    return {"subnetwork_params": fig}
+    return fig
 
 
 def resid_linear_plot_results_fn(
@@ -204,9 +175,10 @@ def resid_linear_plot_results_fn(
     fig_dict = {}
 
     assert config.spd_type in ("full_rank", "rank_penalty")
-    attribution_scores = _collect_subnetwork_attributions(model, device, full_rank=True)
-    fig_dict_attributions = plot_subnetwork_attributions(attribution_scores, out_dir, step)
-    fig_dict.update(fig_dict_attributions)
+    attribution_scores = collect_subnetwork_attributions(model, device, spd_type=config.spd_type)
+    fig_dict["subnetwork_attributions"] = plot_subnetwork_attributions(
+        attribution_scores, out_dir, step
+    )
 
     if config.topk is not None:
         if dataloader is not None and config.task_config.k > 1:
@@ -222,8 +194,9 @@ def resid_linear_plot_results_fn(
         fig_dict_attributions = plot_subnetwork_attributions_statistics(topk_mask=topk_mask)
         fig_dict.update(fig_dict_attributions)
 
-    fig_dict_params = plot_multiple_subnetwork_params(model=model, out_dir=out_dir, step=step)
-    fig_dict.update(fig_dict_params)
+    fig_dict["subnetwork_params"] = plot_multiple_subnetwork_params(
+        model=model, out_dir=out_dir, step=step
+    )
 
     # Save plots to files
     if out_dir:

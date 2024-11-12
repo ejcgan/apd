@@ -8,10 +8,13 @@ from pathlib import Path
 
 import fire
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import wandb
 import yaml
+from jaxtyping import Float
 from matplotlib.colors import CenteredNorm
+from torch import Tensor
 from tqdm import tqdm
 
 from spd.experiments.tms.models import (
@@ -25,6 +28,7 @@ from spd.log import logger
 from spd.run_spd import Config, TMSConfig, get_common_run_name_suffix, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
+    collect_subnetwork_attributions,
     init_wandb,
     load_config,
     permute_to_identity,
@@ -62,6 +66,111 @@ def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Fi
     return fig
 
 
+def plot_subnetwork_attributions_multiple_instances(
+    attribution_scores: Float[Tensor, "batch n_instances k"],
+    out_dir: Path,
+    step: int | None,
+) -> plt.Figure:
+    """Plot subnetwork attributions for multiple instances in a row."""
+    n_instances = attribution_scores.shape[1]
+
+    # Create a wide figure with subplots in a row
+    fig, axes = plt.subplots(1, n_instances, figsize=(5 * n_instances, 5), constrained_layout=True)
+
+    axes = np.array([axes]) if isinstance(axes, plt.Axes) else axes
+
+    images = []
+    for idx, ax in enumerate(axes):
+        instance_scores = attribution_scores[:, idx, :]
+        im = ax.matshow(instance_scores.detach().cpu().numpy(), aspect="auto", cmap="Reds")
+        images.append(im)
+
+        # Annotate each cell with the numeric value
+        for i in range(instance_scores.shape[0]):
+            for j in range(instance_scores.shape[1]):
+                ax.text(
+                    j,
+                    i,
+                    f"{instance_scores[i, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=10,
+                )
+
+        ax.set_xlabel("Subnetwork Index")
+        if idx == 0:  # Only set ylabel for leftmost plot
+            ax.set_ylabel("Batch Index")
+        ax.set_title(f"Instance {idx}")
+
+    # Add a single colorbar that references all plots
+    norm = plt.Normalize(vmin=attribution_scores.min().item(), vmax=attribution_scores.max().item())
+    for im in images:
+        im.set_norm(norm)
+    fig.colorbar(images[0], ax=axes)
+
+    fig.suptitle(f"Subnetwork Attributions (Step {step})")
+    filename = (
+        f"subnetwork_attributions_s{step}.png"
+        if step is not None
+        else "subnetwork_attributions.png"
+    )
+    fig.savefig(out_dir / filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    tqdm.write(f"Saved subnetwork attributions to {out_dir / filename}")
+    return fig
+
+
+def plot_subnetwork_attributions_statistics_multiple_instances(
+    topk_mask: Float[Tensor, "batch_size n_instances k"], out_dir: Path, step: int | None
+) -> plt.Figure:
+    """Plot a row of vertical bar charts showing active subnetworks for each instance."""
+    n_instances = topk_mask.shape[1]
+    fig, axes = plt.subplots(1, n_instances, figsize=(5 * n_instances, 5), constrained_layout=True)
+
+    axes = np.array([axes]) if isinstance(axes, plt.Axes) else axes
+
+    for instance_idx in range(n_instances):
+        ax = axes[instance_idx]
+        instance_mask = topk_mask[:, instance_idx]
+
+        values = instance_mask.sum(dim=1).cpu().detach().numpy()
+        bins = list(range(int(values.min().item()), int(values.max().item()) + 2))
+        counts, _ = np.histogram(values, bins=bins)
+
+        bars = ax.bar(bins[:-1], counts, align="center", width=0.8)
+        ax.set_xticks(bins[:-1])
+        ax.set_xticklabels([str(b) for b in bins[:-1]])
+        ax.set_title(f"Instance {instance_idx}")
+
+        if instance_idx == 0:  # Only set y-label for leftmost plot
+            ax.set_ylabel("Count")
+        ax.set_xlabel("Number of active subnetworks")
+
+        # Add value annotations on top of each bar
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(
+                f"{height}",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+            )
+
+    fig.suptitle(f"Active subnetworks per instance (batch_size={topk_mask.shape[0]})")
+    filename = (
+        f"subnetwork_attributions_statistics_s{step}.png"
+        if step is not None
+        else "subnetwork_attributions_statistics.png"
+    )
+    fig.savefig(out_dir / filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    tqdm.write(f"Saved subnetwork attributions statistics to {out_dir / filename}")
+    return fig
+
+
 def plot_subnetwork_params(
     model: TMSSPDFullRankModel | TMSSPDModel | TMSSPDRankPenaltyModel, step: int, out_dir: Path, **_
 ) -> plt.Figure:
@@ -80,7 +189,7 @@ def plot_subnetwork_params(
         k,
         n_instances,
         figsize=(2 * n_instances, 2 * k),
-        gridspec_kw={"wspace": 0.05, "hspace": 0.05},
+        constrained_layout=True,
     )
 
     for i in range(n_instances):
@@ -107,6 +216,9 @@ def make_plots(
     model: TMSSPDFullRankModel | TMSSPDModel | TMSSPDRankPenaltyModel,
     step: int,
     out_dir: Path,
+    device: str,
+    config: Config,
+    topk_mask: Float[Tensor, "batch k"] | None,
     **_,
 ) -> dict[str, plt.Figure]:
     plots = {}
@@ -115,6 +227,21 @@ def make_plots(
     else:
         plots["A"] = plot_permuted_A(model, step, out_dir)
         plots["subnetwork_params"] = plot_subnetwork_params(model, step, out_dir)
+
+    if config.topk is not None:
+        assert topk_mask is not None
+        assert isinstance(config.task_config, TMSConfig)
+        attribution_scores = collect_subnetwork_attributions(
+            model, device, spd_type=config.spd_type, n_instances=config.task_config.n_instances
+        )
+        plots["subnetwork_attributions"] = plot_subnetwork_attributions_multiple_instances(
+            attribution_scores=attribution_scores, out_dir=out_dir, step=step
+        )
+        plots["subnetwork_attributions_statistics"] = (
+            plot_subnetwork_attributions_statistics_multiple_instances(
+                topk_mask=topk_mask, out_dir=out_dir, step=step
+            )
+        )
     return plots
 
 

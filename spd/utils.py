@@ -433,6 +433,46 @@ def calc_grad_attributions_full_rank_per_layer(
     return layer_attribution_scores
 
 
+def collect_subnetwork_attributions(
+    model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    device: str,
+    spd_type: Literal["full_rank", "rank_one", "rank_penalty"],
+    n_instances: int | None = None,
+) -> Float[Tensor, "batch k"]:
+    """
+    Collect subnetwork attributions.
+
+    This function creates a test batch using an identity matrix, passes it through the model,
+    and collects the attributions.
+
+    Args:
+        model (ResidualLinearSPDFullRankModel): The model to collect attributions on.
+        device (str): The device to run computations on.
+        spd_type (str): The type of SPD model.
+        n_instances (int | None): The number of instances in the batch.
+
+    Returns:
+        The attribution scores.
+    """
+    test_batch = torch.eye(model.n_features, device=device)
+    if n_instances is not None:
+        test_batch = einops.repeat(
+            test_batch, "batch n_features -> batch n_instances n_features", n_instances=n_instances
+        )
+
+    out, test_layer_acts, test_inner_acts = model(test_batch)
+
+    if spd_type == "rank_one":
+        attribution_scores = calc_grad_attributions_rank_one(
+            out=out, inner_acts_vals=list(test_inner_acts.values())
+        )
+    else:
+        attribution_scores = calc_grad_attributions_full_rank(
+            out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
+        )
+    return attribution_scores
+
+
 @torch.inference_mode()
 def calc_ablation_attributions(
     model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
