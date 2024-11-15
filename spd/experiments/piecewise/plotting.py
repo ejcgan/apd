@@ -89,10 +89,13 @@ def plot_components_fullrank(
     step: int,
     out_dir: Path | None,
     slow_images: bool,
+    show_bias: bool | None = None,
 ) -> dict[str, plt.Figure]:
     # Not implemented attribution score plots, or multi-layer plots, yet.
     assert model.n_layers == 1
-    ncols = 3  # Updated to 3 columns to include the bias plot
+    decompose_bias = len(model.mlps[0].linear1.bias.shape) > 1
+    show_bias = show_bias if show_bias is not None else decompose_bias
+    ncols = 2 + show_bias
     if slow_images:
         nrows = model.k + 1
         fig, axs = plt.subplots(
@@ -113,16 +116,21 @@ def plot_components_fullrank(
         "Neuron index",
         "Embedding index",
     )
-    if len(model.mlps[0].linear1.bias.shape) > 1:
+    if show_bias:
         plot_matrix(
             axs[0, 1],
-            torch.einsum("kd->d", model.mlps[0].linear1.bias).unsqueeze(0),
-            "Bias, sum over k",
+            torch.einsum("kd->d", model.mlps[0].linear1.bias).unsqueeze(0)
+            if decompose_bias
+            else model.mlps[0].linear1.bias.unsqueeze(0),
+            "Bias, sum over k" if decompose_bias else "Bias (not decomposed)",
             "Neuron index",
             "",
         )
+    else:
+        # Remove the frame
+        axs[0, 1].axis("off")
     plot_matrix(
-        axs[0, 2],
+        axs[0, 1 + show_bias],
         einops.einsum(model.mlps[0].linear2.subnetwork_params, "k ... -> ...").T,
         "W_out.T, sum over k",
         "Neuron index",
@@ -135,12 +143,15 @@ def plot_components_fullrank(
             W_in_k = mlp.linear1.subnetwork_params[k]
             ax = axs[k + 1, 0]  # type: ignore
             plot_matrix(ax, W_in_k, f"W_in_k, k={k}", "Neuron index", "Embedding index")
-            if len(mlp.linear1.bias.shape) > 1:
+            if decompose_bias and show_bias:
                 bias_k = mlp.linear1.bias[None, k]
                 ax = axs[k + 1, 1]  # type: ignore
                 plot_matrix(ax, bias_k, f"Bias_k, k={k}", "Neuron index", "")
+            elif show_bias:
+                # Remove the frame
+                axs[k + 1, 1].axis("off")
             W_out_k = mlp.linear2.subnetwork_params[k].T
-            ax = axs[k + 1, 2]  # type: ignore
+            ax = axs[k + 1, 1 + show_bias]  # type: ignore
             plot_matrix(ax, W_out_k, f"W_out_k.T, k={k}", "Neuron index", "")
     return {"matrices_layer0": fig}
 

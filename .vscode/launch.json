@@ -122,6 +122,18 @@
             }
         },
         {
+            "name": "piecewise_topk_rank_penalty_spd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_rank_penalty_config.yaml",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
+        },
+        {
             "name": "piecewise_handcoded_topk_spd",
             "type": "debugpy",
             "request": "launch",
