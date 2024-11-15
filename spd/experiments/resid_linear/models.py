@@ -84,15 +84,13 @@ class ResidualLinearModel(Model):
 
     def all_decomposable_params(
         self,
-    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:
         """Dictionary of all parameters which will be decomposed with SPD."""
         params = {}
         for i, mlp in enumerate(self.layers):
             # We transpose because our SPD model uses (input, output) pairs, not (output, input)
             params[f"layers.{i}.input_layer.weight"] = mlp.input_layer.weight.T
-            params[f"layers.{i}.input_layer.bias"] = mlp.input_layer.bias
             params[f"layers.{i}.output_layer.weight"] = mlp.output_layer.weight.T
-            params[f"layers.{i}.output_layer.bias"] = mlp.output_layer.bias
         return params
 
 
@@ -126,18 +124,16 @@ class ResidualLinearSPDFullRankModel(SPDFullRankModel):
 
     def all_subnetwork_params(
         self,
-    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:
         params = {}
         for i, mlp in enumerate(self.layers):
             params[f"layers.{i}.input_layer.weight"] = mlp.linear1.subnetwork_params
-            params[f"layers.{i}.input_layer.bias"] = mlp.linear1.bias
             params[f"layers.{i}.output_layer.weight"] = mlp.linear2.subnetwork_params
-            params[f"layers.{i}.output_layer.bias"] = mlp.linear2.bias
         return params
 
     def all_subnetwork_params_summed(
         self,
-    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:
         return {p_name: p.sum(dim=0) for p_name, p in self.all_subnetwork_params().items()}
 
     def forward(
@@ -171,25 +167,17 @@ class ResidualLinearSPDFullRankModel(SPDFullRankModel):
 
     def set_subnet_to_zero(
         self, subnet_idx: int
-    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:
         stored_vals = {}
         for i, mlp in enumerate(self.layers):
             stored_vals[f"layers.{i}.input_layer.weight"] = (
                 mlp.linear1.subnetwork_params[subnet_idx, :, :].detach().clone()
             )
-            stored_vals[f"layers.{i}.input_layer.bias"] = (
-                mlp.linear1.bias[subnet_idx, :].detach().clone()
-            )
             stored_vals[f"layers.{i}.output_layer.weight"] = (
                 mlp.linear2.subnetwork_params[subnet_idx, :, :].detach().clone()
             )
-            stored_vals[f"layers.{i}.output_layer.bias"] = (
-                mlp.linear2.bias[subnet_idx, :].detach().clone()
-            )
             mlp.linear1.subnetwork_params.data[subnet_idx, :, :] = 0.0
-            mlp.linear1.bias.data[subnet_idx, :] = 0.0
             mlp.linear2.subnetwork_params.data[subnet_idx, :, :] = 0.0
-            mlp.linear2.bias.data[subnet_idx, :] = 0.0
         return stored_vals
 
     def restore_subnet(
@@ -201,11 +189,9 @@ class ResidualLinearSPDFullRankModel(SPDFullRankModel):
             mlp.linear1.subnetwork_params.data[subnet_idx, :, :] = stored_vals[
                 f"layers.{i}.input_layer.weight"
             ]
-            mlp.linear1.bias.data[subnet_idx, :] = stored_vals[f"layers.{i}.input_layer.bias"]
             mlp.linear2.subnetwork_params.data[subnet_idx, :, :] = stored_vals[
                 f"layers.{i}.output_layer.weight"
             ]
-            mlp.linear2.bias.data[subnet_idx, :] = stored_vals[f"layers.{i}.output_layer.bias"]
 
     @classmethod
     def _load_model(
@@ -292,7 +278,14 @@ class ResidualLinearSPDFullRankModel(SPDFullRankModel):
 
 class ResidualLinearSPDRankPenaltyModel(SPDRankPenaltyModel):
     def __init__(
-        self, n_features: int, d_embed: int, d_mlp: int, n_layers: int, k: int, init_scale: float
+        self,
+        n_features: int,
+        d_embed: int,
+        d_mlp: int,
+        n_layers: int,
+        k: int,
+        init_scale: float,
+        m: int | None = None,
     ):
         super().__init__()
         self.n_features = n_features
@@ -303,8 +296,7 @@ class ResidualLinearSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         self.W_E = nn.Parameter(torch.empty(n_features, d_embed))
 
-        # Use min dimension for m as in ParamComponentsSchatten
-        self.m = min(d_embed, d_mlp)
+        self.m = min(d_embed, d_mlp) if m is None else m
 
         self.layers = nn.ModuleList(
             [
@@ -323,22 +315,20 @@ class ResidualLinearSPDRankPenaltyModel(SPDRankPenaltyModel):
 
     def all_subnetwork_params(
         self,
-    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:
         params = {}
         for i, mlp in enumerate(self.layers):
             params[f"layers.{i}.input_layer.weight"] = torch.einsum(
                 "kfm,kmh->kfh", mlp.linear1.A, mlp.linear1.B
             )
-            params[f"layers.{i}.input_layer.bias"] = mlp.linear1.bias
             params[f"layers.{i}.output_layer.weight"] = torch.einsum(
                 "kfm,kmh->kfh", mlp.linear2.A, mlp.linear2.B
             )
-            params[f"layers.{i}.output_layer.bias"] = mlp.linear2.bias
         return params
 
     def all_subnetwork_params_summed(
         self,
-    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, "k d_out"] | Float[Tensor, "k d_in d_out"]]:
         return {p_name: p.sum(dim=0) for p_name, p in self.all_subnetwork_params().items()}
 
     def forward(
@@ -372,25 +362,18 @@ class ResidualLinearSPDRankPenaltyModel(SPDRankPenaltyModel):
 
     def set_subnet_to_zero(
         self, subnet_idx: int
-    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:  # bias or weight
+    ) -> dict[str, Float[Tensor, " d_out"] | Float[Tensor, "d_in d_out"]]:
         stored_vals = {}
         for i, mlp in enumerate(self.layers):
             stored_vals[f"layers.{i}.input_layer.A"] = mlp.linear1.A[subnet_idx].detach().clone()
             stored_vals[f"layers.{i}.input_layer.B"] = mlp.linear1.B[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.input_layer.bias"] = (
-                mlp.linear1.bias[subnet_idx].detach().clone()
-            )
             stored_vals[f"layers.{i}.output_layer.A"] = mlp.linear2.A[subnet_idx].detach().clone()
             stored_vals[f"layers.{i}.output_layer.B"] = mlp.linear2.B[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.output_layer.bias"] = (
-                mlp.linear2.bias[subnet_idx].detach().clone()
-            )
+
             mlp.linear1.A.data[subnet_idx] = 0.0
             mlp.linear1.B.data[subnet_idx] = 0.0
-            mlp.linear1.bias.data[subnet_idx] = 0.0
             mlp.linear2.A.data[subnet_idx] = 0.0
             mlp.linear2.B.data[subnet_idx] = 0.0
-            mlp.linear2.bias.data[subnet_idx] = 0.0
         return stored_vals
 
     def restore_subnet(
@@ -401,15 +384,13 @@ class ResidualLinearSPDRankPenaltyModel(SPDRankPenaltyModel):
         for i, mlp in enumerate(self.layers):
             mlp.linear1.A[subnet_idx].data = stored_vals[f"layers.{i}.input_layer.A"]
             mlp.linear1.B[subnet_idx].data = stored_vals[f"layers.{i}.input_layer.B"]
-            mlp.linear1.bias[subnet_idx].data = stored_vals[f"layers.{i}.input_layer.bias"]
             mlp.linear2.A[subnet_idx].data = stored_vals[f"layers.{i}.output_layer.A"]
             mlp.linear2.B[subnet_idx].data = stored_vals[f"layers.{i}.output_layer.B"]
-            mlp.linear2.bias[subnet_idx].data = stored_vals[f"layers.{i}.output_layer.bias"]
 
     def all_As_and_Bs(
         self,
     ) -> dict[str, tuple[Float[Tensor, "k d_in m"], Float[Tensor, "k m d_out"]]]:
-        """Get all A and B matrices for each layer. Note that this won't return bias components."""
+        """Get all A and B matrices for each layer."""
         params = {}
         for i, mlp in enumerate(self.layers):
             params[f"layers.{i}.input_layer.weight"] = (mlp.linear1.A, mlp.linear1.B)

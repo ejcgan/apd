@@ -71,7 +71,6 @@ class PiecewiseConfig(BaseModel):
     dataset_seed: int | None = None
     simple_bias: bool = False
     handcoded_AB: bool = False
-    decompose_bias: bool = True
 
 
 class ResidualLinearConfig(BaseModel):
@@ -114,6 +113,7 @@ class Config(BaseModel):
     distil_from_target: bool = False
     pnorm: PositiveFloat | None = None
     pnorm_end: PositiveFloat | None = None
+    m: PositiveInt | None = None
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"] = "constant"
     lr_exponential_halflife: PositiveFloat | None = None
     lr_warmup_pct: Probability = 0.0
@@ -195,21 +195,6 @@ class Config(BaseModel):
                 self.spd_type == "rank_penalty"
             ), "topk_schatten_coeff is not None but spd_type is not rank_penalty"
 
-        if (
-            self.spd_type != "rank_one"
-            and isinstance(self.task_config, PiecewiseConfig)
-            and not self.task_config.handcoded_AB
-            and not self.task_config.decompose_bias
-        ):
-            raise ValueError("Must have one of handcoded_AB or decompose_bias set")
-
-        if (
-            self.spd_type == "rank_one"
-            and isinstance(self.task_config, PiecewiseConfig)
-            and self.task_config.decompose_bias
-        ):
-            raise ValueError("Cannot decompose bias in rank 1 case")
-
         if self.topk_param_attrib_coeff is not None and not isinstance(
             self.task_config, PiecewiseConfig
         ):
@@ -217,6 +202,9 @@ class Config(BaseModel):
 
         if self.distil_from_target and not isinstance(self.task_config, PiecewiseConfig):
             raise ValueError("distil_from_target is currently only supported for piecewise")
+
+        if self.m is not None:
+            assert self.spd_type == "rank_penalty", "Cannot set m for non-rank penalty SPD"
 
         return self
 
@@ -565,7 +553,7 @@ def calc_lp_sparsity_loss_rank_one(
 
     Args:
         out: The output of the model.
-        layer_acts: Activations at the output of each layer (i.e. after both A and B transformations).
+        layer_acts: Activations at the output of each layer, i.e. after both A and B transformations
         inner_acts: The inner acts of the model (i.e. the set of subnetwork activations after the A
             transformation for each parameter matrix).
         B_params: The B matrix of each rank one layer.
@@ -765,7 +753,6 @@ def optimize(
     out_dir: Path | None = None,
 ) -> None:
     model.to(device=device)
-
     has_instance_dim = hasattr(model, "n_instances")
 
     # Note that we expect weight decay to be problematic for spd
@@ -923,8 +910,8 @@ def optimize(
             out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
 
             if config.topk_l2_coeff is not None:
-                if config.spd_type == "full_rank":
-                    assert isinstance(model, SPDFullRankModel)
+                if config.spd_type == "full_rank" or config.spd_type == "rank_penalty":
+                    assert isinstance(model, SPDFullRankModel | SPDRankPenaltyModel)
                     topk_l2_loss = calc_topk_l2_full_rank(
                         subnet_param_vals=list(model.all_subnetwork_params().values()),
                         topk_mask=topk_mask,

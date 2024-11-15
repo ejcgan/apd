@@ -8,7 +8,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from spd.models.base import SPDFullRankModel, SPDModel
+from spd.models.base import SPDFullRankModel, SPDModel, SPDRankPenaltyModel
 from spd.run_spd import Config
 from spd.utils import run_spd_forward_pass
 
@@ -44,7 +44,7 @@ def plot_subnetwork_attributions_statistics(
 
 def plot_subnetwork_correlations(
     dataloader: DataLoader[tuple[Float[Tensor, "batch n_inputs"], Any]],
-    spd_model: SPDModel | SPDFullRankModel,
+    spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
     config: Config,
     device: str,
     n_forward_passes: int = 100,

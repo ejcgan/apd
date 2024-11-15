@@ -17,4 +17,4 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/resid_linear/resid_linear_topk_full_rank_config.yaml
+- spd/experiments/resid_linear/resid_linear_topk_rank_penalty_config.yaml

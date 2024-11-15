@@ -12,4 +12,4 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/tms/tms_topk_full_rank_config.yaml
+- spd/experiments/tms/tms_topk_rank_penalty_config.yaml

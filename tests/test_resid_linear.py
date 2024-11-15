@@ -23,7 +23,7 @@ RESID_LINEAR_TASK_CONFIG = ResidualLinearConfig(
 )
 
 
-def test_resid_linear_decomposition_happy_path() -> None:
+def test_resid_linear_rank_penalty_decomposition_happy_path() -> None:
     set_seed(0)
     n_features = 3
     d_embed = 2
@@ -34,7 +34,7 @@ def test_resid_linear_decomposition_happy_path() -> None:
     device = "cpu"
     config = Config(
         seed=0,
-        spd_type="full_rank",
+        spd_type="rank_penalty",
         unit_norm_matrices=False,
         topk=1,
         batch_topk=True,
@@ -47,7 +47,6 @@ def test_resid_linear_decomposition_happy_path() -> None:
         steps=5,  # Run only a few steps for the test
         print_freq=2,
         image_freq=5,
-        slow_images=False,
         save_freq=None,
         lr_warmup_pct=0.01,
         lr_schedule="cosine",
@@ -61,11 +60,11 @@ def test_resid_linear_decomposition_happy_path() -> None:
     ).to(device)
 
     # Create the SPD model
-    model = ResidualLinearSPDFullRankModel(
-        n_features=n_features,
-        d_embed=d_embed,
-        d_mlp=d_mlp,
-        n_layers=n_layers,
+    model = ResidualLinearSPDRankPenaltyModel(
+        n_features=pretrained_model.n_features,
+        d_embed=pretrained_model.d_embed,
+        d_mlp=pretrained_model.d_mlp,
+        n_layers=pretrained_model.n_layers,
         k=config.task_config.k,
         init_scale=config.task_config.init_scale,
     ).to(device)
@@ -73,6 +72,17 @@ def test_resid_linear_decomposition_happy_path() -> None:
     # Use the pretrained model's embedding matrix and don't train it further
     model.W_E.data[:, :] = pretrained_model.W_E.data.detach().clone()
     model.W_E.requires_grad = False
+
+    # Copy the biases from the target model to the SPD model and set requires_grad to False
+    for i in range(pretrained_model.n_layers):
+        model.layers[i].linear1.bias.data[:] = (
+            pretrained_model.layers[i].input_layer.bias.data.detach().clone()
+        )
+        model.layers[i].linear1.bias.requires_grad = False
+        model.layers[i].linear2.bias.data[:] = (
+            pretrained_model.layers[i].output_layer.bias.data.detach().clone()
+        )
+        model.layers[i].linear2.bias.requires_grad = False
 
     # Create dataset and dataloader
     dataset = ResidualLinearDataset(
@@ -88,9 +98,7 @@ def test_resid_linear_decomposition_happy_path() -> None:
     param_map = {}
     for i in range(pretrained_model.n_layers):
         param_map[f"layers.{i}.input_layer.weight"] = f"layers.{i}.input_layer.weight"
-        param_map[f"layers.{i}.input_layer.bias"] = f"layers.{i}.input_layer.bias"
         param_map[f"layers.{i}.output_layer.weight"] = f"layers.{i}.output_layer.weight"
-        param_map[f"layers.{i}.output_layer.bias"] = f"layers.{i}.output_layer.bias"
 
     # Calculate initial loss
     batch, labels = next(iter(dataloader))
@@ -211,6 +219,7 @@ def test_resid_linear_spd_rank_penalty_full_rank_equivalence() -> None:
     d_mlp = 3
     n_layers = 2
     k = 2
+    m = 1
 
     device = "cpu"
 
@@ -236,17 +245,20 @@ def test_resid_linear_spd_rank_penalty_full_rank_equivalence() -> None:
         n_layers=n_layers,
         k=k,
         init_scale=1.0,
+        m=m,
     ).to(device)
 
     # Copy embedding matrix and biases
     rank_penalty_model.W_E.data = full_rank_model.W_E.data.clone()
     for i in range(n_layers):
-        rank_penalty_model.layers[i].linear1.bias.data = full_rank_model.layers[
-            i
-        ].linear1.bias.data.clone()
-        rank_penalty_model.layers[i].linear2.bias.data = full_rank_model.layers[
-            i
-        ].linear2.bias.data.clone()
+        # Full rank has a bias for each k index, whereas rank penalty has no k index.
+        # We thus sum over the k index in the full rank biases before copying to the rank penalty
+        rank_penalty_model.layers[i].linear1.bias.data = (
+            full_rank_model.layers[i].linear1.bias.data.sum(dim=0).clone()
+        )
+        rank_penalty_model.layers[i].linear2.bias.data = (
+            full_rank_model.layers[i].linear2.bias.data.sum(dim=0).clone()
+        )
 
     # For each layer and subnetwork, decompose the full rank parameters using SVD
     for i in range(n_layers):

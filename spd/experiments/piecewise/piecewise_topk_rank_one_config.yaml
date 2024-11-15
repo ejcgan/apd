@@ -1,6 +1,7 @@
 wandb_project: spd-piecewise
 wandb_run_name: null
 wandb_run_name_prefix: ""
+spd_type: rank_one
 seed: 0
 topk: 0.625
 batch_topk: true
@@ -30,4 +31,3 @@ task_config:
   k: 10
   simple_bias: false
   handcoded_AB: false
-  decompose_bias: false

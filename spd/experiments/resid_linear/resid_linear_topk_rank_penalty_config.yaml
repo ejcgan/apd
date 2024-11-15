@@ -4,20 +4,18 @@ wandb_run_name_prefix: "rp_"
 spd_type: rank_penalty
 unit_norm_matrices: false
 seed: 0
-topk: 1.3
+topk: 1.15
 pnorm: 0.8
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1
-# topk_l2_coeff: 1e-1
-topk_schatten_coeff: 1e-2
+topk_schatten_coeff: 1e-1
 lr: 1e-2
 batch_size: 1024
-steps: 20_000
+steps: 30_000
 print_freq: 500
-image_freq: 5_000
-slow_images: true
-save_freq: 20_000
+image_freq: 10_000
+save_freq: 30_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
 task_config:

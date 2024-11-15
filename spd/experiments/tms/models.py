@@ -263,6 +263,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         n_hidden: int,
         k: int | None,
         bias_val: float,
+        m: int | None = None,
         device: str = "cuda",
     ):
         super().__init__()
@@ -272,7 +273,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.k = k if k is not None else n_features
         self.bias_val = bias_val
 
-        self.m = min(n_features, n_hidden) + 1
+        self.m = min(n_features, n_hidden) + 1 if m is None else m
 
         self.A = nn.Parameter(torch.empty((n_instances, self.k, n_features, self.m), device=device))
         self.B = nn.Parameter(torch.empty((n_instances, self.k, self.m, n_hidden), device=device))

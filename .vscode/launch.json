@@ -38,11 +38,11 @@
             }
         },
         {
-            "name": "tms_topk_full_rank",
+            "name": "tms_topk_rank_penalty",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_full_rank_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_rank_penalty_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -98,11 +98,11 @@
             }
         },
         {
-            "name": "piecewise_topk_spd",
+            "name": "piecewise_topk_rank_one_spd",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_topk_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_topk_rank_one_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -134,11 +134,11 @@
             }
         },
         {
-            "name": "resid_linear_topk_full_rank_spd",
+            "name": "resid_linear_topk_rank_penalty_spd",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/resid_linear/resid_linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/resid_linear/resid_linear_topk_full_rank_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/resid_linear/resid_linear_topk_rank_penalty_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

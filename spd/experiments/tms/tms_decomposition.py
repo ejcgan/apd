@@ -293,6 +293,7 @@ def main(
             n_features=task_config.n_features,
             n_hidden=task_config.n_hidden,
             k=task_config.k,
+            m=config.m,
             bias_val=task_config.bias_val,
             device=device,
         )

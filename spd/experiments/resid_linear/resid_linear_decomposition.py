@@ -16,7 +16,6 @@ from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-# from spd.experiments.linear.plotting import plot_multiple_subnetwork_params
 from spd.experiments.resid_linear.models import (
     ResidualLinearModel,
     ResidualLinearSPDFullRankModel,
@@ -159,7 +158,7 @@ def plot_multiple_subnetwork_params(
 
 
 def resid_linear_plot_results_fn(
-    model: ResidualLinearSPDFullRankModel,
+    model: ResidualLinearSPDFullRankModel | ResidualLinearSPDRankPenaltyModel,
     step: int | None,
     out_dir: Path | None,
     device: str,
@@ -292,6 +291,7 @@ def main(
             n_layers=target_model.n_layers,
             k=config.task_config.k,
             init_scale=config.task_config.init_scale,
+            m=config.m,
         ).to(device)
     else:
         raise ValueError(f"Unknown spd_type: {config.spd_type}")
@@ -300,14 +300,23 @@ def main(
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()
     model.W_E.requires_grad = False
 
+    # Copy the biases from the target model to the SPD model and set requires_grad to False
+    for i in range(target_model.n_layers):
+        model.layers[i].linear1.bias.data[:] = (
+            target_model.layers[i].input_layer.bias.data.detach().clone()
+        )
+        model.layers[i].linear1.bias.requires_grad = False
+        model.layers[i].linear2.bias.data[:] = (
+            target_model.layers[i].output_layer.bias.data.detach().clone()
+        )
+        model.layers[i].linear2.bias.requires_grad = False
+
     param_map = {}
     for i in range(target_model.n_layers):
         # Map from pretrained model's `all_decomposable_params` to the SPD models'
         # `all_subnetwork_params_summed`.
         param_map[f"layers.{i}.input_layer.weight"] = f"layers.{i}.input_layer.weight"
-        param_map[f"layers.{i}.input_layer.bias"] = f"layers.{i}.input_layer.bias"
         param_map[f"layers.{i}.output_layer.weight"] = f"layers.{i}.output_layer.weight"
-        param_map[f"layers.{i}.output_layer.bias"] = f"layers.{i}.output_layer.bias"
 
     dataset = ResidualLinearDataset(
         embed_matrix=model.W_E,
