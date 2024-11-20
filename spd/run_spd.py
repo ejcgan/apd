@@ -1095,7 +1095,7 @@ def optimize(
                 for param in model.parameters():
                     if param.grad is not None:
                         grad_norm += param.grad.data.norm()  # type: ignore
-                    wandb.log({"grad_norm": grad_norm}, step=step)
+                wandb.log({"grad_norm": grad_norm}, step=step)
 
             if config.unit_norm_matrices:
                 assert isinstance(
