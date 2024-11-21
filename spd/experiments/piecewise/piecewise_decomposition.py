@@ -238,6 +238,11 @@ def get_model_and_dataloader(
 
     # Handcoded the parameters if requested
     if config.task_config.handcoded_AB:
+        if config.task_config.n_layers > 1:
+            raise ValueError(
+                "Handcoded AB not supported for >1 layer models due to an unsolved "
+                "bug in the W_out matrices (noticed in full_rank, unsure about others)"
+            )
         logger.info("Setting handcoded A and B matrices (!)")
         if config.spd_type == "rank_one":
             assert isinstance(piecewise_model_spd, PiecewiseFunctionSPDTransformer)

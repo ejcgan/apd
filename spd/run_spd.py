@@ -210,6 +210,10 @@ class Config(BaseModel):
         if self.m is not None:
             assert self.spd_type == "rank_penalty", "Cannot set m for non-rank penalty SPD"
 
+        if isinstance(self.task_config, PiecewiseConfig) and self.task_config.handcoded_AB:
+            assert (
+                self.task_config.n_layers == 1
+            ), "Handcoded AB not supported for >1 layer models due to a bug in the W_out matrices"
         return self
 
 
