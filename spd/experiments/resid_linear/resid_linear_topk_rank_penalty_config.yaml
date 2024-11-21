@@ -9,7 +9,7 @@ pnorm: 0.8
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1
-topk_schatten_coeff: 1e-1
+schatten_coeff: 1e-1
 lr: 1e-2
 batch_size: 1024
 steps: 30_000

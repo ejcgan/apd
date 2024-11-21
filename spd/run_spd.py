@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
-from jaxtyping import Bool, Float
+from jaxtyping import Float
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -107,7 +107,8 @@ class Config(BaseModel):
     param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
     topk_l2_coeff: NonNegativeFloat | None = None
-    topk_schatten_coeff: NonNegativeFloat | None = None
+    schatten_coeff: NonNegativeFloat | None = None
+    schatten_pnorm: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
     topk_param_attrib_coeff: NonNegativeFloat | None = None
     distil_from_target: bool = False
@@ -190,10 +191,13 @@ class Config(BaseModel):
         if self.spd_type in ["full_rank"]:
             assert not self.unit_norm_matrices, "Can't unit norm matrices if using full rank"
 
-        if self.topk_schatten_coeff is not None:
+        if self.schatten_coeff is not None:
             assert (
                 self.spd_type == "rank_penalty"
-            ), "topk_schatten_coeff is not None but spd_type is not rank_penalty"
+            ), "schatten_coeff is not None but spd_type is not rank_penalty"
+            assert (
+                self.schatten_pnorm is not None
+            ), "schatten_pnorm must be set if schatten_coeff is set"
 
         if self.topk_param_attrib_coeff is not None and not isinstance(
             self.task_config, PiecewiseConfig
@@ -224,8 +228,8 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
     if config.topk_l2_coeff is not None:
         run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
-    if config.topk_schatten_coeff is not None:
-        run_suffix += f"schatten{config.topk_schatten_coeff:.2e}_"
+    if config.schatten_coeff is not None:
+        run_suffix += f"schatten{config.schatten_coeff:.2e}_"
     if config.topk_act_recon_coeff is not None:
         run_suffix += f"topkactrecon_{config.topk_act_recon_coeff:.2e}_"
     if config.topk_param_attrib_coeff is not None:
@@ -304,7 +308,7 @@ def calc_recon_mse(
 
 def calc_topk_l2_rank_one(
     As_and_Bs_vals: list[tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]],
-    topk_mask: Bool[Tensor, "batch k"] | Bool[Tensor, "batch n_instances k"],
+    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
     n_params: int,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the L2 of the sum of the topk subnetworks.
@@ -340,7 +344,7 @@ def calc_topk_l2_full_rank(
         | Float[Tensor, "n_instances k d_out"]
         | Float[Tensor, "n_instances k d_in d_out"]
     ],
-    topk_mask: Bool[Tensor, "batch k"] | Bool[Tensor, "batch n_instances k"],
+    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
     n_params: int,
     n_instances: int | None = None,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
@@ -388,14 +392,14 @@ def calc_topk_l2_full_rank(
     return topk_l2_penalty / n_params / batch_size
 
 
-def calc_topk_schatten_loss(
+def calc_schatten_loss(
     As_and_Bs_vals: list[
         tuple[
             Float[Tensor, "n_instances k d_layer_in m"] | Float[Tensor, "k d_layer_in m"],
             Float[Tensor, "n_instances k m d_layer_out"] | Float[Tensor, "k m d_layer_out"],
         ]
     ],
-    topk_mask: Bool[Tensor, "batch k"] | Bool[Tensor, "batch n_instances k"],
+    mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
     p: float,
     n_params: int,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
@@ -403,22 +407,23 @@ def calc_topk_schatten_loss(
 
     Args:
         As_and_Bs_vals: List of tuples containing A and B matrices for each layer
-        topk_mask: The topk mask to use for the Schatten p-norm penalty
+        mask: The mask to use for the Schatten p-norm penalty. May be a binary mask (if topk) or
+            a float mask (if lp sparsity).
         p: The Schatten p-norm to use (from config.pnorm)
         n_params: The number of parameters in the model
     Returns:
         The Schatten p-norm penalty for the topk subnetworks
     """
-    n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
+    n_instances = mask.shape[1] if mask.ndim == 3 else None
     accumulate_shape = (n_instances,) if n_instances is not None else ()
 
-    topk_schatten_penalty = torch.zeros(accumulate_shape, device=As_and_Bs_vals[0][0].device)
-    batch_size = topk_mask.shape[0]
+    schatten_penalty = torch.zeros(accumulate_shape, device=As_and_Bs_vals[0][0].device)
+    batch_size = mask.shape[0]
 
     for A, B in As_and_Bs_vals:
         # A: [k, d_in, m] or [n_instances, k, d_in, m]
         # B: [k, m, d_out] or [n_instances, k, m, d_out]
-        # topk_mask: [batch, k] or [batch, n_instances, k]
+        # mask: [batch, k] or [batch, n_instances, k]
 
         # Compute S_A = A^T A and S_B = B B^T
         S_A = einops.einsum(A, A, "... k d_in m, ... k d_in m -> ... k m")
@@ -427,14 +432,14 @@ def calc_topk_schatten_loss(
         S_AB = S_A * S_B
 
         # Apply topk mask
-        S_AB_topk = einops.einsum(S_AB, topk_mask, "... k m, batch ... k -> batch ... k m")
+        S_AB_topk = einops.einsum(S_AB, mask, "... k m, batch ... k -> batch ... k m")
 
         # Sum the Schatten p-norm
-        topk_schatten_penalty = topk_schatten_penalty + ((S_AB_topk + 1e-16) ** (0.5 * p)).sum(
+        schatten_penalty = schatten_penalty + ((S_AB_topk + 1e-16) ** (0.5 * p)).sum(
             dim=(0, -2, -1)
         )
 
-    return topk_schatten_penalty / n_params / batch_size
+    return schatten_penalty / n_params / batch_size
 
 
 def calc_param_match_loss(
@@ -534,7 +539,7 @@ def calc_lp_sparsity_loss_rank_one(
     inner_acts: dict[str, Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]],
     B_params: dict[str, Float[Tensor, "n_instances k d_out"] | Float[Tensor, "k d_out"]],
     step_pnorm: float,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
 
     Note that this always uses the gradient form of the attributions. We do not support other
@@ -561,7 +566,8 @@ def calc_lp_sparsity_loss_rank_one(
 
     Returns:
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
-            dimension.
+            dimension. Note that we keep the batch and k dimensions as we need them if calculating
+            the schatten loss.
     """
     assert layer_acts.keys() == inner_acts.keys() == B_params.keys()
     first_param_name = next(iter(layer_acts.keys()))
@@ -586,16 +592,15 @@ def calc_lp_sparsity_loss_rank_one(
     attributions = attributions / out.shape[-1]
 
     # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
-    lp_sparsity_loss = ((attributions.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
-    lp_sparsity_loss = lp_sparsity_loss.mean(dim=0)  # Mean over batch dim
-    return lp_sparsity_loss
+    lp_sparsity_loss_per_k = (attributions.abs() + 1e-16) ** (step_pnorm * 0.5)
+    return lp_sparsity_loss_per_k
 
 
 def calc_lp_sparsity_loss_full_rank(
     out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    attributions: Float[Tensor, "batch n_instances k d_out"] | Float[Tensor, "batch k d_out"],
+    attributions: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
     step_pnorm: float,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
 
     Args:
@@ -604,16 +609,16 @@ def calc_lp_sparsity_loss_full_rank(
         step_pnorm: The pnorm to use for the sparsity loss.
     Returns:
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
-            dimension.
+            dimension. Note that we keep the batch and k dimensions as we need them if calculating
+            the schatten loss.
     """
     # Average the attributions over the output dimensions
     d_model_out = out.shape[-1]
     attributions = attributions / d_model_out
 
     # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
-    lp_sparsity_loss = ((attributions.abs() + 1e-16) ** (step_pnorm * 0.5)).sum(dim=-1)
-    lp_sparsity_loss = lp_sparsity_loss.mean(dim=0)  # Mean over batch dim
-    return lp_sparsity_loss
+    lp_sparsity_loss_per_k = (attributions.abs() + 1e-16) ** (step_pnorm * 0.5)
+    return lp_sparsity_loss_per_k
 
 
 def calc_topk_param_attrib_loss(
@@ -870,11 +875,12 @@ def optimize(
             attribution_type=config.attribution_type,
             spd_type=config.spd_type,
         )
-        lp_sparsity_loss = None
+
+        lp_sparsity_loss_per_k = None
         if config.lp_sparsity_coeff is not None:
             step_pnorm = config.pnorm or get_step_pnorm(step, config.steps, config.pnorm_end)
             if config.spd_type == "rank_one":
-                lp_sparsity_loss = calc_lp_sparsity_loss_rank_one(
+                lp_sparsity_loss_per_k = calc_lp_sparsity_loss_rank_one(
                     out=out,
                     layer_acts=layer_acts,
                     inner_acts=inner_acts,
@@ -882,14 +888,14 @@ def optimize(
                     step_pnorm=step_pnorm,
                 )
             else:
-                lp_sparsity_loss = calc_lp_sparsity_loss_full_rank(
+                lp_sparsity_loss_per_k = calc_lp_sparsity_loss_full_rank(
                     out=out, attributions=attributions, step_pnorm=step_pnorm
                 )
 
         (
             out_topk,
             topk_l2_loss,
-            topk_schatten_loss,
+            schatten_loss,
             topk_recon_loss,
             topk_mask,
             topk_param_attrib_loss,
@@ -952,18 +958,27 @@ def optimize(
                     target_post_acts=post_acts, layer_acts_topk=layer_acts_topk
                 )
 
-        if config.topk_schatten_coeff is not None:
-            assert topk_mask is not None
+        if config.schatten_coeff is not None:
             assert isinstance(
                 model, SPDRankPenaltyModel
-            ), "Topk schatten loss only supported for SPDRankPenaltyModel"
-            pnorm = config.pnorm if config.pnorm is not None else 1.0
-            topk_schatten_loss = calc_topk_schatten_loss(
+            ), "Schatten only supported for SPDRankPenaltyModel"
+            mask = topk_mask if topk_mask is not None else lp_sparsity_loss_per_k
+            assert mask is not None
+            schatten_pnorm = config.schatten_pnorm if config.schatten_pnorm is not None else 1.0
+            # Use the attributions as the mask in the lp case, and topk_mask otherwise
+            schatten_loss = calc_schatten_loss(
                 As_and_Bs_vals=list(model.all_As_and_Bs().values()),
-                topk_mask=topk_mask,
-                p=pnorm,
+                mask=mask,
+                p=schatten_pnorm,
                 n_params=n_params,
             )
+
+        # Sum over the k dimension (-1) and mean over the batch dimension (0)
+        lp_sparsity_loss = (
+            lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
+            if lp_sparsity_loss_per_k is not None
+            else None
+        )
 
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
@@ -990,9 +1005,9 @@ def optimize(
         if topk_act_recon_loss is not None:
             assert config.topk_act_recon_coeff is not None
             loss = loss + config.topk_act_recon_coeff * topk_act_recon_loss.mean()
-        if topk_schatten_loss is not None:
-            assert config.topk_schatten_coeff is not None
-            loss = loss + config.topk_schatten_coeff * topk_schatten_loss.mean()
+        if schatten_loss is not None:
+            assert config.schatten_coeff is not None
+            loss = loss + config.schatten_coeff * schatten_loss.mean()
 
         # Logging
         if step % config.print_freq == 0:
@@ -1017,8 +1032,8 @@ def optimize(
                 tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
             if topk_act_recon_loss is not None:
                 tqdm.write(f"Topk act recon loss:{nl}{topk_act_recon_loss}")
-            if topk_schatten_loss is not None:
-                tqdm.write(f"Topk schatten loss:{nl}{topk_schatten_loss}")
+            if schatten_loss is not None:
+                tqdm.write(f"Schatten loss:{nl}{schatten_loss}")
             if config.wandb_project:
                 wandb.log(
                     {
@@ -1047,8 +1062,8 @@ def optimize(
                         "topk_act_recon_loss": topk_act_recon_loss.mean().item()
                         if topk_act_recon_loss is not None
                         else None,
-                        "topk_schatten_loss": topk_schatten_loss.mean().item()
-                        if topk_schatten_loss is not None
+                        "schatten_loss": schatten_loss.mean().item()
+                        if schatten_loss is not None
                         else None,
                     },
                     step=step,

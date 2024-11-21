@@ -1,3 +1,4 @@
+#### Topk
 wandb_project: spd-piecewise
 wandb_run_name: null
 wandb_run_name_prefix: "rp_"
@@ -10,7 +11,7 @@ batch_topk: true
 param_match_coeff: 0.5
 topk_recon_coeff: 1
 topk_l2_coeff: null
-topk_schatten_coeff: 0.7
+schatten_coeff: 0.7
 pnorm: 1.0
 lr: 0.01
 steps: 50_000
@@ -33,7 +34,81 @@ task_config:
   simple_bias: false
   handcoded_AB: false
 
-####### See below for larger n_functions and neurons
+###### Lp 2f_3n_1l
+# wandb_project: spd-piecewise
+# wandb_run_name: null
+# wandb_run_name_prefix: "rp_"
+# spd_type: rank_penalty
+# unit_norm_matrices: false
+# m: null
+# seed: 0
+# topk: null
+# batch_size: 512
+# pnorm: 0.3
+# lp_sparsity_coeff: 10
+# param_match_coeff: 1
+# out_recon_coeff: 1e3
+# schatten_pnorm: 1.0
+# schatten_coeff: 10
+# lr: 0.01
+# steps: 30_000
+# print_freq: 500
+# image_freq: 5_000
+# slow_images: true
+# save_freq: 30_000
+# lr_warmup_pct: 0.004
+# lr_schedule: cosine
+# task_config:
+#   task_name: piecewise
+#   n_functions: 2
+#   neurons_per_function: 3
+#   n_layers: 1
+#   feature_probability: 0.05
+#   range_min: 0
+#   range_max: 5
+#   k: 2
+#   init_scale: 1.0
+#   simple_bias: false
+#   handcoded_AB: false
+
+###### Lp 4f_2l (not validated)
+# wandb_project: spd-piecewise
+# wandb_run_name: null
+# wandb_run_name_prefix: "rp_"
+# spd_type: rank_penalty
+# unit_norm_matrices: false
+# m: null
+# seed: 0
+# topk: null
+# batch_size: 512
+# pnorm: 0.3
+# lp_sparsity_coeff: 10
+# param_match_coeff: 1
+# out_recon_coeff: 1e3
+# schatten_pnorm: 1.0
+# schatten_coeff: 10
+# lr: 0.01
+# steps: 30_000
+# print_freq: 500
+# image_freq: 5_000
+# slow_images: true
+# save_freq: 30_000
+# lr_warmup_pct: 0.004
+# lr_schedule: cosine
+# task_config:
+#   task_name: piecewise
+#   n_functions: 4
+#   neurons_per_function: 10
+#   n_layers: 2
+#   feature_probability: 0.05
+#   range_min: 0
+#   range_max: 5
+#   k: 4
+#   init_scale: 1.0
+#   simple_bias: false
+#   handcoded_AB: false
+
+####### topk with larger n_functions and neurons
 # wandb_project: spd-piecewise
 # wandb_run_name: null
 # wandb_run_name_prefix: "rp"
@@ -46,7 +121,7 @@ task_config:
 # param_match_coeff: 5.0
 # topk_recon_coeff: 0.1
 # topk_l2_coeff: null
-# topk_schatten_coeff: 3e-1
+# schatten_coeff: 3e-1
 # pnorm: null
 # lr: 0.01
 # steps: 50_000

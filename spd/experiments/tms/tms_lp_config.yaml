@@ -1,18 +1,22 @@
 wandb_project: spd-tms
 wandb_run_name: null
 wandb_run_name_prefix: ""
+spd_type: rank_penalty
+unit_norm_matrices: true
 seed: 0
 topk: null
+m: 3
 param_match_coeff: 1.0
-lp_sparsity_coeff: 3
+lp_sparsity_coeff: 7.0
 pnorm: 0.9
-pnorm_end: null
+schatten_pnorm: 1.0
+schatten_coeff: 1.0
 batch_size: 2048
-steps: 30_000
-image_freq: 4000
-print_freq: 1000
-save_freq: 30_000
-lr: 0.06
+steps: 20_000
+image_freq: 5000
+print_freq: 500
+save_freq: 20_000
+lr: 0.3
 lr_schedule: constant
 lr_warmup_pct: 0.1
 task_config:
@@ -22,7 +26,8 @@ task_config:
   n_hidden: 2
   n_instances: 12
   bias_val: 0.0
-  train_bias: true
+  train_bias: false
   feature_probability: 0.05
+  data_generation_type: "at_least_zero_active"
   # File obtained by running spd/experiments/tms/train_tms.py
   pretrained_model_path: spd/experiments/tms/out/tms_n-features5_n-hidden2_n-instances12_seed0.pth/model.pth

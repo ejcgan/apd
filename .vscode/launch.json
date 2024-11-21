@@ -122,7 +122,7 @@
             }
         },
         {
-            "name": "piecewise_topk_rank_penalty_spd",
+            "name": "piecewise_rank_penalty_spd",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",

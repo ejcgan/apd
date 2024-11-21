@@ -10,7 +10,7 @@ param_match_coeff: 1.0
 topk_recon_coeff: 1
 attribution_type: gradient
 pnorm: 1.0
-topk_schatten_coeff: 7e-1
+schatten_coeff: 7e-1
 batch_size: 2048
 steps: 20_000
 image_freq: 5_000

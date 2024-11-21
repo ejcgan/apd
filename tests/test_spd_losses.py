@@ -204,6 +204,8 @@ class TestCalcLpSparsityLoss:
             B_params=B_params,
             step_pnorm=step_pnorm,
         )
+        # Sum over the k dimension and mean over the batch dimension
+        result = result.sum(dim=-1).mean(dim=0)
 
         # Take derivative w.r.t each output dimension
 
