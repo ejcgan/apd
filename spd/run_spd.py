@@ -39,7 +39,7 @@ class TMSConfig(BaseModel):
     feature_probability: Probability
     train_bias: bool
     bias_val: float
-    pretrained_model_path: RootPath | None = None
+    pretrained_model_path: RootPath
     data_generation_type: Literal["exactly_one_active", "at_least_zero_active"] = (
         "at_least_zero_active"
     )
@@ -53,7 +53,7 @@ class DeepLinearConfig(BaseModel):
     n_layers: PositiveInt | None = None
     n_instances: PositiveInt | None = None
     k: PositiveInt | None = None
-    pretrained_model_path: RootPath | None = None
+    pretrained_model_path: RootPath
 
 
 class PiecewiseConfig(BaseModel):
@@ -756,7 +756,7 @@ def optimize(
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
-    pretrained_model: Model | None,
+    pretrained_model: Model,
     param_map: dict[str, str] | None = None,
     plot_results_fn: Callable[..., dict[str, plt.Figure]] | None = None,
     out_dir: Path | None = None,
@@ -769,14 +769,14 @@ def optimize(
 
     lr_schedule_fn = get_lr_schedule_fn(config.lr_schedule, config.lr_exponential_halflife)
 
-    if pretrained_model is not None:
-        if config.param_match_coeff is not None:
-            assert param_map is not None, "Need a param_map for param_match loss"
-            # Check that our param_map contains all the decomposable param names
-            assert set(param_map.keys()) == set(pretrained_model.all_decomposable_params().keys())
-            assert set(param_map.values()) == set(model.all_subnetwork_params_summed().keys())
+    if config.param_match_coeff is not None:
+        assert param_map is not None, "Need a param_map for param_match loss"
+        # Check that our param_map contains all the decomposable param names
+        assert set(param_map.keys()) == set(pretrained_model.all_decomposable_params().keys())
+        assert set(param_map.values()) == set(model.all_subnetwork_params_summed().keys())
 
-        pretrained_model.to(device=device)
+    pretrained_model.to(device=device)
+
     n_params = sum(p.numel() for p in list(model.all_subnetwork_params_summed().values()))
     if has_instance_dim:
         # All subnetwork param have an n_instances dimension
@@ -808,20 +808,18 @@ def optimize(
 
         opt.zero_grad(set_to_none=True)
         try:
-            batch, labels = next(data_iter)
+            batch = next(data_iter)[0]  # Ignore labels here, we use the output of pretrained_model
         except StopIteration:
             tqdm.write(f"Epoch {epoch} finished, starting new epoch")
             epoch += 1
             data_iter = iter(dataloader)
-            batch, labels = next(data_iter)
-
-        batch = batch.to(device=device)
-        labels = labels.to(device=device)
+            batch = next(data_iter)[0]
 
         pre_acts = None
         post_acts = None
-        if pretrained_model is not None:
-            labels, pre_acts, post_acts = pretrained_model(batch)
+
+        batch = batch.to(device=device)
+        labels, pre_acts, post_acts = pretrained_model(batch)
 
         total_samples += batch.shape[0]
 
@@ -860,7 +858,6 @@ def optimize(
 
         param_match_loss = None
         if config.param_match_coeff is not None:
-            assert pretrained_model is not None, "Need a pretrained model for param_match loss"
             assert param_map is not None, "Need a param_map for param_match loss"
             param_match_loss = calc_param_match_loss(
                 pretrained_weights=pretrained_model.all_decomposable_params(),
@@ -942,7 +939,6 @@ def optimize(
                 topk_recon_loss = calc_recon_mse(out_topk, labels, has_instance_dim)
 
             if config.topk_param_attrib_coeff is not None:
-                assert pretrained_model is not None, "Need target model for topk_param_attrib_loss"
                 assert pre_acts is not None and post_acts is not None
                 topk_param_attrib_loss = calc_topk_param_attrib_loss(
                     target_out=labels,

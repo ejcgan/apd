@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from jaxtyping import Float
@@ -22,7 +24,7 @@ TMS_TASK_CONFIG = TMSConfig(
     feature_probability=0.5,
     train_bias=True,
     bias_val=0.0,
-    pretrained_model_path=None,  # We'll create this later
+    pretrained_model_path=Path(""),  # We'll create this later
 )
 
 

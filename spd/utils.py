@@ -636,7 +636,7 @@ def remove_grad_parallel_to_subnetwork_vecs(
 
 class SPDOutputs(NamedTuple):
     target_model_output: (
-        Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"] | None
+        Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"]
     )
     spd_model_output: (
         Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"]
@@ -658,7 +658,7 @@ class SPDOutputs(NamedTuple):
 
 def run_spd_forward_pass(
     spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
-    target_model: Model | None,
+    target_model: Model,
     input_array: Float[Tensor, "batch n_inputs"],
     attribution_type: Literal["gradient", "ablation", "activation"],
     spd_type: Literal["rank_one", "full_rank", "rank_penalty"],
@@ -667,10 +667,7 @@ def run_spd_forward_pass(
     distil_from_target: bool,
 ) -> SPDOutputs:
     # non-SPD model, and SPD-model non-topk forward pass
-    if target_model is not None:
-        target_model_output, _, _ = target_model(input_array)
-    else:
-        target_model_output = None
+    target_model_output, _, _ = target_model(input_array)
 
     model_output_spd, layer_acts, inner_acts = spd_model(input_array)
     attribution_scores = calculate_attributions(

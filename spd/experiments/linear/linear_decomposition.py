@@ -55,27 +55,15 @@ def main(
     print(f"Using device: {device}")
     assert isinstance(config.task_config, DeepLinearConfig)
 
-    if config.task_config.pretrained_model_path is not None:
-        dl_model = DeepLinearModel.from_pretrained(config.task_config.pretrained_model_path).to(
-            device
-        )
-        assert (
-            config.task_config.n_features is None
-            and config.task_config.n_layers is None
-            and config.task_config.n_instances is None
-        ), "n_features, n_layers, and n_instances must not be set if pretrained_model_path is set"
-        n_features = dl_model.n_features
-        n_layers = dl_model.n_layers
-        n_instances = dl_model.n_instances
-    else:
-        assert config.out_recon_coeff is not None, "Only out recon loss allows no pretrained model"
-        dl_model = None
-        n_features = config.task_config.n_features
-        n_layers = config.task_config.n_layers
-        n_instances = config.task_config.n_instances
-        assert (
-            n_features is not None and n_layers is not None and n_instances is not None
-        ), "n_features, n_layers, and n_instances must be set"
+    dl_model = DeepLinearModel.from_pretrained(config.task_config.pretrained_model_path).to(device)
+    assert (
+        config.task_config.n_features is None
+        and config.task_config.n_layers is None
+        and config.task_config.n_instances is None
+    ), "n_features, n_layers, and n_instances must not be set if pretrained_model_path is set"
+    n_features = dl_model.n_features
+    n_layers = dl_model.n_layers
+    n_instances = dl_model.n_instances
 
     run_name = get_run_name(config, n_features)
     if config.wandb_project:

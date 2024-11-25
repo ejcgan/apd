@@ -300,23 +300,21 @@ def main(
     else:
         raise ValueError(f"Unknown spd_type: {config.spd_type}")
 
-    pretrained_model = None
-    if task_config.pretrained_model_path:
-        pretrained_model = TMSModel(
-            n_instances=task_config.n_instances,
-            n_features=task_config.n_features,
-            n_hidden=task_config.n_hidden,
-            device=device,
-        )
-        pretrained_model.load_state_dict(
-            torch.load(task_config.pretrained_model_path, map_location=device)
-        )
-        pretrained_model.eval()
-        if task_config.handcoded:
-            model.set_handcoded_spd_params(pretrained_model)
+    pretrained_model = TMSModel(
+        n_instances=task_config.n_instances,
+        n_features=task_config.n_features,
+        n_hidden=task_config.n_hidden,
+        device=device,
+    )
+    pretrained_model.load_state_dict(
+        torch.load(task_config.pretrained_model_path, map_location=device)
+    )
+    pretrained_model.eval()
+    if task_config.handcoded:
+        model.set_handcoded_spd_params(pretrained_model)
 
-        # Manually set the bias for the SPD model from the bias in the pretrained model
-        model.b_final.data[:] = pretrained_model.b_final.data.clone()
+    # Manually set the bias for the SPD model from the bias in the pretrained model
+    model.b_final.data[:] = pretrained_model.b_final.data.clone()
 
     if not task_config.train_bias:
         model.b_final.requires_grad = False

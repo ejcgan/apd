@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from spd.models.base import SPDFullRankModel, SPDModel, SPDRankPenaltyModel
 from spd.run_spd import Config
-from spd.utils import run_spd_forward_pass
+from spd.utils import calc_topk_mask, calculate_attributions
 
 
 def plot_subnetwork_attributions_statistics(
@@ -53,17 +53,26 @@ def plot_subnetwork_correlations(
     for batch, _ in dataloader:
         batch = batch.to(device=device)
         assert config.topk is not None
-        spd_outputs = run_spd_forward_pass(
-            spd_model=spd_model,
-            target_model=None,
-            input_array=batch,
+
+        # Get the topk mask
+        model_output_spd, layer_acts, inner_acts = spd_model(batch)
+        attribution_scores = calculate_attributions(
+            model=spd_model,
+            batch=batch,
+            out=model_output_spd,
+            inner_acts=inner_acts,
+            layer_acts=layer_acts,
             attribution_type=config.attribution_type,
             spd_type=config.spd_type,
-            batch_topk=config.batch_topk,
-            topk=config.topk,
-            distil_from_target=config.distil_from_target,
         )
-        topk_masks.append(spd_outputs.topk_mask)
+
+        # We always assume the final subnetwork is the one we want to distil
+        topk_attrs = (
+            attribution_scores[..., :-1] if config.distil_from_target else attribution_scores
+        )
+        topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
+
+        topk_masks.append(topk_mask)
         if len(topk_masks) > n_forward_passes:
             break
     topk_masks = torch.cat(topk_masks).float()

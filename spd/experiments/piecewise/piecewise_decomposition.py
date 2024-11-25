@@ -49,7 +49,7 @@ wandb.require("core")
 
 def piecewise_plot_results_fn(
     model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
-    target_model: PiecewiseFunctionTransformer | None,
+    target_model: PiecewiseFunctionTransformer,
     step: int,
     out_dir: Path | None,
     device: str,

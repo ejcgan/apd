@@ -278,7 +278,7 @@ def plot_components(
 
 def plot_model_functions(
     spd_model: PiecewiseFunctionSPDTransformer | PiecewiseFunctionSPDFullRankTransformer,
-    target_model: PiecewiseFunctionTransformer | None,
+    target_model: PiecewiseFunctionTransformer,
     attribution_type: Literal["gradient", "ablation", "activation"],
     spd_type: Literal["rank_one", "full_rank", "rank_penalty"],
     device: str,
@@ -341,17 +341,13 @@ def plot_model_functions(
         print(
             f"How often is topk_mask True or control_bits == 0: {topk_mask_control_bits.mean():.3%}"
         )
-        if model_output_hardcoded is not None:
-            # Calculate recon loss
-            topk_recon_loss = calc_recon_mse(
-                out_topk, model_output_hardcoded, has_instance_dim=False
-            )
-            print(f"Topk recon loss: {topk_recon_loss:.4f}")
+        # Calculate recon loss
+        topk_recon_loss = calc_recon_mse(out_topk, model_output_hardcoded, has_instance_dim=False)
+        print(f"Topk recon loss: {topk_recon_loss:.4f}")
 
     # Convert stuff to numpy
     model_output_spd = model_output_spd[:, 0].cpu().detach().numpy()
-    if model_output_hardcoded is not None:
-        model_output_hardcoded = model_output_hardcoded[:, 0].cpu().detach().numpy()
+    model_output_hardcoded = model_output_hardcoded[:, 0].cpu().detach().numpy()
     out_topk = out_topk.cpu().detach().numpy()
     input_xs = input_array[:, 0].cpu().detach().numpy()
 
@@ -367,16 +363,14 @@ def plot_model_functions(
         color3 = colors[(4 * cb + 3) % len(colors)]
         s = slice(cb * n_samples, (cb + 1) * n_samples)
         ax.plot(input_xs[s], out_topk[s], ls="--", color=color0)
-        if model_output_hardcoded is not None:
-            assert target_model is not None
-            assert target_model.controlled_resnet is not None
-            ax.plot(input_xs[s], model_output_hardcoded[s], label=f"cb={cb}", color=color1)
-            ax.plot(
-                x_space,
-                target_model.controlled_resnet.functions[cb](x_space),
-                ls=":",
-                color=color2,
-            )
+        assert target_model.controlled_resnet is not None
+        ax.plot(input_xs[s], model_output_hardcoded[s], label=f"cb={cb}", color=color1)
+        ax.plot(
+            x_space,
+            target_model.controlled_resnet.functions[cb](x_space),
+            ls=":",
+            color=color2,
+        )
         ax.plot(input_xs[s], model_output_spd[s], ls="-.", color=color3)
         k_cb = attribution_scores[s].mean(dim=0).argmax()
         for k in range(n_functions):
@@ -417,9 +411,8 @@ def plot_model_functions(
 
     # Add some additional (blue) legend lines explaining the different line styles
     ax.plot([], [], ls="--", color=colors[0], label="spd model topk")
-    if model_output_hardcoded is not None:
-        ax.plot([], [], ls="-", color=colors[1], label="target model")
-        ax.plot([], [], ls=":", color=colors[2], label="true function")
+    ax.plot([], [], ls="-", color=colors[1], label="target model")
+    ax.plot([], [], ls=":", color=colors[2], label="true function")
     ax.plot([], [], ls="-.", color=colors[3], label="spd model")
     ax.legend(ncol=3)
     ax_attrib.legend(ncol=3)

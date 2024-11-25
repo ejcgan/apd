@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from jaxtyping import Float
 
@@ -18,7 +20,7 @@ DEEP_LINEAR_TASK_CONFIG = DeepLinearConfig(
     n_layers=2,
     n_instances=2,
     k=5,
-    pretrained_model_path=None,  # We'll create this later
+    pretrained_model_path=Path(""),  # We'll create this later
 )
 
 
