@@ -49,7 +49,7 @@ class ResidualLinearDataset(
 
         if label_coeffs is None:
             # Create random coeffs between [1, 2]
-            gen = torch.Generator()
+            gen = torch.Generator(device=self.device)
             if self.label_fn_seed is not None:
                 gen.manual_seed(self.label_fn_seed)
             self.coeffs = (
