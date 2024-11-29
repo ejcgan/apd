@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from jaxtyping import Bool, Float
 from torch import Tensor
 
@@ -257,7 +258,12 @@ class ControlledResNet(nn.Module):
         # d_model: one for x, one for each control bit, and one for y (the output of the controlled
         # piecewise linear)
         self.d_model = self.d_control + 2
-        self.mlps = nn.ModuleList([MLP(self.d_model, self.d_mlp) for _ in range(n_layers)])
+        self.mlps = nn.ModuleList(
+            [
+                MLP(self.d_model, self.d_mlp, act_fn=F.relu, in_bias=True, out_bias=True)
+                for _ in range(n_layers)
+            ]
+        )
         self.initialise_params(rng, torch_gen)
 
     def initialise_params(
@@ -441,7 +447,12 @@ class PiecewiseFunctionTransformer(Model):
 
         initialize_embeds(self.W_E, self.W_U, n_inputs, self.d_embed, self.superposition)
 
-        self.mlps = nn.ModuleList([MLP(d_model=self.d_embed, d_mlp=d_mlp) for _ in range(n_layers)])
+        self.mlps = nn.ModuleList(
+            [
+                MLP(d_model=self.d_embed, d_mlp=d_mlp, act_fn=F.relu, in_bias=True, out_bias=True)
+                for _ in range(n_layers)
+            ]
+        )
         # Initialize MLP params to zero
         for param in self.mlps.parameters():
             param.data = torch.zeros_like(param.data)
@@ -862,7 +873,15 @@ class PiecewiseFunctionSPDFullRankTransformer(SPDFullRankModel):
 
         self.mlps = nn.ModuleList(
             [
-                MLPComponentsFullRank(d_embed=self.d_embed, d_mlp=d_mlp, k=k, init_scale=init_scale)
+                MLPComponentsFullRank(
+                    d_embed=self.d_embed,
+                    d_mlp=d_mlp,
+                    k=k,
+                    init_scale=init_scale,
+                    act_fn=F.relu,
+                    in_bias=True,
+                    out_bias=False,
+                )
                 for _ in range(n_layers)
             ]
         )
@@ -1040,7 +1059,14 @@ class PiecewiseFunctionSPDRankPenaltyTransformer(SPDRankPenaltyModel):
         self.mlps = nn.ModuleList(
             [
                 MLPComponentsRankPenalty(
-                    d_embed=self.d_embed, d_mlp=d_mlp, k=k, init_scale=init_scale, m=m
+                    d_embed=self.d_embed,
+                    d_mlp=d_mlp,
+                    k=k,
+                    init_scale=init_scale,
+                    act_fn=F.relu,
+                    in_bias=True,
+                    out_bias=False,
+                    m=m,
                 )
                 for _ in range(n_layers)
             ]

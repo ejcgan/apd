@@ -16,20 +16,16 @@ from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.resid_linear.models import (
-    ResidualLinearModel,
-    ResidualLinearSPDFullRankModel,
-    ResidualLinearSPDRankPenaltyModel,
-)
-from spd.experiments.resid_linear.resid_linear_dataset import (
-    ResidualLinearDataset,
+from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDRankPenaltyModel
+from spd.experiments.resid_mlp.resid_mlp_dataset import (
+    ResidualMLPDataset,
 )
 from spd.log import logger
 from spd.plotting import (
     plot_subnetwork_attributions_statistics,
     plot_subnetwork_correlations,
 )
-from spd.run_spd import Config, ResidualLinearConfig, get_common_run_name_suffix, optimize
+from spd.run_spd import Config, ResidualMLPConfig, get_common_run_name_suffix, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
     collect_subnetwork_attributions,
@@ -54,29 +50,39 @@ def get_run_name(config: Config, n_features: int, n_layers: int, d_resid: int, d
 
 
 def plot_subnetwork_attributions(
-    attribution_scores: Float[Tensor, "batch k"],
+    attribution_scores: Float[Tensor, "batch n_instances k"],
     out_dir: Path | None,
     step: int | None,
 ) -> plt.Figure:
     """Plot subnetwork attributions."""
-    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
-    im = ax.matshow(attribution_scores.detach().cpu().numpy(), aspect="auto", cmap="Reds")
-    ax.set_xlabel("Subnetwork Index")
-    ax.set_ylabel("Batch Index")
-    ax.set_title("Subnetwork Attributions")
+    # Plot a row with n_instances
+    # Each column is a different instance
+    n_instances = attribution_scores.shape[1]
+    fig, ax = plt.subplots(
+        nrows=1, ncols=n_instances, figsize=(5 * n_instances, 5), constrained_layout=True
+    )
+    axs = np.array(ax)
+    im = None
+    for i in range(n_instances):
+        im = axs[i].matshow(
+            attribution_scores[:, i].detach().cpu().numpy(), aspect="auto", cmap="Reds"
+        )
+        axs[i].set_xlabel("Subnetwork Index")
+        axs[i].set_ylabel("Batch Index")
+        axs[i].set_title("Subnetwork Attributions")
 
-    # Annotate each cell with the numeric value
-    for i in range(attribution_scores.shape[0]):
-        for j in range(attribution_scores.shape[1]):
-            ax.text(
-                j,
-                i,
-                f"{attribution_scores[i, j]:.2f}",
-                ha="center",
-                va="center",
-                color="black",
-                fontsize=10,
-            )
+        # Annotate each cell with the numeric value
+        for b in range(attribution_scores.shape[0]):
+            for j in range(attribution_scores.shape[-1]):
+                axs[i].text(
+                    j,
+                    b,
+                    f"{attribution_scores[b, i, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=10,
+                )
     plt.colorbar(im)
     if out_dir:
         filename = (
@@ -89,7 +95,7 @@ def plot_subnetwork_attributions(
 
 
 def plot_multiple_subnetwork_params(
-    model: ResidualLinearSPDFullRankModel | ResidualLinearSPDRankPenaltyModel,
+    model: ResidualMLPSPDRankPenaltyModel,
     out_dir: Path | None,
     step: int | None = None,
 ) -> plt.Figure:
@@ -99,8 +105,8 @@ def plot_multiple_subnetwork_params(
     n_params = len(all_params)
     param_names = list(all_params.keys())
 
-    weight_param = [param for param_name, param in all_params.items() if "weight" in param_name][0]
-    k, dim1, dim2 = weight_param.shape
+    weight_param = [param for param_name, param in all_params.items() if "linear" in param_name][0]
+    n_instances, k, dim1, dim2 = weight_param.shape
 
     # Find global min and max for normalization
     all_values = []
@@ -112,38 +118,44 @@ def plot_multiple_subnetwork_params(
     norm = CenteredNorm(vcenter=0, halfrange=vmax)
 
     fig, axs = plt.subplots(
-        n_params,
+        n_instances * n_params,
         k,
-        figsize=(2 * k, 1 * n_params),
-        constrained_layout=True,
+        figsize=(2 * k, n_instances * n_params),
+        constrained_layout=False,
     )
     axs = np.array(axs)
 
-    for param_idx in range(n_params):
-        param_name = param_names[param_idx]
-        for subnet_idx in range(k):
-            col_idx = subnet_idx
-            row_idx = param_idx
+    for instance_idx in range(n_instances):
+        for param_idx in range(n_params):
+            param_name = param_names[param_idx]
+            for subnet_idx in range(k):
+                col_idx = subnet_idx
+                row_idx = instance_idx * n_params + param_idx
 
-            ax = axs[row_idx, col_idx]  # type: ignore
-            param = all_params[param_name][subnet_idx].detach().cpu().numpy()
-            # If it's a bias with a single dimension, unsqueeze it
-            if param.ndim == 1:
-                param = param[:, None]
+                ax = axs[row_idx, col_idx]  # type: ignore
+                param = all_params[param_name][instance_idx, subnet_idx].detach().cpu().numpy()
+                # If it's a bias with a single dimension, unsqueeze it
+                if param.ndim == 1:
+                    param = param[:, None]
 
-            # Set aspect ratio based on parameter dimensions
-            height, width = param.shape
-            aspect = width / height
+                # Set aspect ratio based on parameter dimensions
+                height, width = param.shape
+                aspect = width / height
 
-            im = ax.matshow(param, cmap="RdBu", norm=norm, aspect=aspect)
-            ax.set_xticks([])
-            ax.set_yticks([])
+                im = ax.matshow(param, cmap="RdBu", norm=norm, aspect=aspect)
+                ax.set_xticks([])
+                ax.set_yticks([])
 
-            if col_idx == 0:
-                ax.set_ylabel(param_name, rotation=0, ha="right", va="center")
+                if col_idx == 0:
+                    ax.set_ylabel(
+                        f"Inst.{instance_idx}.{param_name}",
+                        rotation=0,
+                        ha="right",
+                        va="center",
+                    )
 
-            if row_idx == n_params - 1:
-                ax.set_xlabel(f"Subnet {subnet_idx}", rotation=0, ha="center", va="top")
+                if row_idx == ((n_instances * n_params) - 1):
+                    ax.set_xlabel(f"Subnet {subnet_idx}", rotation=0, ha="center", va="top")
 
     # Add colorbar
     fig.colorbar(im, ax=axs.ravel().tolist(), location="right")  # type: ignore
@@ -157,8 +169,8 @@ def plot_multiple_subnetwork_params(
     return fig
 
 
-def resid_linear_plot_results_fn(
-    model: ResidualLinearSPDFullRankModel | ResidualLinearSPDRankPenaltyModel,
+def resid_mlp_plot_results_fn(
+    model: ResidualMLPSPDRankPenaltyModel,
     step: int | None,
     out_dir: Path | None,
     device: str,
@@ -170,11 +182,13 @@ def resid_linear_plot_results_fn(
     | None = None,
     **_,
 ) -> dict[str, plt.Figure]:
-    assert isinstance(config.task_config, ResidualLinearConfig)
+    assert isinstance(config.task_config, ResidualMLPConfig)
     fig_dict = {}
 
     assert config.spd_type in ("full_rank", "rank_penalty")
-    attribution_scores = collect_subnetwork_attributions(model, device, spd_type=config.spd_type)
+    attribution_scores = collect_subnetwork_attributions(
+        model, device, spd_type=config.spd_type, n_instances=model.n_instances
+    )
     fig_dict["subnetwork_attributions"] = plot_subnetwork_attributions(
         attribution_scores, out_dir, step
     )
@@ -209,9 +223,9 @@ def resid_linear_plot_results_fn(
 def save_target_model_info(
     save_to_wandb: bool,
     out_dir: Path,
-    target_model: ResidualLinearModel,
+    target_model: ResidualMLPModel,
     target_model_config_dict: dict[str, Any],
-    label_coeffs: list[float],
+    label_coeffs: Float[Tensor, " n_instances"],
 ) -> None:
     torch.save(target_model.state_dict(), out_dir / "target_model.pth")
 
@@ -219,7 +233,7 @@ def save_target_model_info(
         yaml.dump(target_model_config_dict, f, indent=2)
 
     with open(out_dir / "label_coeffs.json", "w") as f:
-        json.dump(label_coeffs, f, indent=2)
+        json.dump(label_coeffs.tolist(), f, indent=2)
 
     if save_to_wandb:
         wandb.save(str(out_dir / "target_model.pth"), base_path=out_dir)
@@ -241,9 +255,9 @@ def main(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
-    assert isinstance(config.task_config, ResidualLinearConfig)
+    assert isinstance(config.task_config, ResidualMLPConfig)
 
-    target_model, target_model_config, label_coeffs = ResidualLinearModel.from_pretrained(
+    target_model, target_model_config, label_coeffs = ResidualMLPModel.from_pretrained(
         config.task_config.pretrained_model_path
     )
     target_model = target_model.to(device)
@@ -274,27 +288,23 @@ def main(
     )
 
     # Create the SPD model
-    if config.spd_type == "full_rank":
-        model = ResidualLinearSPDFullRankModel(
+    if config.spd_type == "rank_penalty":
+        model = ResidualMLPSPDRankPenaltyModel(
             n_features=target_model.n_features,
             d_embed=target_model.d_embed,
             d_mlp=target_model.d_mlp,
             n_layers=target_model.n_layers,
+            n_instances=target_model.n_instances,
             k=config.task_config.k,
             init_scale=config.task_config.init_scale,
-        ).to(device)
-    elif config.spd_type == "rank_penalty":
-        model = ResidualLinearSPDRankPenaltyModel(
-            n_features=target_model.n_features,
-            d_embed=target_model.d_embed,
-            d_mlp=target_model.d_mlp,
-            n_layers=target_model.n_layers,
-            k=config.task_config.k,
-            init_scale=config.task_config.init_scale,
+            act_fn_name=target_model.act_fn_name,  # type: ignore (pyright false positive)
+            apply_output_act_fn=target_model.apply_output_act_fn,
+            in_bias=target_model.in_bias,
+            out_bias=target_model.out_bias,
             m=config.m,
         ).to(device)
     else:
-        raise ValueError(f"Unknown spd_type: {config.spd_type}")
+        raise ValueError(f"Unknown/unsupported spd_type: {config.spd_type}")
 
     # Use the target_model's embedding matrix and don't train it further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()
@@ -302,34 +312,36 @@ def main(
 
     # Copy the biases from the target model to the SPD model and set requires_grad to False
     for i in range(target_model.n_layers):
-        model.layers[i].linear1.bias.data[:] = (
-            target_model.layers[i].input_layer.bias.data.detach().clone()
-        )
-        model.layers[i].linear1.bias.requires_grad = False
-        model.layers[i].linear2.bias.data[:] = (
-            target_model.layers[i].output_layer.bias.data.detach().clone()
-        )
-        model.layers[i].linear2.bias.requires_grad = False
+        if target_model.in_bias:
+            model.layers[i].linear1.bias.data[:, :] = (
+                target_model.layers[i].bias1.data.detach().clone()
+            )
+            model.layers[i].linear1.bias.requires_grad = False
+        if target_model.out_bias:
+            model.layers[i].linear2.bias.data[:, :] = (
+                target_model.layers[i].bias2.data.detach().clone()
+            )
+            model.layers[i].linear2.bias.requires_grad = False
 
     param_map = {}
     for i in range(target_model.n_layers):
         # Map from pretrained model's `all_decomposable_params` to the SPD models'
         # `all_subnetwork_params_summed`.
-        param_map[f"layers.{i}.input_layer.weight"] = f"layers.{i}.input_layer.weight"
-        param_map[f"layers.{i}.output_layer.weight"] = f"layers.{i}.output_layer.weight"
+        param_map[f"layers.{i}.linear1"] = f"layers.{i}.linear1"
+        param_map[f"layers.{i}.linear2"] = f"layers.{i}.linear2"
 
-    dataset = ResidualLinearDataset(
-        embed_matrix=model.W_E,
+    dataset = ResidualMLPDataset(
+        n_instances=model.n_instances,
         n_features=model.n_features,
         feature_probability=config.task_config.feature_probability,
         device=device,
-        label_coeffs=label_coeffs,
+        calc_labels=False,  # Our labels will be the output of the target model
         data_generation_type=config.task_config.data_generation_type,
     )
 
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
-    plot_results_fn = partial(resid_linear_plot_results_fn, dataloader=dataloader)
+    plot_results_fn = partial(resid_mlp_plot_results_fn, dataloader=dataloader)
     optimize(
         model=model,
         config=config,

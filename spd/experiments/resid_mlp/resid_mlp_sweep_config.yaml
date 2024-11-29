@@ -1,4 +1,4 @@
-program: spd/experiments/resid_linear/resid_linear_decomposition.py
+program: spd/experiments/resid_mlp/resid_mlp_decomposition.py
 method: grid
 metric:
   name: total_loss
@@ -17,4 +17,4 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/resid_linear/resid_linear_topk_rank_penalty_config.yaml
+- spd/experiments/resid_mlp/resid_mlp_topk_rank_penalty_config.yaml

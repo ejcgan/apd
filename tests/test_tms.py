@@ -11,9 +11,8 @@ from spd.experiments.tms.models import (
     TMSSPDRankPenaltyModel,
 )
 from spd.experiments.tms.train_tms import TMSTrainConfig, train
-from spd.experiments.tms.utils import TMSDataset
 from spd.run_spd import Config, TMSConfig, optimize
-from spd.utils import DatasetGeneratedDataLoader, set_seed
+from spd.utils import DatasetGeneratedDataLoader, SparseFeatureDataset, set_seed
 
 # Create a simple TMS config that we can use in multiple tests
 TMS_TASK_CONFIG = TMSConfig(
@@ -49,7 +48,7 @@ def tms_decomposition_optimize_test(config: Config):
         device=device,
     )
 
-    dataset = TMSDataset(
+    dataset = SparseFeatureDataset(
         n_instances=config.task_config.n_instances,
         n_features=config.task_config.n_features,
         feature_probability=config.task_config.feature_probability,
@@ -184,7 +183,7 @@ def test_train_tms_happy_path():
         n_hidden=config.n_hidden,
         device=device,
     )
-    dataset = TMSDataset(
+    dataset = SparseFeatureDataset(
         n_instances=config.n_instances,
         n_features=config.n_features,
         feature_probability=config.feature_probability,
@@ -266,69 +265,6 @@ def test_tms_spd_full_rank_equivalence() -> None:
         assert torch.allclose(
             target_act, spd_act, atol=1e-6
         ), f"Activations do not match for layer {layer_name}"
-
-
-def test_tms_dataset_one_feature_active():
-    n_instances = 3
-    n_features = 5
-    feature_probability = 0.5  # This won't be used when data_generation_type="exactly_one_active"
-    device = "cpu"
-    batch_size = 10
-
-    dataset = TMSDataset(
-        n_instances=n_instances,
-        n_features=n_features,
-        feature_probability=feature_probability,
-        device=device,
-        data_generation_type="exactly_one_active",
-    )
-
-    batch, _ = dataset.generate_batch(batch_size)
-
-    # Check shape
-    assert batch.shape == (batch_size, n_instances, n_features), "Incorrect batch shape"
-
-    # Check that there's exactly one non-zero value per sample and instance
-    for sample in batch:
-        for instance in sample:
-            non_zero_count = torch.count_nonzero(instance)
-            assert non_zero_count == 1, f"Expected 1 non-zero value, but found {non_zero_count}"
-
-    # Check that the non-zero values are between 0 and 1
-    non_zero_values = batch[batch != 0]
-    assert torch.all(
-        (non_zero_values >= 0) & (non_zero_values <= 1)
-    ), "Non-zero values should be between 0 and 1"
-
-
-def test_tms_dataset_multi_feature():
-    n_instances = 3
-    n_features = 5
-    feature_probability = 0.5
-    device = "cpu"
-    batch_size = 100
-
-    dataset = TMSDataset(
-        n_instances=n_instances,
-        n_features=n_features,
-        feature_probability=feature_probability,
-        device=device,
-        data_generation_type="at_least_zero_active",
-    )
-
-    batch, _ = dataset.generate_batch(batch_size)
-
-    # Check shape
-    assert batch.shape == (batch_size, n_instances, n_features), "Incorrect batch shape"
-
-    # Check that the values are between 0 and 1
-    assert torch.all((batch >= 0) & (batch <= 1)), "Values should be between 0 and 1"
-
-    # Check that the proportion of non-zero elements is close to feature_probability
-    non_zero_proportion = torch.count_nonzero(batch) / batch.numel()
-    assert (
-        abs(non_zero_proportion - feature_probability) < 0.05
-    ), f"Expected proportion {feature_probability}, but got {non_zero_proportion}"
 
 
 def test_set_full_rank_handcoded_spd_params():

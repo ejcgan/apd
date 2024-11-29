@@ -85,6 +85,18 @@ class ResidualLinearConfig(BaseModel):
     pretrained_model_path: RootPath
 
 
+class ResidualMLPConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    task_name: Literal["residual_mlp"] = "residual_mlp"
+    k: PositiveInt
+    feature_probability: Probability
+    init_scale: float = 1.0
+    data_generation_type: Literal[
+        "exactly_one_active", "exactly_two_active", "at_least_zero_active"
+    ] = "at_least_zero_active"
+    pretrained_model_path: RootPath
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     wandb_project: str | None = None
@@ -122,9 +134,9 @@ class Config(BaseModel):
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = True
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
-    task_config: DeepLinearConfig | PiecewiseConfig | TMSConfig | ResidualLinearConfig = Field(
-        ..., discriminator="task_name"
-    )
+    task_config: (
+        DeepLinearConfig | PiecewiseConfig | TMSConfig | ResidualLinearConfig | ResidualMLPConfig
+    ) = Field(..., discriminator="task_name")
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -214,6 +226,9 @@ class Config(BaseModel):
             assert (
                 self.task_config.n_layers == 1
             ), "Handcoded AB not supported for >1 layer models due to a bug in the W_out matrices"
+
+        if isinstance(self.task_config, ResidualMLPConfig):
+            assert self.spd_type == "rank_penalty", "Only rank penalty supported for residual mlp"
         return self
 
 

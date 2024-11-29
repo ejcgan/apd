@@ -23,11 +23,11 @@ from spd.experiments.tms.models import (
     TMSSPDModel,
     TMSSPDRankPenaltyModel,
 )
-from spd.experiments.tms.utils import TMSDataset, plot_A_matrix
 from spd.log import logger
 from spd.run_spd import Config, TMSConfig, get_common_run_name_suffix, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
+    SparseFeatureDataset,
     collect_subnetwork_attributions,
     init_wandb,
     load_config,
@@ -50,6 +50,37 @@ def get_run_name(config: Config, task_config: TMSConfig) -> str:
         if task_config.handcoded:
             run_suffix += "_handcoded"
     return config.wandb_run_name_prefix + run_suffix
+
+
+def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
+    n_instances = x.shape[0]
+
+    fig, axs = plt.subplots(
+        1, n_instances, figsize=(2.5 * n_instances, 2), squeeze=False, sharey=True
+    )
+
+    cmap = "Blues" if pos_only else "RdBu"
+    ims = []
+    for i in range(n_instances):
+        ax = axs[0, i]
+        instance_data = x[i, :, :].detach().cpu().float().numpy()
+        max_abs_val = np.abs(instance_data).max()
+        vmin = 0 if pos_only else -max_abs_val
+        vmax = max_abs_val
+        im = ax.matshow(instance_data, vmin=vmin, vmax=vmax, cmap=cmap)
+        ims.append(im)
+        ax.xaxis.set_ticks_position("bottom")
+        if i == 0:
+            ax.set_ylabel("k", rotation=0, labelpad=10, va="center")
+        else:
+            ax.set_yticks([])  # Remove y-axis ticks for all but the first plot
+        ax.xaxis.set_label_position("top")
+        ax.set_xlabel("n_features")
+
+    plt.subplots_adjust(wspace=0.1, bottom=0.15, top=0.9)
+    fig.subplots_adjust(bottom=0.2)
+
+    return fig
 
 
 def plot_permuted_A(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
@@ -325,12 +356,13 @@ def main(
         # `all_subnetwork_params_summed`.
         param_map = {"W": "W", "W_T": "W_T"}
 
-    dataset = TMSDataset(
+    dataset = SparseFeatureDataset(
         n_instances=task_config.n_instances,
         n_features=task_config.n_features,
         feature_probability=task_config.feature_probability,
         device=device,
         data_generation_type=task_config.data_generation_type,
+        value_range=(0.0, 1.0),
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 

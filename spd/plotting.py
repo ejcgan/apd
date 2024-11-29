@@ -1,5 +1,6 @@
 from typing import Any
 
+import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -14,36 +15,56 @@ from spd.utils import calc_topk_mask, calculate_attributions
 
 
 def plot_subnetwork_attributions_statistics(
-    topk_mask: Float[Tensor, "batch_size k"],
+    topk_mask: Float[Tensor, "batch_size n_instances k"],
 ) -> dict[str, plt.Figure]:
-    """Plot a vertical bar chart of the number of active subnetworks over the batch."""
-    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
-    assert topk_mask.ndim == 2
-    values = topk_mask.sum(dim=1).cpu().detach().numpy()
-    bins = list(range(int(values.min().item()), int(values.max().item()) + 2))
-    counts, _ = np.histogram(values, bins=bins)
-    bars = ax.bar(bins[:-1], counts, align="center", width=0.8)
-    ax.set_xticks(bins[:-1])
-    ax.set_xticklabels([str(b) for b in bins[:-1]])
-    ax.set_title(f"Active subnetworks on current batch (batch_size={topk_mask.shape[0]})")
-    ax.set_xlabel("Number of active subnetworks")
-    ax.set_ylabel("Count")
+    """Plot vertical bar charts of the number of active subnetworks over the batch for each instance."""
+    batch_size = topk_mask.shape[0]
+    if topk_mask.ndim == 2:
+        n_instances = 1
+        topk_mask = einops.repeat(topk_mask, "batch k -> batch n_instances k", n_instances=1)
+    else:
+        n_instances = topk_mask.shape[1]
 
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(
-            f"{height}",
-            xy=(bar.get_x() + bar.get_width() / 2, height),
-            xytext=(0, 3),  # 3 points vertical offset
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-        )
+    fig, axs = plt.subplots(
+        ncols=n_instances, nrows=1, figsize=(5 * n_instances, 5), constrained_layout=True
+    )
+
+    axs = np.array([axs]) if n_instances == 1 else np.array(axs)
+    for i, ax in enumerate(axs):
+        values = topk_mask[:, i].sum(dim=1).cpu().detach().numpy()
+        bins = list(range(int(values.min().item()), int(values.max().item()) + 2))
+        counts, _ = np.histogram(values, bins=bins)
+        bars = ax.bar(bins[:-1], counts, align="center", width=0.8)
+        ax.set_xticks(bins[:-1])
+        ax.set_xticklabels([str(b) for b in bins[:-1]])
+
+        # Only add y-label to first subplot
+        if i == 0:
+            ax.set_ylabel("Count")
+
+        ax.set_xlabel("Number of active subnetworks")
+        ax.set_title(f"Instance {i+1}")
+
+        # Add value annotations on top of each bar
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(
+                f"{height}",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),  # 3 points vertical offset
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+            )
+
+    fig.suptitle(f"Active subnetworks on current batch (batch_size={batch_size})")
     return {"subnetwork_attributions_statistics": fig}
 
 
 def plot_subnetwork_correlations(
-    dataloader: DataLoader[tuple[Float[Tensor, "batch n_inputs"], Any]],
+    dataloader: DataLoader[
+        tuple[Float[Tensor, "batch n_inputs"] | Float[Tensor, "batch n_instances? n_inputs"], Any]
+    ],
     spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
     config: Config,
     device: str,
@@ -76,26 +97,41 @@ def plot_subnetwork_correlations(
         if len(topk_masks) > n_forward_passes:
             break
     topk_masks = torch.cat(topk_masks).float()
-    # Calculate correlation matrix
-    corr_matrix = torch.corrcoef(topk_masks.T).cpu()
-    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
-    im = ax.matshow(corr_matrix)
-    ax.xaxis.set_ticks_position("bottom")
-    for i in range(corr_matrix.shape[0]):
-        for j in range(corr_matrix.shape[1]):
-            ax.text(
-                j,
-                i,
-                f"{corr_matrix[i, j]:.2f}",
-                ha="center",
-                va="center",
-                color="#EE7777",
-                fontsize=8,
-            )
-    divider = make_axes_locatable(plt.gca())
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(im, cax=cax)
-    ax.set_title("Subnetwork Correlation Matrix")
-    ax.set_xlabel("Subnetwork")
-    ax.set_ylabel("Subnetwork")
+
+    if hasattr(spd_model, "n_instances"):
+        n_instances = spd_model.n_instances
+    else:
+        n_instances = 1
+        topk_masks = einops.repeat(topk_masks, "batch k -> batch n_instances k", n_instances=1)
+
+    fig, axs = plt.subplots(
+        ncols=n_instances, nrows=1, figsize=(5 * n_instances, 5), constrained_layout=True
+    )
+
+    axs = np.array([axs]) if n_instances == 1 else np.array(axs)
+    im, ax = None, None
+    for i, ax in enumerate(axs):
+        # Calculate correlation matrix
+        corr_matrix = torch.corrcoef(topk_masks[:, i].T).cpu()
+
+        im = ax.matshow(corr_matrix)
+        ax.xaxis.set_ticks_position("bottom")
+        for l in range(corr_matrix.shape[0]):
+            for j in range(corr_matrix.shape[1]):
+                ax.text(
+                    j,
+                    l,
+                    f"{corr_matrix[l, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    color="#EE7777",
+                    fontsize=8,
+                )
+    if (im is not None) and (ax is not None):
+        divider = make_axes_locatable(plt.gca())
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        plt.colorbar(im, cax=cax)
+        ax.set_title("Subnetwork Correlation Matrix")
+        ax.set_xlabel("Subnetwork")
+        ax.set_ylabel("Subnetwork")
     return {"subnetwork_correlation_matrix": fig}

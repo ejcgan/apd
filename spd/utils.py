@@ -26,7 +26,7 @@ T = TypeVar("T", bound=BaseModel)
 Q = TypeVar("Q")
 
 
-def to_root_path(path: str | Path):
+def to_root_path(path: str | Path) -> Path:
     """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
     return Path(path) if Path(path).is_absolute() else Path(REPO_ROOT / path)
 
@@ -438,7 +438,7 @@ def collect_subnetwork_attributions(
     device: str,
     spd_type: Literal["full_rank", "rank_one", "rank_penalty"],
     n_instances: int | None = None,
-) -> Float[Tensor, "batch k"]:
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     """
     Collect subnetwork attributions.
 
@@ -446,10 +446,10 @@ def collect_subnetwork_attributions(
     and collects the attributions.
 
     Args:
-        model (ResidualLinearSPDFullRankModel): The model to collect attributions on.
-        device (str): The device to run computations on.
-        spd_type (str): The type of SPD model.
-        n_instances (int | None): The number of instances in the batch.
+        model: The model to collect attributions on.
+        device: The device to run computations on.
+        spd_type: The type of SPD model.
+        n_instances: The number of instances in the batch.
 
     Returns:
         The attribution scores.
@@ -467,6 +467,7 @@ def collect_subnetwork_attributions(
             out=out, inner_acts_vals=list(test_inner_acts.values())
         )
     else:
+        # We use the same function for rank_penalty and full_rank
         attribution_scores = calc_grad_attributions_full_rank(
             out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
         )
@@ -714,3 +715,130 @@ def download_wandb_file(run: Run, file_name: str) -> Path:
 def load_yaml(file_path: Path) -> dict[str, Any]:
     with open(file_path) as f:
         return yaml.safe_load(f)
+
+
+class SparseFeatureDataset(
+    Dataset[
+        tuple[
+            Float[Tensor, "batch n_instances n_features"],
+            Float[Tensor, "batch n_instances n_features"],
+        ]
+    ]
+):
+    def __init__(
+        self,
+        n_instances: int,
+        n_features: int,
+        feature_probability: float,
+        device: str,
+        data_generation_type: Literal[
+            "exactly_one_active", "exactly_two_active", "at_least_zero_active"
+        ] = "at_least_zero_active",
+        value_range: tuple[float, float] = (0.0, 1.0),
+    ):
+        self.n_instances = n_instances
+        self.n_features = n_features
+        self.feature_probability = feature_probability
+        self.device = device
+        self.data_generation_type = data_generation_type
+        self.value_range = value_range
+
+    def __len__(self) -> int:
+        return 2**31
+
+    def generate_batch(
+        self, batch_size: int
+    ) -> tuple[
+        Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances n_features"]
+    ]:
+        if self.data_generation_type == "exactly_one_active":
+            batch = self._generate_one_feature_active_batch(batch_size)
+        elif self.data_generation_type == "exactly_two_active":
+            batch = self._generate_two_feature_active_batch(batch_size)
+        elif self.data_generation_type == "at_least_zero_active":
+            batch = self._generate_multi_feature_batch(batch_size)
+        else:
+            raise ValueError(f"Invalid generation type: {self.data_generation_type}")
+        return batch, batch.clone().detach()
+
+    def _generate_one_feature_active_batch(
+        self, batch_size: int
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch with one feature active per sample and instance."""
+        batch = torch.zeros(batch_size, self.n_instances, self.n_features, device=self.device)
+
+        active_features = torch.randint(
+            0, self.n_features, (batch_size, self.n_instances), device=self.device
+        )
+        min_val, max_val = self.value_range
+        random_values = torch.rand(batch_size, self.n_instances, 1, device=self.device)
+        random_values = random_values * (max_val - min_val) + min_val
+        batch.scatter_(dim=2, index=active_features.unsqueeze(-1), src=random_values)
+        return batch
+
+    def _generate_two_feature_active_batch(
+        self, batch_size: int
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch with exactly two features active per sample and instance."""
+        batch = torch.zeros(batch_size, self.n_instances, self.n_features, device=self.device)
+
+        # Create indices for all features
+        feature_indices = torch.arange(self.n_features, device=self.device)
+        # Expand to batch size and n_instances
+        feature_indices = feature_indices.expand(batch_size, self.n_instances, self.n_features)
+
+        # For each instance in the batch, randomly permute the features
+        perm = torch.rand_like(feature_indices.float()).argsort(dim=-1)
+        permuted_features = feature_indices.gather(dim=-1, index=perm)
+
+        # Take first two indices for each instance - guaranteed no duplicates
+        active_features = permuted_features[..., :2]
+
+        # Generate random values in value_range for the active features
+        min_val, max_val = self.value_range
+        random_values = torch.rand(batch_size, self.n_instances, 2, device=self.device)
+        random_values = random_values * (max_val - min_val) + min_val
+
+        # Place the first active feature
+        batch.scatter_(dim=2, index=active_features[..., 0:1], src=random_values[..., 0:1])
+        # Place the second active feature
+        batch.scatter_(dim=2, index=active_features[..., 1:2], src=random_values[..., 1:2])
+
+        return batch
+
+    def _generate_multi_feature_batch(
+        self, batch_size: int
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch where each feature activates independently with probability
+        `feature_probability`."""
+        min_val, max_val = self.value_range
+        batch = (
+            torch.rand((batch_size, self.n_instances, self.n_features), device=self.device)
+            * (max_val - min_val)
+            + min_val
+        )
+        mask = torch.rand_like(batch) < self.feature_probability
+        return batch * mask
+
+
+def compute_feature_importances(
+    batch_size: int,
+    n_instances: int,
+    n_features: int,
+    importance_val: float | None,
+    device: str,
+) -> Float[Tensor, "batch_size n_instances n_features"]:
+    # Defines a tensor where the i^th feature has importance importance^i
+    if importance_val is None or importance_val == 1.0:
+        importance_tensor = torch.ones(batch_size, n_instances, n_features, device=device)
+    else:
+        powers = torch.arange(n_features, device=device)
+        importances = torch.pow(importance_val, powers)
+        # Now make it a tensor of shape (batch_size, n_instances, n_features)
+        importance_tensor = einops.repeat(
+            importances,
+            "n_features -> batch_size n_instances n_features",
+            batch_size=batch_size,
+            n_instances=n_instances,
+        )
+    return importance_tensor

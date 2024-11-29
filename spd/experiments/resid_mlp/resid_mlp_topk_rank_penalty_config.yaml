@@ -1,4 +1,4 @@
-wandb_project: spd-resid-linear
+wandb_project: spd-resid-mlp
 wandb_run_name: null
 wandb_run_name_prefix: "rp_"
 spd_type: rank_penalty
@@ -9,6 +9,7 @@ pnorm: 0.8
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1
+schatten_pnorm: 1.0
 schatten_coeff: 1e-1
 lr: 1e-2
 batch_size: 1024
@@ -19,9 +20,10 @@ save_freq: 30_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
 task_config:
-  task_name: residual_linear
+  task_name: residual_mlp
   init_scale: 1.0
   k: 5
   feature_probability: 0.2
   data_generation_type: "at_least_zero_active"
-  pretrained_model_path: spd/experiments/resid_linear/out/resid_linear_identity_n-features5_d-resid5_d-mlp5_n-layers1_seed0/target_model.pth
+  act_fn_name: "relu"
+  pretrained_model_path: spd/experiments/resid_mlp/out/resid_mlp_identity_abs_n-instances10_n-features5_d-resid5_d-mlp5_n-layers1_seed0/target_model.pth
