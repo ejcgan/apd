@@ -16,7 +16,11 @@ from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDRankPenaltyModel
+from spd.experiments.resid_mlp.models import (
+    ResidualMLPModel,
+    ResidualMLPSPDRankPenaltyConfig,
+    ResidualMLPSPDRankPenaltyModel,
+)
 from spd.experiments.resid_mlp.resid_mlp_dataset import (
     ResidualMLPDataset,
 )
@@ -25,15 +29,19 @@ from spd.plotting import (
     plot_subnetwork_attributions_statistics,
     plot_subnetwork_correlations,
 )
-from spd.run_spd import Config, ResidualMLPConfig, get_common_run_name_suffix, optimize
+from spd.run_spd import (
+    Config,
+    ResidualMLPTaskConfig,
+    get_common_run_name_suffix,
+    optimize,
+)
 from spd.utils import (
     DatasetGeneratedDataLoader,
     collect_subnetwork_attributions,
-    init_wandb,
     load_config,
-    save_config_to_wandb,
     set_seed,
 )
+from spd.wandb_utils import init_wandb, save_config_to_wandb
 
 wandb.require("core")
 
@@ -182,7 +190,7 @@ def resid_mlp_plot_results_fn(
     | None = None,
     **_,
 ) -> dict[str, plt.Figure]:
-    assert isinstance(config.task_config, ResidualMLPConfig)
+    assert isinstance(config.task_config, ResidualMLPTaskConfig)
     fig_dict = {}
 
     assert config.spd_type in ("full_rank", "rank_penalty")
@@ -223,21 +231,21 @@ def resid_mlp_plot_results_fn(
 def save_target_model_info(
     save_to_wandb: bool,
     out_dir: Path,
-    target_model: ResidualMLPModel,
-    target_model_config_dict: dict[str, Any],
+    resid_mlp: ResidualMLPModel,
+    resid_mlp_train_config_dict: dict[str, Any],
     label_coeffs: Float[Tensor, " n_instances"],
 ) -> None:
-    torch.save(target_model.state_dict(), out_dir / "target_model.pth")
+    torch.save(resid_mlp.state_dict(), out_dir / "resid_mlp.pth")
 
-    with open(out_dir / "target_model_config.yaml", "w") as f:
-        yaml.dump(target_model_config_dict, f, indent=2)
+    with open(out_dir / "resid_mlp_train_config.yaml", "w") as f:
+        yaml.dump(resid_mlp_train_config_dict, f, indent=2)
 
     with open(out_dir / "label_coeffs.json", "w") as f:
-        json.dump(label_coeffs.tolist(), f, indent=2)
+        json.dump(label_coeffs.detach().cpu().tolist(), f, indent=2)
 
     if save_to_wandb:
-        wandb.save(str(out_dir / "target_model.pth"), base_path=out_dir)
-        wandb.save(str(out_dir / "target_model_config.yaml"), base_path=out_dir)
+        wandb.save(str(out_dir / "resid_mlp.pth"), base_path=out_dir)
+        wandb.save(str(out_dir / "resid_mlp_train_config.yaml"), base_path=out_dir)
         wandb.save(str(out_dir / "label_coeffs.json"), base_path=out_dir)
 
 
@@ -255,19 +263,19 @@ def main(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
-    assert isinstance(config.task_config, ResidualMLPConfig)
+    assert isinstance(config.task_config, ResidualMLPTaskConfig)
 
-    target_model, target_model_config, label_coeffs = ResidualMLPModel.from_pretrained(
+    target_model, target_model_train_config_dict, label_coeffs = ResidualMLPModel.from_pretrained(
         config.task_config.pretrained_model_path
     )
     target_model = target_model.to(device)
 
     run_name = get_run_name(
         config,
-        n_features=target_model.n_features,
-        n_layers=target_model.n_layers,
-        d_resid=target_model.d_embed,
-        d_mlp=target_model.d_mlp,
+        n_features=target_model.config.n_features,
+        n_layers=target_model.config.n_layers,
+        d_resid=target_model.config.d_embed,
+        d_mlp=target_model.config.d_mlp,
     )
     if config.wandb_project:
         assert wandb.run, "wandb.run must be initialized before training"
@@ -282,27 +290,17 @@ def main(
     save_target_model_info(
         save_to_wandb=config.wandb_project is not None,
         out_dir=out_dir,
-        target_model=target_model,
-        target_model_config_dict=target_model_config,
+        resid_mlp=target_model,
+        resid_mlp_train_config_dict=target_model_train_config_dict,
         label_coeffs=label_coeffs,
     )
 
     # Create the SPD model
     if config.spd_type == "rank_penalty":
-        model = ResidualMLPSPDRankPenaltyModel(
-            n_features=target_model.n_features,
-            d_embed=target_model.d_embed,
-            d_mlp=target_model.d_mlp,
-            n_layers=target_model.n_layers,
-            n_instances=target_model.n_instances,
-            k=config.task_config.k,
-            init_scale=config.task_config.init_scale,
-            act_fn_name=target_model.act_fn_name,  # type: ignore (pyright false positive)
-            apply_output_act_fn=target_model.apply_output_act_fn,
-            in_bias=target_model.in_bias,
-            out_bias=target_model.out_bias,
-            m=config.m,
-        ).to(device)
+        model_config = ResidualMLPSPDRankPenaltyConfig(
+            **target_model.config.model_dump(mode="json"), k=config.task_config.k, m=config.m
+        )
+        model = ResidualMLPSPDRankPenaltyModel(config=model_config).to(device)
     else:
         raise ValueError(f"Unknown/unsupported spd_type: {config.spd_type}")
 
@@ -311,31 +309,35 @@ def main(
     model.W_E.requires_grad = False
 
     # Copy the biases from the target model to the SPD model and set requires_grad to False
-    for i in range(target_model.n_layers):
-        if target_model.in_bias:
+    for i in range(target_model.config.n_layers):
+        if target_model.config.in_bias:
             model.layers[i].linear1.bias.data[:, :] = (
                 target_model.layers[i].bias1.data.detach().clone()
             )
             model.layers[i].linear1.bias.requires_grad = False
-        if target_model.out_bias:
+        if target_model.config.out_bias:
             model.layers[i].linear2.bias.data[:, :] = (
                 target_model.layers[i].bias2.data.detach().clone()
             )
             model.layers[i].linear2.bias.requires_grad = False
 
     param_map = {}
-    for i in range(target_model.n_layers):
+    for i in range(target_model.config.n_layers):
         # Map from pretrained model's `all_decomposable_params` to the SPD models'
         # `all_subnetwork_params_summed`.
         param_map[f"layers.{i}.linear1"] = f"layers.{i}.linear1"
         param_map[f"layers.{i}.linear2"] = f"layers.{i}.linear2"
 
     dataset = ResidualMLPDataset(
-        n_instances=model.n_instances,
-        n_features=model.n_features,
+        n_instances=model.config.n_instances,
+        n_features=model.config.n_features,
         feature_probability=config.task_config.feature_probability,
         device=device,
         calc_labels=False,  # Our labels will be the output of the target model
+        label_type=None,
+        act_fn_name=None,
+        label_fn_seed=None,
+        label_coeffs=None,
         data_generation_type=config.task_config.data_generation_type,
     )
 

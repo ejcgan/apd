@@ -1,23 +1,17 @@
-import os
 import random
-import time
 from collections.abc import Iterator
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 import einops
 import numpy as np
 import torch
-import wandb
 import yaml
-from dotenv import load_dotenv
 from jaxtyping import Float, Int
 from pydantic import BaseModel
 from pydantic.v1.utils import deep_update
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
-from wandb.apis.public import Run
 
 from spd.models.base import Model, SPDFullRankModel, SPDModel, SPDRankPenaltyModel
 from spd.settings import REPO_ROOT
@@ -156,53 +150,6 @@ def replace_pydantic_model(model: BaseModelType, *updates: dict[str, Any]) -> Ba
         Bar(foo=Foo(a=3, b=2))
     """
     return model.__class__(**deep_update(model.model_dump(), *updates))
-
-
-def init_wandb(config: T, project: str, sweep_config_path: Path | str | None) -> T:
-    """Initialize Weights & Biases and return a config updated with sweep hyperparameters.
-
-    If no sweep config is provided, the config is returned as is.
-
-    If a sweep config is provided, wandb is first initialized with the sweep config. This will
-    cause wandb to choose specific hyperparameters for this instance of the sweep and store them
-    in wandb.config. We then update the config with these hyperparameters.
-
-    Args:
-        config: The base config.
-        project: The name of the wandb project.
-        sweep_config_path: The path to the sweep config file. If provided, updates the config with
-            the hyperparameters from this instance of the sweep.
-
-    Returns:
-        Config updated with sweep hyperparameters (if any).
-    """
-    if sweep_config_path is not None:
-        with open(sweep_config_path) as f:
-            sweep_data = yaml.safe_load(f)
-        wandb.init(config=sweep_data, save_code=True)
-    else:
-        load_dotenv(override=True)
-        wandb.init(project=project, entity=os.getenv("WANDB_ENTITY"), save_code=True)
-
-    # Update the config with the hyperparameters for this sweep (if any)
-    config = replace_pydantic_model(config, wandb.config)
-
-    # Update the non-frozen keys in the wandb config (only relevant for sweeps)
-    wandb.config.update(config.model_dump(mode="json"))
-    return config
-
-
-def save_config_to_wandb(config: BaseModel, filename: str = "final_config.yaml") -> None:
-    # Save the config to wandb
-    with TemporaryDirectory() as tmp_dir:
-        config_path = Path(tmp_dir) / filename
-        with open(config_path, "w") as f:
-            yaml.dump(config.model_dump(mode="json"), f, indent=2)
-        wandb.save(str(config_path), policy="now", base_path=tmp_dir)
-        # Unfortunately wandb.save is async, so we need to wait for it to finish before
-        # continuing, and wandb python api provides no way to do this.
-        # TODO: Find a better way to do this.
-        time.sleep(1)
 
 
 def init_param_(param: torch.Tensor, scale: float = 1.0) -> None:
@@ -702,19 +649,6 @@ def run_spd_forward_pass(
         attribution_scores=attribution_scores,
         topk_mask=topk_mask,
     )
-
-
-def download_wandb_file(run: Run, file_name: str) -> Path:
-    cache_dir = Path(os.environ.get("SPD_CACHE_DIR", "/tmp/"))
-    run_cache_dir = cache_dir / run.id
-    run_cache_dir.mkdir(parents=True, exist_ok=True)
-    file_on_wandb = run.file(file_name)
-    return Path(file_on_wandb.download(exist_ok=True, replace=True, root=run_cache_dir).name)  # type: ignore
-
-
-def load_yaml(file_path: Path) -> dict[str, Any]:
-    with open(file_path) as f:
-        return yaml.safe_load(f)
 
 
 class SparseFeatureDataset(

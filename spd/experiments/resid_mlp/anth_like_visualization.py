@@ -1,25 +1,21 @@
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import yaml
-from train_resid_mlp import Config
+from train_resid_mlp import ResidMLPTrainConfig
 
 from spd.experiments.resid_mlp.models import ResidualMLPModel
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
+from spd.types import ModelPath
 from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 
-def plot_activations_single_features(
-    config: Config,
-    model: ResidualMLPModel,
-):
+def plot_activations_single_features(model: ResidualMLPModel):
     # Generate a batch of data that has one active feature (identity will do)
-    half_batch_size = config.n_features
+    half_batch_size = model.config.n_features
     batch_size = 2 * half_batch_size
-    n_instances = config.n_instances
+    n_instances = model.config.n_instances
     pos_batch = torch.eye(half_batch_size, device=device) * 0.5
     neg_batch = -pos_batch
     batch = torch.cat([pos_batch, neg_batch], dim=0)
@@ -32,7 +28,7 @@ def plot_activations_single_features(
     out = out.detach().cpu().numpy()
     layer_pre_acts = {k: v.detach().cpu().numpy() for k, v in layer_pre_acts.items()}
     layer_post_acts = {k: v.detach().cpu().numpy() for k, v in layer_post_acts.items()}
-    n_layers = model.n_layers
+    n_layers = model.config.n_layers
 
     # Visualize the activations of the output neurons as an array
     # for every instance, plot the activations of the output neurons in a grid (with colorbar)
@@ -55,6 +51,7 @@ def plot_activations_single_features(
     plt.subplots_adjust(top=0.85)
     plt.colorbar(axs[0, 0].images[0], ax=axs, orientation="vertical", label="Activation")
     plt.savefig(plot_save_dir / "output_activations.png")
+    print(f"Saved to {plot_save_dir / 'output_activations.png'}")
     plt.close()
 
     # Plot the activations of the post-activations of the layers, all in one plot
@@ -84,66 +81,53 @@ def plot_activations_single_features(
     plt.subplots_adjust(top=0.85)
     plt.colorbar(axs[0, 0].images[0], ax=axs, orientation="vertical", label="Activation")
     plt.savefig(plot_save_dir / "layer_post_activations.png")
+    print(f"Saved to {plot_save_dir / 'layer_post_activations.png'}")
     plt.close()
 
 
 if __name__ == "__main__":
     # Load model trained using train_resid_mlp.py
     # Set up device and seed
+
+    # Use either local path or wandb path
+    # model_path: ModelPath = Path(
+    #     "spd/experiments/resid_mlp/out/resid_mlp_identity_abs_n-instances5_n-features10_d-resid5_d-mlp5_n-layers1_seed0/resid_mlp.pth"
+    # )
+    model_path: ModelPath = "wandb:spd-train-resid-mlp/runs/s7h0jsco"
+
     device = "cpu"
     print(f"Using device: {device}")
     set_seed(0)
 
-    # Load the pretrained model from the path shown in file_context_0
-    out_dir = Path(__file__).parent / "out"
-    model_path = (
-        out_dir
-        # / "resid_mlp_identity_abs_n-instances10_n-features100_d-resid100_d-mlp100_n-layers1_seed0"
-        / "resid_mlp_identity_abs_n-instances10_n-features100_d-resid100_d-mlp40_n-layers1_seed0"
-    )
-
-    plot_save_dir = model_path / "anth_like_visualization"
+    if isinstance(model_path, str):
+        # wandb path
+        run_id = model_path.split("/")[-1]
+        plot_save_dir = Path(__file__).parent / "out" / run_id / "anth_like_visualization"
+    else:
+        # local path
+        plot_save_dir = model_path.parent / "anth_like_visualization"
     plot_save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load config
-    with open(model_path / "target_model_config.yaml") as f:
-        config_dict = yaml.safe_load(f)
-    config = Config(**config_dict)
-
-    # Load label coefficients
-    with open(model_path / "label_coeffs.json") as f:
-        label_coeffs = torch.tensor(json.load(f), device=device)
-
-    # Initialize and load model
-    model = ResidualMLPModel(
-        n_instances=config.n_instances,
-        n_features=config.n_features,
-        d_embed=config.d_embed,
-        d_mlp=config.d_mlp,
-        n_layers=config.n_layers,
-        act_fn_name=config.act_fn_name,
-        apply_output_act_fn=config.apply_output_act_fn,
-        in_bias=config.in_bias,
-        out_bias=config.out_bias,
-    ).to(device)
-
-    model.load_state_dict(torch.load(model_path / "target_model.pth"))
+    model, train_config_dict, label_coeffs = ResidualMLPModel.from_pretrained(model_path)
     model.eval()
+
+    config = ResidMLPTrainConfig(**train_config_dict)
 
     # Load the dataset
     dataset = ResidualMLPDataset(
-        n_instances=config.n_instances,
-        n_features=config.n_features,
+        n_instances=config.resid_mlp_config.n_instances,
+        n_features=config.resid_mlp_config.n_features,
         feature_probability=config.feature_probability,
         device=device,
         calc_labels=True,
         label_type=config.label_type,
-        act_fn_name=config.act_fn_name,
+        act_fn_name=config.resid_mlp_config.act_fn_name,
         label_fn_seed=config.label_fn_seed,
+        label_coeffs=None,  # TODO Is this intended?
         data_generation_type=config.data_generation_type,
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
-    plot_activations_single_features(config, model)
+    plot_activations_single_features(model)
 
 
 # %%

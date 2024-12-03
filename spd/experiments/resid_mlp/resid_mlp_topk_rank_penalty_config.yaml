@@ -25,5 +25,4 @@ task_config:
   k: 5
   feature_probability: 0.2
   data_generation_type: "at_least_zero_active"
-  act_fn_name: "relu"
-  pretrained_model_path: spd/experiments/resid_mlp/out/resid_mlp_identity_abs_n-instances10_n-features5_d-resid5_d-mlp5_n-layers1_seed0/target_model.pth
+  pretrained_model_path: wandb:spd-train-resid-mlp/runs/njgvwytn

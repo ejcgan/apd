@@ -5,12 +5,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from spd.experiments.resid_mlp.train_resid_mlp import Config, run_train
+from spd.experiments.resid_mlp.train_resid_mlp import (
+    ResidMLPTrainConfig,
+    ResidualMLPConfig,
+    run_train,
+)
 from spd.settings import REPO_ROOT
 from spd.utils import set_seed
 
 
-def test_train(
+def train_on_test_data(
     n_instances: int,
     n_steps: int,
     d_embed: int,
@@ -20,23 +24,22 @@ def test_train(
     d_mlp: int,
     fixed_random_embedding: bool,
     fixed_identity_embedding: bool,
-):
+) -> dict[int, float]:
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    config = Config(
+    config = ResidMLPTrainConfig(
+        wandb_project=None,
         seed=0,
-        label_fn_seed=0,
-        label_type="act_plus_resid",
-        use_trivial_label_coeffs=True,
-        n_instances=n_instances,
-        n_features=n_features,
-        d_embed=d_embed,
-        d_mlp=d_mlp,
-        n_layers=1,
-        act_fn_name="relu",
-        apply_output_act_fn=False,
-        data_generation_type="at_least_zero_active",
-        in_bias=bias,
-        out_bias=bias,
+        resid_mlp_config=ResidualMLPConfig(
+            n_instances=n_instances,
+            n_features=n_features,
+            d_embed=d_embed,
+            d_mlp=d_mlp,
+            n_layers=1,
+            act_fn_name="relu",
+            apply_output_act_fn=False,
+            in_bias=bias,
+            out_bias=bias,
+        ),
         feature_probability=p,
         importance_val=None,
         batch_size=256,
@@ -51,7 +54,7 @@ def test_train(
 
     set_seed(config.seed)
     loss = run_train(config, device)
-    loss_as_previously_computed = loss * config.n_features
+    loss_as_previously_computed = loss * config.resid_mlp_config.n_features
     loss_dict = {i: loss_as_previously_computed[i].item() for i in range(n_instances)}
     return loss_dict
 
@@ -105,7 +108,7 @@ if __name__ == "__main__":
                 losses[n_steps] = {}
                 for d_embed in d_embeds:
                     print(f"Run {n_steps} steps, {d_embed} d_embed")
-                    losses[n_steps][d_embed] = test_train(
+                    losses[n_steps][d_embed] = train_on_test_data(
                         n_instances=n_instances,
                         n_steps=n_steps,
                         d_embed=d_embed,
@@ -151,7 +154,7 @@ if __name__ == "__main__":
                 losses[n_steps] = {}
                 for p in ps:
                     print(f"Run {n_steps} steps, {p} p")
-                    losses[n_steps][p] = test_train(
+                    losses[n_steps][p] = train_on_test_data(
                         n_instances=n_instances,
                         n_steps=n_steps,
                         d_embed=d_embed,
