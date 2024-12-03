@@ -22,9 +22,6 @@ lr_warmup_pct: 0.1
 task_config:
   task_name: tms
   k: 5
-  n_features: 5
-  n_hidden: 2
-  n_instances: 12
   bias_val: 0.0
   train_bias: false
   feature_probability: 0.05

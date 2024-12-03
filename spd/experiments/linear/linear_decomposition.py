@@ -23,7 +23,7 @@ from spd.utils import (
     load_config,
     set_seed,
 )
-from spd.wandb_utils import init_wandb, save_config_to_wandb
+from spd.wandb_utils import init_wandb
 
 wandb.require("core")
 
@@ -45,7 +45,6 @@ def main(
 
     if config.wandb_project:
         config = init_wandb(config, config.wandb_project, sweep_config_path)
-        save_config_to_wandb(config)
 
     set_seed(config.seed)
     logger.info(config)
@@ -73,6 +72,8 @@ def main(
 
     with open(out_dir / "final_config.yaml", "w") as f:
         yaml.dump(config.model_dump(mode="json"), f, indent=2)
+    if config.wandb_project:
+        wandb.save(str(out_dir / "final_config.yaml"), base_path=out_dir)
 
     if config.spd_type == "full_rank":
         dlc_model = DeepLinearComponentFullRankModel(

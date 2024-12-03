@@ -128,6 +128,8 @@ def train(
         optimizer.step()
         if step % config.print_freq == 0:
             pbar.set_description(f"loss={current_losses.mean():.2e}, lr={current_lr:.2e}")
+            if config.wandb_project:
+                wandb.log({"loss": current_losses.mean(), "lr": current_lr}, step=step)
 
     model_path = out_dir / "resid_mlp.pth"
     torch.save(model.state_dict(), model_path)

@@ -15,7 +15,6 @@ from pydantic import (
     ConfigDict,
     Field,
     NonNegativeFloat,
-    NonNegativeInt,
     PositiveFloat,
     PositiveInt,
     model_validator,
@@ -30,21 +29,17 @@ from spd.types import ModelPath, Probability, RootPath
 from spd.utils import calc_topk_mask, calculate_attributions
 
 
-class TMSConfig(BaseModel):
+class TMSTaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["tms"] = "tms"
-    n_features: PositiveInt
-    n_hidden: PositiveInt
-    n_hidden_layers: NonNegativeInt = 0
-    n_instances: PositiveInt
     k: PositiveInt
     feature_probability: Probability
     train_bias: bool
     bias_val: float
-    pretrained_model_path: RootPath
     data_generation_type: Literal["exactly_one_active", "at_least_zero_active"] = (
         "at_least_zero_active"
     )
+    pretrained_model_path: ModelPath  # e.g. wandb:spd-tms/runs/si0zbfxf
 
 
 class DeepLinearConfig(BaseModel):
@@ -138,7 +133,7 @@ class Config(BaseModel):
     task_config: (
         DeepLinearConfig
         | PiecewiseConfig
-        | TMSConfig
+        | TMSTaskConfig
         | ResidualLinearConfig
         | ResidualMLPTaskConfig
     ) = Field(..., discriminator="task_name")
@@ -1111,15 +1106,13 @@ def optimize(
                 )
 
         if (
-            config.save_freq is not None
-            and step % config.save_freq == 0
-            and step > 0
-            and out_dir is not None
-        ):
-            torch.save(model.state_dict(), out_dir / f"model_{step}.pth")
-            tqdm.write(f"Saved model to {out_dir / f'model_{step}.pth'}")
+            (config.save_freq is not None and step % config.save_freq == 0 and step > 0)
+            or step == config.steps
+        ) and out_dir is not None:
+            torch.save(model.state_dict(), out_dir / f"spd_model_{step}.pth")
+            tqdm.write(f"Saved model to {out_dir / f'spd_model_{step}.pth'}")
             if config.wandb_project:
-                wandb.save(str(out_dir / f"model_{step}.pth"), base_path=out_dir)
+                wandb.save(str(out_dir / f"spd_model_{step}.pth"), base_path=out_dir)
 
         # Skip gradient step if we are at the last step (last step just for plotting and logging)
         if step != config.steps:

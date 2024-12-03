@@ -1,7 +1,5 @@
 import os
-import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TypeVar
 
 import wandb
@@ -16,13 +14,15 @@ from spd.utils import replace_pydantic_model
 T = TypeVar("T", bound=BaseModel)
 
 
-def fetch_latest_wandb_checkpoint(run: Run) -> File:
+def fetch_latest_wandb_checkpoint(run: Run, prefix: str | None = None) -> File:
     """Fetch the latest checkpoint from a wandb run.
 
     NOTE: Assumes that the only files that end in `.pth` are checkpoints.
     """
     # Get the latest checkpoint. Assume format is <name>_<step>.pth or <name>.pth
     checkpoints = [file for file in run.files() if file.name.endswith(".pth")]
+    if prefix:
+        checkpoints = [file for file in checkpoints if file.name.startswith(prefix)]
     if not checkpoints:
         raise ValueError(f"No checkpoint files found in run {run.name}")
 
@@ -115,16 +115,3 @@ def init_wandb(
     # Update the non-frozen keys in the wandb config (only relevant for sweeps)
     wandb.config.update(config.model_dump(mode="json"))
     return config
-
-
-def save_config_to_wandb(config: BaseModel, filename: str = "final_config.yaml") -> None:
-    # Save the config to wandb
-    with TemporaryDirectory() as tmp_dir:
-        config_path = Path(tmp_dir) / filename
-        with open(config_path, "w") as f:
-            yaml.dump(config.model_dump(mode="json"), f, indent=2)
-        wandb.save(str(config_path), policy="now", base_path=tmp_dir)
-        # Unfortunately wandb.save is async, so we need to wait for it to finish before
-        # continuing, and wandb python api provides no way to do this.
-        # TODO: Find a better way to do this.
-        time.sleep(1)

@@ -532,7 +532,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
         api = wandb.Api()
         run: Run = api.run(wandb_project_run_id)
 
-        checkpoint = fetch_latest_wandb_checkpoint(run)
+        checkpoint = fetch_latest_wandb_checkpoint(run, prefix="spd_model")
 
         run_dir = fetch_wandb_run_dir(run.id)
 
