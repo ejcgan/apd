@@ -26,18 +26,6 @@
             }
         },
         {
-            "name": "tms_topk",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
             "name": "tms_topk_rank_penalty",
             "type": "debugpy",
             "request": "launch",

@@ -8,6 +8,133 @@ from torch import Tensor, nn
 from spd.utils import init_param_
 
 
+class InstancesParamComponentsRankPenalty(nn.Module):
+    """A linear layer decomposed into A and B matrices for rank penalty SPD.
+
+    The weight matrix W is decomposed as W = A @ B, where A and B are learned parameters.
+    """
+
+    def __init__(
+        self,
+        n_instances: int,
+        in_dim: int,
+        out_dim: int,
+        k: int,
+        bias: bool,
+        init_scale: float = 1.0,
+        m: int | None = None,
+    ):
+        super().__init__()
+        self.n_instances = n_instances
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.k = k
+        self.m = min(in_dim, out_dim) if m is None else m
+
+        # Initialize A and B matrices
+        self.A = nn.Parameter(torch.empty(n_instances, k, in_dim, self.m))
+        self.B = nn.Parameter(torch.empty(n_instances, k, self.m, out_dim))
+        self.bias = nn.Parameter(torch.zeros(n_instances, out_dim)) if bias else None
+
+        init_param_(self.A, scale=init_scale)
+        init_param_(self.B, scale=init_scale)
+
+    @property
+    def subnetwork_params(self) -> Float[Tensor, "n_instances k d_in d_out"]:
+        """For compatibility with plotting code."""
+        return einops.einsum(
+            self.A,
+            self.B,
+            "n_instances k d_in m, n_instances k m d_out -> n_instances k d_in d_out",
+        )
+
+    def forward(
+        self,
+        x: Float[Tensor, "batch n_instances d_in"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+    ) -> tuple[
+        Float[Tensor, "batch n_instances d_out"], Float[Tensor, "batch n_instances k d_out"]
+    ]:
+        """Forward pass through the layer.
+
+        Args:
+            x: Input tensor
+            topk_mask: Boolean tensor indicating which subnetworks to keep
+        Returns:
+            output: The summed output across all subnetworks
+            inner_acts: The output of each subnetwork before summing
+        """
+        # First multiply by A to get to intermediate dimension m
+        pre_inner_acts = einops.einsum(
+            x, self.A, "batch n_instances d_in, n_instances k d_in m -> batch n_instances k m"
+        )
+        if topk_mask is not None:
+            assert topk_mask.shape == pre_inner_acts.shape[:-1]
+            pre_inner_acts = einops.einsum(
+                pre_inner_acts,
+                topk_mask,
+                "batch n_instances k m, batch n_instances k -> batch n_instances k m",
+            )
+
+        # Then multiply by B to get to output dimension
+        inner_acts = einops.einsum(
+            pre_inner_acts,
+            self.B,
+            "batch n_instances k m, n_instances k m d_out -> batch n_instances k d_out",
+        )
+
+        if topk_mask is not None:
+            inner_acts = einops.einsum(
+                inner_acts,
+                topk_mask,
+                "batch n_instances k d_out, batch n_instances k -> batch n_instances k d_out",
+            )
+
+        # Sum over subnetwork dimension
+        out = einops.einsum(inner_acts, "batch n_instances k d_out -> batch n_instances d_out")
+
+        # Add the bias if it exists
+        if self.bias is not None:
+            out += self.bias
+        return out, inner_acts
+
+
+class InstancesParamComponentsFullRank(nn.Module):
+    def __init__(
+        self, n_instances: int, in_dim: int, out_dim: int, k: int, bias: bool, init_scale: float
+    ):
+        super().__init__()
+        self.subnetwork_params = nn.Parameter(torch.empty(n_instances, k, in_dim, out_dim))
+        init_param_(self.subnetwork_params, init_scale)
+
+        self.bias = nn.Parameter(torch.zeros(n_instances, out_dim)) if bias else None
+
+    def forward(
+        self,
+        x: Float[Tensor, "batch n_instances d_in"],
+        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+    ) -> tuple[
+        Float[Tensor, "batch n_instances d_out"], Float[Tensor, "batch n_instances k d_out"]
+    ]:
+        inner_acts = einops.einsum(
+            x,
+            self.subnetwork_params,
+            "batch n_instances d_in, n_instances k d_in d_out -> batch n_instances k d_out",
+        )
+        if self.bias is not None:
+            inner_acts += self.bias
+
+        if topk_mask is not None:
+            inner_acts = einops.einsum(
+                inner_acts,
+                topk_mask,
+                "batch n_instances k d_out, batch n_instances k -> batch n_instances k d_out",
+            )
+
+        out = einops.einsum(inner_acts, "batch n_instances k d_out -> batch n_instances d_out")
+        return out, inner_acts
+
+
 class ParamComponents(nn.Module):
     def __init__(
         self,

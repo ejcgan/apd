@@ -1,8 +1,12 @@
+"""TMS model, adapted from
+https://colab.research.google.com/github/anthropics/toy-models-of-superposition/blob/main/toy_models.ipynb
+"""
+
 import json
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import einops
 import matplotlib.pyplot as plt
@@ -10,7 +14,7 @@ import numpy as np
 import torch
 from jaxtyping import Float
 from matplotlib import collections as mc
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel, NonNegativeInt, PositiveInt, model_validator
 from torch import Tensor
 from tqdm import tqdm, trange
 
@@ -21,12 +25,7 @@ from spd.utils import DatasetGeneratedDataLoader, SparseFeatureDataset, set_seed
 class TMSTrainConfig(BaseModel):
     n_features: PositiveInt
     n_hidden: PositiveInt
-
-    # We optimize n_instances models in a single training loop
-    # to let us sweep over sparsity or importance curves
-    # efficiently.
-
-    # We could potentially use torch.vmap instead.
+    n_hidden_layers: NonNegativeInt
     n_instances: PositiveInt
     feature_probability: float
     batch_size: PositiveInt
@@ -34,6 +33,16 @@ class TMSTrainConfig(BaseModel):
     seed: int = 0
     lr: float
     data_generation_type: Literal["at_least_zero_active", "exactly_one_active"]
+    fixed_identity_hidden_layers: bool = False
+    fixed_random_hidden_layers: bool = False
+
+    @model_validator(mode="after")
+    def validate_fixed_layers(self) -> Self:
+        if self.fixed_identity_hidden_layers and self.fixed_random_hidden_layers:
+            raise ValueError(
+                "Cannot set both fixed_identity_hidden_layers and fixed_random_hidden_layers to True"
+            )
+        return self
 
 
 def linear_lr(step: int, steps: int) -> float:
@@ -150,28 +159,26 @@ def calculate_feature_cosine_similarities(
     return max_sims
 
 
-if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    config = TMSTrainConfig(
-        n_features=5,
-        n_hidden=2,
-        n_instances=12,
-        feature_probability=0.05,
-        batch_size=1024,
-        steps=5_000,
-        seed=0,
-        lr=5e-3,
-        data_generation_type="at_least_zero_active",
-    )
-
-    set_seed(config.seed)
-
+def get_model_and_dataloader(
+    config: TMSTrainConfig, device: Literal["cuda", "cpu"]
+) -> tuple[TMSModel, DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]]]:
     model = TMSModel(
         n_instances=config.n_instances,
         n_features=config.n_features,
         n_hidden=config.n_hidden,
+        n_hidden_layers=config.n_hidden_layers,
         device=device,
     )
+
+    if (
+        config.fixed_identity_hidden_layers or config.fixed_random_hidden_layers
+    ) and model.hidden_layers is not None:
+        for i in range(model.n_hidden_layers):
+            if config.fixed_identity_hidden_layers:
+                model.hidden_layers[i].data[:, :, :] = torch.eye(model.n_hidden, device=device)
+            elif config.fixed_random_hidden_layers:
+                model.hidden_layers[i].data[:, :, :] = torch.randn_like(model.hidden_layers[i])
+            model.hidden_layers[i].requires_grad = False
 
     dataset = SparseFeatureDataset(
         n_instances=config.n_instances,
@@ -182,11 +189,36 @@ if __name__ == "__main__":
         value_range=(0.0, 1.0),
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
+    return model, dataloader
+
+
+if __name__ == "__main__":
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = TMSTrainConfig(
+        n_features=5,
+        n_hidden=2,
+        n_hidden_layers=2,
+        n_instances=12,
+        feature_probability=0.05,
+        batch_size=1024,
+        steps=5_000,
+        seed=0,
+        lr=5e-3,
+        data_generation_type="at_least_zero_active",
+        fixed_identity_hidden_layers=False,
+        fixed_random_hidden_layers=True,
+    )
+
+    set_seed(config.seed)
+
+    model, dataloader = get_model_and_dataloader(config, device)
+
     train(model, dataloader=dataloader, steps=config.steps)
 
     run_name = (
         f"tms_n-features{config.n_features}_n-hidden{config.n_hidden}_"
-        f"n-instances{config.n_instances}_seed{config.seed}.pth"
+        f"n-hidden-layers{config.n_hidden_layers}_n-instances{config.n_instances}_"
+        f"seed{config.seed}.pth"
     )
     out_dir = Path(__file__).parent / "out" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)

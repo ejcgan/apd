@@ -47,11 +47,11 @@ jobs:
           echo PATH=$PATH >> $GITHUB_ENV
           echo "./venv/bin" >> $GITHUB_PATH
 
-      - name: Run pyright
-        run: pyright --pythonpath ./venv/bin/python
-
       - name: Print dependencies
         run: pip freeze
+
+      - name: Run pyright
+        run: pyright --pythonpath ./venv/bin/python
 
       - name: Run ruff lint
         run: ruff check --fix-only .

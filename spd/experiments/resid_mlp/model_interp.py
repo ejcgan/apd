@@ -7,7 +7,6 @@ from spd.experiments.resid_mlp.plotting import (
     plot_2d_snr,
     plot_individual_feature_response,
     plot_virtual_weights,
-    relu_contribution_plot,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
 from spd.experiments.resid_mlp.train_resid_mlp import ResidMLPTrainConfig
@@ -53,10 +52,6 @@ fig = plot_individual_feature_response(
     task_config,
     sweep=True,
 )
-plt.show()
-
-# %% Show connection strength between ReLUs and features
-fig = relu_contribution_plot(model, device)
 plt.show()
 
 # %% Calculate S/N ratio for 1 and 2 active features.

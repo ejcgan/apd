@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     Field,
     NonNegativeFloat,
+    NonNegativeInt,
     PositiveFloat,
     PositiveInt,
     model_validator,
@@ -34,6 +35,7 @@ class TMSConfig(BaseModel):
     task_name: Literal["tms"] = "tms"
     n_features: PositiveInt
     n_hidden: PositiveInt
+    n_hidden_layers: NonNegativeInt = 0
     n_instances: PositiveInt
     k: PositiveInt
     feature_probability: Probability
@@ -43,7 +45,6 @@ class TMSConfig(BaseModel):
     data_generation_type: Literal["exactly_one_active", "at_least_zero_active"] = (
         "at_least_zero_active"
     )
-    handcoded: bool = False
 
 
 class DeepLinearConfig(BaseModel):
@@ -233,6 +234,7 @@ class Config(BaseModel):
 
         if isinstance(self.task_config, ResidualMLPTaskConfig):
             assert self.spd_type == "rank_penalty", "Only rank penalty supported for residual mlp"
+
         return self
 
 
