@@ -14,7 +14,6 @@ import torch
 import wandb
 import yaml
 from jaxtyping import Float
-from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
@@ -209,10 +208,11 @@ def plot_subnetwork_params(
     )
 
     for i in range(n_instances):
+        instance_max = np.abs(subnet_params[i].detach().cpu().numpy()).max()
         for j in range(k):
             ax = axs[j, i]  # type: ignore
             param = subnet_params[i, j].detach().cpu().numpy()
-            ax.matshow(param, cmap="RdBu", norm=CenteredNorm())
+            ax.matshow(param, cmap="RdBu", vmin=-instance_max, vmax=instance_max)
             ax.set_xticks([])
             ax.set_yticks([])
 
