@@ -586,7 +586,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         assert isinstance(config.task_config, ResidualMLPTaskConfig)
         resid_mlp_spd_rank_penalty_config = ResidualMLPSPDRankPenaltyConfig(
-            **resid_mlp_train_config_dict, k=config.task_config.k, m=config.m
+            **resid_mlp_train_config_dict["resid_mlp_config"], k=config.task_config.k, m=config.m
         )
         model = cls(config=resid_mlp_spd_rank_penalty_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
