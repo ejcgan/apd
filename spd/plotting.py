@@ -9,7 +9,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from spd.models.base import SPDFullRankModel, SPDModel, SPDRankPenaltyModel
+from spd.models.base import SPDFullRankModel, SPDRankPenaltyModel
 from spd.run_spd import Config
 from spd.utils import calc_topk_mask, calculate_attributions
 
@@ -65,7 +65,7 @@ def plot_subnetwork_correlations(
     dataloader: DataLoader[
         tuple[Float[Tensor, "batch n_inputs"] | Float[Tensor, "batch n_instances? n_inputs"], Any]
     ],
-    spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    spd_model: SPDFullRankModel | SPDRankPenaltyModel,
     config: Config,
     device: str,
     n_forward_passes: int = 100,
@@ -84,7 +84,6 @@ def plot_subnetwork_correlations(
             inner_acts=inner_acts,
             layer_acts=layer_acts,
             attribution_type=config.attribution_type,
-            spd_type=config.spd_type,
         )
 
         # We always assume the final subnetwork is the one we want to distil

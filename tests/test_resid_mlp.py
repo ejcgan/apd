@@ -44,7 +44,6 @@ def test_resid_mlp_rank_penalty_decomposition_happy_path() -> None:
     config = Config(
         seed=0,
         spd_type="rank_penalty",
-        unit_norm_matrices=False,
         topk=1,
         batch_topk=True,
         param_match_coeff=1.0,

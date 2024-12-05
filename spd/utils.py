@@ -197,90 +197,7 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
             yield batch[0], label[0]
 
 
-def calc_grad_attributions_rank_one(
-    out: Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"],
-    inner_acts_vals: list[Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]],
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
-    """Calculate the sum of the (squared) attributions from each output dimension.
-
-    An attribution is the element-wise product of the gradient of the output dimension w.r.t. the
-    inner acts and the inner acts themselves.
-
-    Note: This code may be run in between the training forward pass, and the loss.backward() and
-    opt.step() calls; it must not mess with the training. The reason the current implementation is
-    fine to run anywhere is that we just use autograd rather than backward which does not
-    populate the .grad attributes. Unrelatedly, we use retain_graph=True in a bunch of cases
-    where we want to later use the `out` variable in e.g. the loss function.
-
-    Args:
-        out: The output of the model.
-        inner_acts_vals: The inner acts of the model (i.e. the set of subnetwork activations for
-            each parameter matrix).
-
-    Returns:
-        The sum of the (squared) attributions from each output dimension.
-    """
-    attribution_scores: Float[Tensor, " k"] | Float[Tensor, "n_instances k"] = torch.zeros_like(
-        inner_acts_vals[0]
-    )
-    for feature_idx in range(out.shape[-1]):
-        feature_attributions: Float[Tensor, " k"] | Float[Tensor, "n_instances k"] = (
-            torch.zeros_like(inner_acts_vals[0])
-        )
-        feature_grads: tuple[
-            Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"], ...
-        ] = torch.autograd.grad(out[..., feature_idx].sum(), inner_acts_vals, retain_graph=True)
-        assert len(feature_grads) == len(inner_acts_vals)
-        for param_matrix_idx in range(len(inner_acts_vals)):
-            feature_attributions += (
-                feature_grads[param_matrix_idx] * inner_acts_vals[param_matrix_idx]
-            )
-
-        attribution_scores += feature_attributions**2
-
-    return attribution_scores
-
-
-def calc_grad_attributions_rank_one_per_layer(
-    out: Float[Tensor, "... d_out"],
-    inner_acts_vals: list[Float[Tensor, "... k"]],
-) -> list[Float[Tensor, "... k"]]:
-    """Calculate the gradient attributions for each layer.
-
-    This differs from calc_attributions_rank_one in that it returns a list of attribution scores
-    for each layer that are the sum of squares of output features, rather than taking the sum of
-    squared attributions across layers.
-
-    i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
-    sum_{n_features}(sum_{layers}(activation * grad))^2.
-
-    Note that we don't have an ablation version of this for computational reasons.
-    Args:
-        out: The output of the model.
-        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations for each
-            parameter matrix).
-
-    Returns:
-        The list of attribution scores for each layer.
-    """
-
-    layer_attribution_scores: list[Float[Tensor, "... k"]] = [
-        torch.zeros_like(inner_acts_vals[0]) for _ in range(len(inner_acts_vals))
-    ]
-    for feature_idx in range(out.shape[-1]):
-        feature_grads: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            out[..., feature_idx].sum(), inner_acts_vals, retain_graph=True
-        )
-        assert len(feature_grads) == len(inner_acts_vals)
-        for param_matrix_idx in range(len(inner_acts_vals)):
-            layer_attribution_scores[param_matrix_idx] += (
-                feature_grads[param_matrix_idx] * inner_acts_vals[param_matrix_idx]
-            ).pow(2)
-
-    return layer_attribution_scores
-
-
-def calc_grad_attributions_full_rank(
+def calc_grad_attributions(
     out: Float[Tensor, "... out_dim"],
     inner_acts: dict[str, Float[Tensor, "... k d_out"]],
     layer_acts: dict[str, Float[Tensor, "... d_out"]],
@@ -383,7 +300,6 @@ def calc_grad_attributions_full_rank_per_layer(
 def collect_subnetwork_attributions(
     model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
     device: str,
-    spd_type: Literal["full_rank", "rank_one", "rank_penalty"],
     n_instances: int | None = None,
 ) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     """
@@ -409,15 +325,9 @@ def collect_subnetwork_attributions(
 
     out, test_layer_acts, test_inner_acts = model(test_batch)
 
-    if spd_type == "rank_one":
-        attribution_scores = calc_grad_attributions_rank_one(
-            out=out, inner_acts_vals=list(test_inner_acts.values())
-        )
-    else:
-        # We use the same function for rank_penalty and full_rank
-        attribution_scores = calc_grad_attributions_full_rank(
-            out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
-        )
+    attribution_scores = calc_grad_attributions(
+        out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
+    )
     return attribution_scores
 
 
@@ -470,22 +380,13 @@ def calculate_attributions(
     inner_acts: dict[str, Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]],
     layer_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
     attribution_type: Literal["ablation", "gradient", "activation"],
-    spd_type: Literal["rank_one", "full_rank", "rank_penalty"],
 ) -> Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]:
     attributions = None
     if attribution_type == "ablation":
         attributions = calc_ablation_attributions(model=model, batch=batch, out=out)
     elif attribution_type == "gradient":
-        if spd_type == "rank_one":
-            attributions = calc_grad_attributions_rank_one(
-                out=out, inner_acts_vals=list(inner_acts.values())
-            )
-        else:
-            attributions = calc_grad_attributions_full_rank(
-                out=out, inner_acts=inner_acts, layer_acts=layer_acts
-            )
+        attributions = calc_grad_attributions(out=out, inner_acts=inner_acts, layer_acts=layer_acts)
     elif attribution_type == "activation":
-        assert spd_type != "rank_one", "Activation attributions not supported for rank one"
         attributions = calc_activation_attributions(inner_acts=inner_acts)
     else:
         raise ValueError(f"Invalid attribution type: {attribution_type}")
@@ -609,7 +510,6 @@ def run_spd_forward_pass(
     target_model: Model,
     input_array: Float[Tensor, "batch n_inputs"],
     attribution_type: Literal["gradient", "ablation", "activation"],
-    spd_type: Literal["rank_one", "full_rank", "rank_penalty"],
     batch_topk: bool,
     topk: float,
     distil_from_target: bool,
@@ -625,7 +525,6 @@ def run_spd_forward_pass(
         inner_acts=inner_acts,
         layer_acts=layer_acts,
         attribution_type=attribution_type,
-        spd_type=spd_type,
     )
 
     # We always assume the final subnetwork is the one we want to distil

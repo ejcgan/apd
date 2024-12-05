@@ -6,7 +6,6 @@ from jaxtyping import Float
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
 from spd.experiments.linear.models import (
     DeepLinearComponentFullRankModel,
-    DeepLinearComponentModel,
     DeepLinearModel,
 )
 from spd.experiments.linear.train_linear import Config as TrainConfig
@@ -40,7 +39,7 @@ def deep_linear_decomposition_optimize_test(config: Config) -> None:
         n_instances=config.task_config.n_instances,
     ).to(device)
 
-    model = DeepLinearComponentModel(
+    model = DeepLinearComponentFullRankModel(
         n_features=config.task_config.n_features,
         n_layers=config.task_config.n_layers,
         n_instances=config.task_config.n_instances,
@@ -51,7 +50,7 @@ def deep_linear_decomposition_optimize_test(config: Config) -> None:
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 
     # Pick an arbitrary parameter to check that it changes
-    initial_param = model.layers[0].A.clone().detach()
+    initial_param = model.layers[0].subnetwork_params.clone().detach()
 
     optimize(
         model=model,
@@ -65,12 +64,13 @@ def deep_linear_decomposition_optimize_test(config: Config) -> None:
     )
 
     assert not torch.allclose(
-        initial_param, model.layers[0].A
+        initial_param, model.layers[0].subnetwork_params
     ), "Model A matrix should have changed after optimization"
 
 
 def test_deep_linear_batch_topk_no_l2() -> None:
     config = Config(
+        spd_type="full_rank",
         topk=2,
         batch_topk=True,
         batch_size=4,
@@ -87,6 +87,7 @@ def test_deep_linear_batch_topk_no_l2() -> None:
 
 def test_deep_linear_batch_topk_and_l2() -> None:
     config = Config(
+        spd_type="full_rank",
         topk=2,
         batch_topk=True,
         batch_size=4,
@@ -103,6 +104,7 @@ def test_deep_linear_batch_topk_and_l2() -> None:
 
 def test_deep_linear_batch_topk_and_lp_and_l2() -> None:
     config = Config(
+        spd_type="full_rank",
         topk=2,
         batch_topk=True,
         pnorm=0.9,
@@ -121,6 +123,7 @@ def test_deep_linear_batch_topk_and_lp_and_l2() -> None:
 
 def test_deep_linear_topk_and_l2() -> None:
     config = Config(
+        spd_type="full_rank",
         topk=2,
         batch_topk=False,
         batch_size=4,
@@ -137,6 +140,7 @@ def test_deep_linear_topk_and_l2() -> None:
 
 def test_deep_linear_lp() -> None:
     config = Config(
+        spd_type="full_rank",
         topk=None,
         batch_topk=False,
         batch_size=4,

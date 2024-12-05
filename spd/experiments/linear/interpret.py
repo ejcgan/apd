@@ -5,7 +5,6 @@ import torch
 
 from spd.experiments.linear.models import (
     DeepLinearComponentFullRankModel,
-    DeepLinearComponentModel,
     DeepLinearModel,
 )
 from spd.experiments.linear.plotting import make_linear_plots
@@ -38,13 +37,7 @@ def main():
             k=config.task_config.k,
         )
     else:
-        dlc_model = DeepLinearComponentModel(
-            n_features=n_features,
-            n_layers=n_layers,
-            n_instances=n_instances,
-            k=config.task_config.k,
-        )
-
+        raise ValueError(f"Unknown/unsupported SPD type: {config.spd_type}")
     dlc_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
 
     out_dir = Path(__file__).parent / "out/figures" / pretrained_path.parent.name

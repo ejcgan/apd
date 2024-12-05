@@ -86,18 +86,6 @@
             }
         },
         {
-            "name": "piecewise_topk_rank_one_spd",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_topk_rank_one_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
             "name": "piecewise_topk_full_rank_spd",
             "type": "debugpy",
             "request": "launch",

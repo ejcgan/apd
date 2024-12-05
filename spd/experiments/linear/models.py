@@ -5,8 +5,7 @@ import torch
 from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
-from spd.models.base import Model, SPDFullRankModel, SPDModel
-from spd.utils import remove_grad_parallel_to_subnetwork_vecs
+from spd.models.base import Model, SPDFullRankModel
 
 
 class DeepLinearModel(Model):
@@ -56,138 +55,6 @@ class DeepLinearModel(Model):
     ) -> dict[str, Float[Tensor, "n_instances n_features n_features"]]:
         """Dictionary of all parameters which will be decomposed with SPD."""
         return {f"layer_{i}": layer for i, layer in enumerate(self.layers)}
-
-
-class DeepLinearParamComponents(nn.Module):
-    def __init__(self, n_instances: int, n_features: int, k: int):
-        super().__init__()
-        self.A = nn.Parameter(torch.empty(n_instances, n_features, k))
-        self.B = nn.Parameter(torch.empty(n_instances, k, n_features))
-
-    def forward(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
-    ) -> tuple[Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances k"]]:
-        inner_acts = einops.einsum(
-            x,
-            self.A,
-            "batch n_instances n_features, n_instances n_features k -> batch n_instances k",
-        )
-        if topk_mask is not None:
-            inner_acts = einops.einsum(
-                inner_acts,
-                topk_mask,
-                "batch n_instances k, batch n_instances k -> batch n_instances k",
-            )
-        out = einops.einsum(
-            inner_acts,
-            self.B,
-            "batch n_instances k, n_instances k n_features -> batch n_instances n_features",
-        )
-        return out, inner_acts
-
-
-class DeepLinearComponentModel(SPDModel):
-    def __init__(
-        self,
-        n_features: int,
-        n_layers: int,
-        n_instances: int,
-        k: int | None,
-    ):
-        super().__init__()
-        self.n_features = n_features
-        self.n_layers = n_layers
-        self.n_param_matrices = n_layers
-        self.n_instances = n_instances
-        self.k = k if k is not None else n_features
-        self.layers = nn.ModuleList(
-            [
-                DeepLinearParamComponents(n_instances=n_instances, n_features=n_features, k=self.k)
-                for _ in range(n_layers)
-            ]
-        )
-
-        for param in self.layers.parameters():
-            nn.init.kaiming_normal_(param)
-
-    def all_As_and_Bs(
-        self,
-    ) -> dict[
-        str,
-        tuple[Float[Tensor, "n_instances n_features k"], Float[Tensor, "n_instances k n_features"]],
-    ]:
-        return {f"layer_{i}": (layer.A, layer.B) for i, layer in enumerate(self.layers)}
-
-    def all_subnetwork_params(
-        self,
-    ) -> dict[str, Float[Tensor, "n_instances k n_features n_features"]]:
-        return {
-            f"layer_{i}": torch.einsum("ifk,ikh->ikfh", layer.A, layer.B)
-            for i, layer in enumerate(self.layers)
-        }
-
-    def all_subnetwork_params_summed(
-        self,
-    ) -> dict[str, Float[Tensor, "n_instances n_features n_features"]]:
-        return {
-            f"layer_{i}": torch.einsum("ifk,ikh->ifh", layer.A, layer.B)
-            for i, layer in enumerate(self.layers)
-        }
-
-    def forward(
-        self,
-        x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"],
-        dict[str, Float[Tensor, "batch n_instances n_features"]],
-        dict[str, Float[Tensor, "batch n_instances k"]],
-    ]:
-        layer_acts = {}
-        inner_acts = {}
-        for i, layer in enumerate(self.layers):
-            x, inner_act = layer(x, topk_mask)
-            layer_acts[f"layer_{i}"] = x
-            inner_acts[f"layer_{i}"] = inner_act
-        return x, layer_acts, inner_acts
-
-    @classmethod
-    def from_pretrained(cls, path: str | Path) -> "DeepLinearComponentModel":
-        params = torch.load(path, weights_only=True, map_location="cpu")
-        n_layers = len(params) // 2
-        for param in params:
-            assert param.startswith("layers.") and param.endswith(("A", "B"))
-        n_instances, n_features, k = params["layers.0.A"].shape
-
-        model = cls(n_features=n_features, n_layers=n_layers, n_instances=n_instances, k=k)
-        model.load_state_dict(params)
-        return model
-
-    def set_matrices_to_unit_norm(self):
-        for layer in self.layers:
-            layer.A.data /= layer.A.data.norm(p=2, dim=-2, keepdim=True)
-
-    def fix_normalized_adam_gradients(self):
-        for layer in self.layers:
-            remove_grad_parallel_to_subnetwork_vecs(layer.A.data, layer.A.grad)
-
-    def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Float[Tensor, "n_instances dim"]]:
-        stored_vals = {}
-        for i, layer in enumerate(self.layers):
-            stored_vals[f"layer_{i}_A"] = layer.A.data[:, :, subnet_idx].detach().clone()
-            stored_vals[f"layer_{i}_B"] = layer.B.data[:, subnet_idx, :].detach().clone()
-            layer.A.data[:, :, subnet_idx] = 0.0
-            layer.B.data[:, subnet_idx, :] = 0.0
-        return stored_vals
-
-    def restore_subnet(
-        self, subnet_idx: int, stored_vals: dict[str, Float[Tensor, "n_instances dim"]]
-    ) -> None:
-        for i, layer in enumerate(self.layers):
-            layer.A.data[:, :, subnet_idx] = stored_vals[f"layer_{i}_A"]
-            layer.B.data[:, subnet_idx, :] = stored_vals[f"layer_{i}_B"]
 
 
 class DeepLinearParamComponentsFullRank(nn.Module):

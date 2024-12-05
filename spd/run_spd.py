@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.base import Model, SPDFullRankModel, SPDModel, SPDRankPenaltyModel
+from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
 from spd.types import ModelPath, Probability, RootPath
 from spd.utils import calc_topk_mask, calculate_attributions
 
@@ -98,7 +98,7 @@ class Config(BaseModel):
     wandb_project: str | None = None
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
-    spd_type: Literal["rank_one", "full_rank", "rank_penalty"] = "rank_one"
+    spd_type: Literal["full_rank", "rank_penalty"] = "rank_penalty"
     seed: int = 0
     topk: PositiveFloat | None = None
     batch_topk: bool = True
@@ -128,7 +128,7 @@ class Config(BaseModel):
     lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     sparsity_warmup_pct: Probability = 0.0
-    unit_norm_matrices: bool = True
+    unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
     task_config: (
         DeepLinearConfig
@@ -326,37 +326,6 @@ def calc_recon_mse(
     return recon_loss
 
 
-def calc_topk_l2_rank_one(
-    As_and_Bs_vals: list[tuple[Float[Tensor, "d_layer_in k"], Float[Tensor, "k d_layer_out"]]],
-    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
-    n_params: int,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the L2 of the sum of the topk subnetworks.
-
-    Args:
-        all_As_and_Bs: The A and B matrices for each layer.
-        topk_mask: The topk mask to use for the L2 penalty.
-        n_params: The number of decomposable parameters in the model.
-    Returns:
-        The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
-            deep linear toy models).
-    """
-    n_instances = topk_mask.shape[1] if topk_mask.ndim == 3 else None
-    accumulate_shape = (n_instances,) if n_instances is not None else ()
-
-    topk_l2_penalty = torch.zeros(accumulate_shape, device=As_and_Bs_vals[0][0].device)
-    batch_size = topk_mask.shape[0]
-    for A, B in As_and_Bs_vals:
-        # A: [d_in, k] or [n_instances, d_in, k]
-        # B: [k, d_out] or [n_instances, k, d_out]
-        # topk_mask: [batch, k] or [batch, n_instances, k]
-        A_topk = torch.einsum("...fk,b...k ->b...fk", A, topk_mask)
-        AB_topk = torch.einsum("b...fk,...kh->b...fh", A_topk, B)
-        topk_l2_penalty = topk_l2_penalty + ((AB_topk) ** 2).sum(dim=(0, -2, -1))
-
-    return topk_l2_penalty / n_params / batch_size
-
-
 def calc_topk_l2_full_rank(
     subnet_param_vals: list[
         Float[Tensor, "k d_out"]
@@ -473,14 +442,14 @@ def calc_param_match_loss(
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the parameter match loss.
 
-    This is the L2 difference between the combined parameter matrices of the SPDModel and the
+    This is the L2 difference between the combined parameter matrices of the SPD Model and the
     target params.
 
     Args:
         pretrained_weights: The pretrained weights to be matched. May have an n_instances and/or
             d_in dimension.
-        subnetwork_params_summed: The parameters of the SPDModel (that have already been summed over
-            the subnetwork dimension). May have an n_instances and/or d_in dimension.
+        subnetwork_params_summed: The parameters of the SPD Model (that have already been summed
+            over the subnetwork dimension). May have an n_instances and/or d_in dimension.
         param_map: A map from keys in pretrained_weights to keys in subnetwork_params_summed.
         has_instance_dim: Whether the model has an n_instances dimension.
         n_params: The number of parameters in the model.
@@ -524,7 +493,7 @@ def calc_orthog_loss_full_rank(
     at the end).
 
     Args:
-        subnetwork_params: The parameters of the SPDModel.
+        subnetwork_params: The parameters of the SPD Model.
         has_instance_dim: Whether the model has an n_instances dimension.
     Returns:
         The orthogonality loss of shape [n_instances] if the model has an n_instances dimension,
@@ -553,70 +522,7 @@ def calc_orthog_loss_full_rank(
     return orthog_loss
 
 
-def calc_lp_sparsity_loss_rank_one(
-    out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    layer_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
-    inner_acts: dict[str, Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]],
-    B_params: dict[str, Float[Tensor, "n_instances k d_out"] | Float[Tensor, "k d_out"]],
-    step_pnorm: float,
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
-    """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
-
-    Note that this always uses the gradient form of the attributions. We do not support other
-    attributions for this lp sparsity loss.
-
-    Unlike the attributions we calculate for topk in `spd.utils.calc_grad_attributions_rank_one`,
-    in this function we calculate the derivative w.r.t. the layer activations and multiply by that
-    layer's B matrix. This will give the same gradient as taking the derivative w.r.t. the
-    inner_acts using the chain rule, but importantly it puts the B matrix in the computational graph
-    for this calculation so backprop can pass through it (autograd.grad will not build a
-    computational graph from intermediate tensors
-    https://gist.github.com/danbraunai-apollo/388c3c76be92922cf7b2a2f7da7d0d43). This is a
-    (somewhat arbitrary) decision to include this layer's B matrix but not future layer parameters
-    in the sparsity loss. We don't do this in topk because topk isn't a differentiable operation
-    anyway.
-
-    Args:
-        out: The output of the model.
-        layer_acts: Activations at the output of each layer, i.e. after both A and B transformations
-        inner_acts: The inner acts of the model (i.e. the set of subnetwork activations after the A
-            transformation for each parameter matrix).
-        B_params: The B matrix of each rank one layer.
-        step_pnorm: The pnorm at the current step.
-
-    Returns:
-        The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
-            dimension. Note that we keep the batch and k dimensions as we need them if calculating
-            the schatten loss.
-    """
-    assert layer_acts.keys() == inner_acts.keys() == B_params.keys()
-    first_param_name = next(iter(layer_acts.keys()))
-    attributions = torch.zeros_like(inner_acts[first_param_name], requires_grad=True)
-    for feature_idx in range(out.shape[-1]):
-        grad_layer_acts = torch.autograd.grad(
-            out[..., feature_idx].sum(),
-            list(layer_acts.values()),
-            retain_graph=True,
-        )
-        sparsity_inner = torch.zeros_like(attributions, requires_grad=True)
-        for i, param_matrix_name in enumerate(layer_acts.keys()):
-            # h_i * grad_h_i
-            sparsity_inner = sparsity_inner + (
-                inner_acts[param_matrix_name]
-                * torch.einsum(
-                    "...o,...ko->...k", grad_layer_acts[i].detach(), B_params[param_matrix_name]
-                )
-            )
-
-        attributions = attributions + sparsity_inner**2
-    attributions = attributions / out.shape[-1]
-
-    # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
-    lp_sparsity_loss_per_k = (attributions.abs() + 1e-16) ** (step_pnorm * 0.5)
-    return lp_sparsity_loss_per_k
-
-
-def calc_lp_sparsity_loss_full_rank(
+def calc_lp_sparsity_loss(
     out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
     attributions: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
     step_pnorm: float,
@@ -768,7 +674,7 @@ def calc_topk_act_recon(
 
 
 def optimize(
-    model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    model: SPDFullRankModel | SPDRankPenaltyModel,
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
@@ -806,8 +712,8 @@ def optimize(
     for step in tqdm(range(config.steps + 1), ncols=0):
         if config.unit_norm_matrices:
             assert isinstance(
-                model, SPDModel | SPDRankPenaltyModel
-            ), "Can only norm matrices in SPDModel instances"
+                model, SPDRankPenaltyModel
+            ), "Can only norm matrices in SPDRankPenaltyModel instances"
             model.set_matrices_to_unit_norm()
 
         step_lr = get_lr_with_warmup(
@@ -862,7 +768,6 @@ def optimize(
 
         orthog_loss = None
         if config.orthog_coeff is not None:
-            assert config.spd_type != "rank_one", "Orthogonality loss not supported for rank one"
             subnet_param_vals = list(model.all_subnetwork_params().values())
             if config.distil_from_target:
                 # Remove the final subnetwork index from all params
@@ -890,24 +795,14 @@ def optimize(
             inner_acts=inner_acts,
             layer_acts=layer_acts,
             attribution_type=config.attribution_type,
-            spd_type=config.spd_type,
         )
 
         lp_sparsity_loss_per_k = None
         if config.lp_sparsity_coeff is not None:
             step_pnorm = config.pnorm or get_step_pnorm(step, config.steps, config.pnorm_end)
-            if config.spd_type == "rank_one":
-                lp_sparsity_loss_per_k = calc_lp_sparsity_loss_rank_one(
-                    out=out,
-                    layer_acts=layer_acts,
-                    inner_acts=inner_acts,
-                    B_params={k: tup[1] for k, tup in model.all_As_and_Bs().items()},
-                    step_pnorm=step_pnorm,
-                )
-            else:
-                lp_sparsity_loss_per_k = calc_lp_sparsity_loss_full_rank(
-                    out=out, attributions=attributions, step_pnorm=step_pnorm
-                )
+            lp_sparsity_loss_per_k = calc_lp_sparsity_loss(
+                out=out, attributions=attributions, step_pnorm=step_pnorm
+            )
 
         (
             out_topk,
@@ -933,22 +828,12 @@ def optimize(
             out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
 
             if config.topk_l2_coeff is not None:
-                if config.spd_type == "full_rank" or config.spd_type == "rank_penalty":
-                    assert isinstance(model, SPDFullRankModel | SPDRankPenaltyModel)
-                    topk_l2_loss = calc_topk_l2_full_rank(
-                        subnet_param_vals=list(model.all_subnetwork_params().values()),
-                        topk_mask=topk_mask,
-                        n_params=n_params,
-                        n_instances=getattr(model, "n_instances", None),
-                    )
-                elif config.spd_type == "rank_one":
-                    topk_l2_loss = calc_topk_l2_rank_one(
-                        As_and_Bs_vals=list(model.all_As_and_Bs().values()),
-                        topk_mask=topk_mask,
-                        n_params=n_params,
-                    )
-                else:
-                    raise ValueError(f"topk_l2_loss not supported for {config.spd_type}")
+                topk_l2_loss = calc_topk_l2_full_rank(
+                    subnet_param_vals=list(model.all_subnetwork_params().values()),
+                    topk_mask=topk_mask,
+                    n_params=n_params,
+                    n_instances=getattr(model, "n_instances", None),
+                )
 
             if config.topk_recon_coeff is not None:
                 assert out_topk is not None
@@ -1128,8 +1013,8 @@ def optimize(
 
             if config.unit_norm_matrices:
                 assert isinstance(
-                    model, SPDModel | SPDRankPenaltyModel
-                ), "Can only norm matrices in SPDModel instances"
+                    model, SPDRankPenaltyModel
+                ), "Can only norm matrices in SPDRankPenaltyModel instances"
                 model.fix_normalized_adam_gradients()
 
             opt.step()

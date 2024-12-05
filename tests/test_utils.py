@@ -10,7 +10,6 @@ from spd.utils import (
     SparseFeatureDataset,
     calc_ablation_attributions,
     calc_activation_attributions,
-    calc_grad_attributions_rank_one,
     calc_topk_mask,
     calculate_closeness_to_identity,
     compute_feature_importances,
@@ -63,75 +62,6 @@ def test_permute_to_identity(A: torch.Tensor, expected: torch.Tensor):
 def test_closeness_to_identity(A: torch.Tensor, expected_closeness_max: float):
     closeness = calculate_closeness_to_identity(A)
     assert closeness <= expected_closeness_max
-
-
-def test_calc_attributions_rank_one_one_inner_act():
-    # Set up a simple linear model with known gradients
-    inner_acts = [torch.tensor([2.0, 3.0], requires_grad=True)]
-
-    # Define weights for our linear model
-    weights = torch.tensor(
-        [
-            [1.0, 2.0],  # For out[0]
-            [3.0, 4.0],  # For out[1]
-        ]
-    )
-
-    # Calculate the output
-    out = torch.matmul(weights, inner_acts[0])
-
-    # Calculate attributions
-    attributions = calc_grad_attributions_rank_one(out, inner_acts)
-
-    # Expected attributions
-    expected_attributions = torch.zeros_like(inner_acts[0])
-    for i in range(2):  # For each output dimension
-        attribution_per_dim = weights[i] * inner_acts[0]
-        expected_attributions += attribution_per_dim**2
-
-    # Check if the calculated attributions match the expected attributions
-    torch.testing.assert_close(attributions, expected_attributions)
-
-    # Additional check: ensure the shape is correct
-    assert attributions.shape == inner_acts[0].shape
-
-
-def test_calc_attributions_rank_one_two_inner_acts():
-    # Set up a simple linear model with known gradients
-    inner_acts = [
-        torch.tensor([1.0, 2.0, 3.0], requires_grad=True),
-        torch.tensor([4.0, 5.0, 6.0], requires_grad=True),
-    ]
-
-    # Define weights for our linear model
-    weights = [
-        torch.tensor([2.0, 3.0]),  # Gradients will be 2 and 3 for the first inner_act
-        torch.tensor([1.0, 4.0]),  # Gradients will be 1 and 4 for the second inner_act
-    ]
-
-    # Calculate the output
-    out = torch.stack(
-        [
-            inner_acts[0] * weights[0][0] + inner_acts[1] * weights[1][0],
-            inner_acts[0] * weights[0][1] + inner_acts[1] * weights[1][1],
-        ],
-        dim=-1,
-    )
-
-    # Calculate attributions
-    attributions = calc_grad_attributions_rank_one(out, inner_acts)
-
-    # Expected attributions
-    expected_attributions = torch.zeros_like(inner_acts[0])
-    for i in range(2):  # For each output dimension
-        attribution_per_dim = sum(weights[j][i] * inner_acts[j] for j in range(2))
-        expected_attributions += attribution_per_dim**2
-
-    # Check if the calculated attributions match the expected attributions
-    torch.testing.assert_close(attributions, expected_attributions)
-
-    # Additional check: ensure the shape is correct
-    assert attributions.shape == inner_acts[0].shape
 
 
 def test_calc_topk_mask_without_batch_topk():

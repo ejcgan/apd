@@ -56,7 +56,6 @@ if __name__ == "__main__":
         target_model=target_model,
         input_array=batch,
         attribution_type=config.attribution_type,
-        spd_type=config.spd_type,
         batch_topk=config.batch_topk,
         topk=config.topk,
         distil_from_target=config.distil_from_target,

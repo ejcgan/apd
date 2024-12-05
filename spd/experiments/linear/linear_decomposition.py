@@ -10,7 +10,6 @@ import yaml
 from spd.experiments.linear.linear_dataset import DeepLinearDataset
 from spd.experiments.linear.models import (
     DeepLinearComponentFullRankModel,
-    DeepLinearComponentModel,
     DeepLinearModel,
 )
 from spd.experiments.linear.plotting import (
@@ -83,12 +82,7 @@ def main(
             k=config.task_config.k,
         ).to(device)
     else:
-        dlc_model = DeepLinearComponentModel(
-            n_features=n_features,
-            n_layers=n_layers,
-            n_instances=n_instances,
-            k=config.task_config.k,
-        ).to(device)
+        raise ValueError(f"Unknown/unsupported SPD type: {config.spd_type}")
 
     param_map = None
     if config.task_config.pretrained_model_path:

@@ -193,9 +193,8 @@ def resid_mlp_plot_results_fn(
     assert isinstance(config.task_config, ResidualMLPTaskConfig)
     fig_dict = {}
 
-    assert config.spd_type in ("full_rank", "rank_penalty")
     attribution_scores = collect_subnetwork_attributions(
-        model, device, spd_type=config.spd_type, n_instances=model.n_instances
+        model, device, n_instances=model.n_instances
     )
     fig_dict["subnetwork_attributions"] = plot_subnetwork_attributions(
         attribution_scores, out_dir, step

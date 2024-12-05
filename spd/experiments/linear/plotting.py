@@ -9,19 +9,12 @@ from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.linear.models import (
-    DeepLinearComponentFullRankModel,
-    DeepLinearComponentModel,
-)
-from spd.utils import (
-    calc_grad_attributions_full_rank_per_layer,
-    calc_grad_attributions_rank_one_per_layer,
-    permute_to_identity,
-)
+from spd.experiments.linear.models import DeepLinearComponentFullRankModel
+from spd.utils import calc_grad_attributions_full_rank_per_layer, permute_to_identity
 
 
 def _collect_permuted_subnetwork_attributions(
-    model: DeepLinearComponentModel | DeepLinearComponentFullRankModel,
+    model: DeepLinearComponentFullRankModel,
     device: str,
 ) -> tuple[
     Float[Tensor, "batch n_instances n_features"], list[Float[Tensor, "batch n_instances k"]]
@@ -33,8 +26,7 @@ def _collect_permuted_subnetwork_attributions(
     and collects the attributions, and then permutes them to align with the identity.
 
     Args:
-        model (DeepLinearComponentModel | DeepLinearComponentFullRankModel): The model to collect
-            attributions on.
+        model (DeepLinearComponentFullRankModel): The model to collect attributions on.
         device (str): The device to run computations on.
 
     Returns:
@@ -48,15 +40,9 @@ def _collect_permuted_subnetwork_attributions(
     )
 
     out, test_layer_acts, test_inner_acts = model(test_batch)
-    if isinstance(model, DeepLinearComponentModel):
-        layer_attributions = calc_grad_attributions_rank_one_per_layer(
-            out=out, inner_acts_vals=list(test_inner_acts.values())
-        )
-    else:
-        assert isinstance(model, DeepLinearComponentFullRankModel)
-        layer_attributions = calc_grad_attributions_full_rank_per_layer(
-            out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
-        )
+    layer_attributions = calc_grad_attributions_full_rank_per_layer(
+        out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
+    )
 
     test_attributions_permuted = []
     for layer in range(model.n_layers):
@@ -144,7 +130,7 @@ def plot_subnetwork_grad_attributions_fn(
 
 
 def plot_multiple_subnetwork_params(
-    model: DeepLinearComponentModel | DeepLinearComponentFullRankModel,
+    model: DeepLinearComponentFullRankModel,
     step: int | None = None,
     n_instances: int | None = None,
 ) -> plt.Figure:
@@ -198,7 +184,7 @@ def plot_multiple_subnetwork_params(
 
 
 def make_linear_plots(
-    model: DeepLinearComponentModel | DeepLinearComponentFullRankModel,
+    model: DeepLinearComponentFullRankModel,
     step: int | None,
     out_dir: Path | None,
     device: str,

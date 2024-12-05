@@ -1,16 +1,9 @@
-# %%
 import matplotlib.collections as mc
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import yaml
 from jaxtyping import Float
 from torch import Tensor
-
-from spd.run_spd import (
-    Config,
-)
-from spd.utils import REPO_ROOT
 
 
 def plot_vectors(
@@ -223,29 +216,48 @@ def plot_networks(
     return fig
 
 
+# # %%
+# if __name__ == "__main__":
+#     # pretrained_path = REPO_ROOT / "spd/experiments/tms/demo_spd_model/model_30000.pth"
+#     pretrained_path = (
+#         REPO_ROOT
+#         # / "spd/experiments/tms/out/fr_topk2.80e-01_topkrecon1.00e+01_topkl2_1.00e+00_sd0_attr-gra_lr1.00e-02_bs2048_ft5_hid2/model_20000.pth"
+#         / "spd/experiments/tms/out/fr_p8.00e-01_topk2.50e-01_topkrecon1.00e+01_schatten3.00e+00_sd0_attr-gra_lr1.00e-03_bs2048_ft5_hid2/model_30000.pth"
+#     )
+
+#     with open(pretrained_path.parent / "final_config.yaml") as f:
+#         config = Config(**yaml.safe_load(f))
+
+#     # assert config.full_rank, "This script only works for full rank models"
+#     model = torch.load(pretrained_path, map_location="cpu", weights_only=True)
+#     # W = torch.einsum("ikfm,ikmh->ikfh", model["A"], model["B"])
+#     # %%
+
+#     # subnets = model["subnetwork_params"]
+#     # bias = model["b_final"]
+#     # fig1 = plot_vectors(subnets, n_instances=1)
+#     # fig1.savefig(pretrained_path.parent / "polygon_diagram.png", bbox_inches="tight", dpi=200)
+#     # print(f"Saved figure to {pretrained_path.parent / 'polygon_diagram.png'}")
+
+#     # fig2 = plot_networks(subnets, n_instances=1, has_labels=False)
+#     # fig2.savefig(pretrained_path.parent / "network_diagram.png", bbox_inches="tight", dpi=200)
+#     # print(f"Saved figure to {pretrained_path.parent / 'network_diagram.png'}")
+
+
 # %%
-if __name__ == "__main__":
-    # pretrained_path = REPO_ROOT / "spd/experiments/tms/demo_spd_model/model_30000.pth"
-    pretrained_path = (
-        REPO_ROOT
-        # / "spd/experiments/tms/out/fr_topk2.80e-01_topkrecon1.00e+01_topkl2_1.00e+00_sd0_attr-gra_lr1.00e-02_bs2048_ft5_hid2/model_20000.pth"
-        / "spd/experiments/tms/out/fr_p8.00e-01_topk2.50e-01_topkrecon1.00e+01_schatten3.00e+00_sd0_attr-gra_lr1.00e-03_bs2048_ft5_hid2/model_30000.pth"
-    )
+# from spd.experiments.resid_mlp.models import ResidualMLPSPDRankPenaltyModel
+from spd.experiments.tms.models import TMSSPDRankPenaltyModel
 
-    with open(pretrained_path.parent / "final_config.yaml") as f:
-        config = Config(**yaml.safe_load(f))
+model, spd_config = TMSSPDRankPenaltyModel.from_pretrained(
+    # "wandb:apollo-interp/spd-tms/runs/iv2mwssf"
+    # "wandb:apollo-interp/spd-tms/runs/6avu1crx"
+    # "wandb:apollo-interp/spd-tms/runs/1an9c01t"
+    "wandb:apollo-interp/spd-tms/runs/353croa9"
+)
+# model, config_dict, label_coeffs = ResidualMLPSPDRankPenaltyModel.from_pretrained(
+#     "wandb:spd-resid-mlp/runs/svih4aik"
+# )
+print(model)
+# print(spd_config)
 
-    # assert config.full_rank, "This script only works for full rank models"
-    model = torch.load(pretrained_path, map_location="cpu", weights_only=True)
-    # W = torch.einsum("ikfm,ikmh->ikfh", model["A"], model["B"])
-    # %%
-
-    # subnets = model["subnetwork_params"]
-    # bias = model["b_final"]
-    # fig1 = plot_vectors(subnets, n_instances=1)
-    # fig1.savefig(pretrained_path.parent / "polygon_diagram.png", bbox_inches="tight", dpi=200)
-    # print(f"Saved figure to {pretrained_path.parent / 'polygon_diagram.png'}")
-
-    # fig2 = plot_networks(subnets, n_instances=1, has_labels=False)
-    # fig2.savefig(pretrained_path.parent / "network_diagram.png", bbox_inches="tight", dpi=200)
-    # print(f"Saved figure to {pretrained_path.parent / 'network_diagram.png'}")
+# %%
