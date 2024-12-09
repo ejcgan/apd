@@ -219,9 +219,11 @@ class ResidualMLPModel(Model):
         )
 
     def forward(
-        self, x: Float[Tensor, "batch n_instances n_features"]
+        self,
+        x: Float[Tensor, "batch n_instances n_features"],
+        return_residual: bool = False,
     ) -> tuple[
-        Float[Tensor, "batch n_instances d_embed"],
+        Float[Tensor, "batch n_instances n_features"] | Float[Tensor, "batch n_instances d_embed"],
         dict[
             str,
             Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_mlp"],
@@ -255,7 +257,10 @@ class ResidualMLPModel(Model):
         )
         if self.config.apply_output_act_fn:
             out = self.act_fn(out)
-        return out, layer_pre_acts, layer_post_acts
+        if return_residual:
+            return residual, layer_pre_acts, layer_post_acts
+        else:
+            return out, layer_pre_acts, layer_post_acts
 
     @staticmethod
     def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPPaths:

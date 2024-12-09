@@ -1,0 +1,13 @@
+program: spd/experiments/resid_mlp/resid_mlp_decomposition.py
+method: grid
+metric:
+  name: topk_recon_loss
+  goal: minimize
+parameters:
+  seed:
+    values: [0, 1, 2, 3, 4]
+command:
+- ${env}
+- ${interpreter}
+- ${program}
+- spd/experiments/resid_mlp/sweepA_spd.yaml

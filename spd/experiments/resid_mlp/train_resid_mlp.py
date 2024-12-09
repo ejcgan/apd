@@ -32,6 +32,7 @@ class ResidMLPTrainConfig(BaseModel):
     resid_mlp_config: ResidualMLPConfig
     label_fn_seed: int = 0
     label_type: Literal["act_plus_resid", "abs"] = "act_plus_resid"
+    loss_type: Literal["readoff", "resid"] = "readoff"
     use_trivial_label_coeffs: bool = False
     feature_probability: PositiveFloat
     importance_val: float | None = None
@@ -59,6 +60,33 @@ class ResidMLPTrainConfig(BaseModel):
         return self
 
 
+def loss_function(
+    out: Float[Tensor, "batch n_instances n_features"] | Float[Tensor, "batch n_instances d_embed"],
+    labels: Float[Tensor, "batch n_instances n_features"],
+    feature_importances: Float[Tensor, "batch n_instances n_features"],
+    post_acts: dict[str, Float[Tensor, "batch n_instances d_embed"]],
+    model: ResidualMLPModel,
+    config: ResidMLPTrainConfig,
+) -> Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_embed"]:
+    if config.loss_type == "readoff":
+        loss = ((out - labels) ** 2) * feature_importances
+    elif config.loss_type == "resid":
+        assert torch.allclose(
+            feature_importances, torch.ones_like(feature_importances)
+        ), "feature_importances incompatible with loss_type resid"
+        resid_out: Float[Tensor, "batch n_instances d_embed"] = out
+        resid_labels: Float[Tensor, "batch n_instances d_embed"] = einops.einsum(
+            labels,
+            model.W_E,
+            "batch n_instances n_features, n_instances n_features d_embed "
+            "-> batch n_instances d_embed",
+        )
+        loss = (resid_out - resid_labels) ** 2
+    else:
+        raise ValueError(f"Invalid loss_type: {config.loss_type}")
+    return loss
+
+
 def train(
     config: ResidMLPTrainConfig,
     model: ResidualMLPModel,
@@ -66,7 +94,7 @@ def train(
     dataloader: DatasetGeneratedDataLoader[
         tuple[
             Float[Tensor, "batch n_instances n_features"],
-            Float[Tensor, "batch n_instances d_resid"],
+            Float[Tensor, "batch n_instances d_embed"],
         ]
     ],
     feature_importances: Float[Tensor, "batch_size n_instances n_features"],
@@ -117,10 +145,11 @@ def train(
         optimizer.zero_grad()
         batch: Float[Tensor, "batch n_instances n_features"] = batch.to(device)
         labels: Float[Tensor, "batch n_instances n_features"] = labels.to(device)
-        out, _, _ = model(batch)
-        # Scale by feature importance as in Anthropic paper
-
-        loss = ((out - labels) ** 2) * feature_importances
+        out, pre_acts, post_acts = model(batch, return_residual=config.loss_type == "resid")
+        loss: (
+            Float[Tensor, "batch n_instances n_features"]
+            | Float[Tensor, "batch n_instances d_embed"]
+        ) = loss_function(out, labels, feature_importances, post_acts, model, config)
         loss = loss.mean(dim=(0, 2))
         current_losses = loss.detach()
         loss = loss.mean(dim=0)
@@ -143,8 +172,8 @@ def train(
         batch, labels = next(iter(dataloader))
         batch = batch.to(device)
         labels = labels.to(device)
-        out, _, _ = model(batch)
-        loss = ((out - labels) ** 2) * feature_importances
+        out, _, post_acts = model(batch, return_residual=config.loss_type == "resid")
+        loss = loss_function(out, labels, feature_importances, post_acts, model, config)
         loss = loss.mean(dim=(0, 2))
         final_losses.append(loss)
     final_losses = torch.stack(final_losses).mean(dim=0).cpu().detach()
@@ -158,6 +187,9 @@ def run_train(config: ResidMLPTrainConfig, device: str) -> Float[Tensor, " n_ins
         f"resid_mlp_identity_{config.label_type}_n-instances{model_cfg.n_instances}_"
         f"n-features{model_cfg.n_features}_d-resid{model_cfg.d_embed}_"
         f"d-mlp{model_cfg.d_mlp}_n-layers{model_cfg.n_layers}_seed{config.seed}"
+        f"_p{config.feature_probability}_random_embedding_{config.fixed_random_embedding}_"
+        f"identity_embedding_{config.fixed_identity_embedding}_bias_{model_cfg.in_bias}_"
+        f"{model_cfg.out_bias}_loss{config.loss_type}"
     )
     out_dir = Path(__file__).parent / "out" / run_name
 

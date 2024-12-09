@@ -54,8 +54,7 @@ def train_on_test_data(
 
     set_seed(config.seed)
     loss = run_train(config, device)
-    loss_as_previously_computed = loss * config.resid_mlp_config.n_features
-    loss_dict = {i: loss_as_previously_computed[i].item() for i in range(n_instances)}
+    loss_dict = {i: loss[i].item() for i in range(n_instances)}
     return loss_dict
 
 
@@ -89,17 +88,17 @@ if __name__ == "__main__":
     out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out"
     os.makedirs(out_dir, exist_ok=True)
     n_instances = 20
-    n_features = 100
-    d_mlp = 50
-    p = 0.01
-    d_embed = 1000
-    n_steps = 1000
+    n_features = 20
+    d_mlp = 10
+    d_embed = None
+    n_steps = None
     # Scale d_embed
+    p = 0.05
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 10), constrained_layout=True)
     fig.suptitle(f"Loss scaling with d_embed. Using {n_instances} instances")
-    d_embeds = [10_000, 1000, 100, 50, 10]
+    d_embeds = [10_000, 5_000, 2_000, 1000, 500, 200, 100, 50]
     for bias in [False, True]:
-        for i, embed in enumerate(["trained", "random"]):
+        for i, embed in enumerate(["random", "trained"]):
             print(f"Quadrant {bias=} and {embed=}")
             losses = {}
             fixed_random_embedding = embed == "random"
@@ -141,11 +140,12 @@ if __name__ == "__main__":
     plt.show()
 
     # Scale p
+    d_embed = 10 * n_features
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 10), constrained_layout=True)
     fig.suptitle(f"Loss scaling with p. Using {n_instances} instances")
-    ps = np.array([0.01, 0.1, 0.5, 1.0])
-    for bias in [True, False]:
-        for i, embed in enumerate(["trained", "random"]):
+    ps = np.array([0.01, 0.03, 0.05, 0.075, 0.1, 0.5, 1.0])
+    for bias in [False, True]:
+        for i, embed in enumerate(["random", "trained"]):
             losses = {}
             fixed_random_embedding = embed == "random"
             fixed_identity_embedding = embed == "identity"

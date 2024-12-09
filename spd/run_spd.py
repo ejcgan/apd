@@ -102,6 +102,7 @@ class Config(BaseModel):
     seed: int = 0
     topk: PositiveFloat | None = None
     batch_topk: bool = True
+    hardcode_topk_mask_step: int | None = None
     batch_size: PositiveInt
     steps: PositiveInt
     print_freq: PositiveInt
@@ -654,7 +655,9 @@ def calc_act_recon(
         The activation reconstruction loss. Will have an n_instances dimension if the model has an
             n_instances dimension, otherwise a scalar.
     """
-    assert target_post_acts.keys() == layer_acts.keys(), "Layer keys must match"
+    assert (
+        target_post_acts.keys() == layer_acts.keys()
+    ), f"Layer keys must match: {target_post_acts.keys()} != {layer_acts.keys()}"
 
     device = next(iter(layer_acts.values())).device
 
@@ -811,8 +814,21 @@ def optimize(
         ) = None, None, None, None, None, None, None
         if config.topk is not None:
             # We always assume the final subnetwork is the one we want to distil
-            topk_attrs = attributions[..., :-1] if config.distil_from_target else attributions
-            topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
+            topk_attrs: Float[Tensor, "batch ... k"] = (
+                attributions[..., :-1] if config.distil_from_target else attributions
+            )
+            if (
+                config.hardcode_topk_mask_step is not None
+                and step <= config.hardcode_topk_mask_step
+            ):
+                batch: Float[Tensor, "batch ... d_in"]
+                assert batch.shape[-1] == topk_attrs.shape[-1], (
+                    "Hardcoded topk mask only works if the input dimension is features,"
+                    "i.e. corresponds to subnetworks"
+                )
+                topk_mask = (batch != 0).float().to(device=device)
+            else:
+                topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
                 # Add back the final subnetwork index to the topk mask and set it to True
                 last_subnet_mask = torch.ones(

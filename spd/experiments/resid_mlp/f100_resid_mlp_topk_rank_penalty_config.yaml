@@ -1,0 +1,32 @@
+wandb_project: spd-resid-mlp
+wandb_run_name: null
+wandb_run_name_prefix: "rp_hc5k_"
+spd_type: rank_penalty
+unit_norm_matrices: false
+seed: 3
+topk: 1.15
+m: null
+hardcode_topk_mask_step: 5000
+pnorm: 1.0
+batch_topk: true
+param_match_coeff: 1.0
+topk_recon_coeff: 1.0
+schatten_pnorm: 1.0
+schatten_coeff: 1.0
+lp_sparsity_coeff: 0.0
+topk_act_recon_coeff: 0.0
+lr: 0.001
+batch_size: 1000
+steps: 10_000
+print_freq: 500
+image_freq: 5_000
+save_freq: 5_000
+lr_warmup_pct: 0.01
+lr_schedule: cosine
+task_config:
+  task_name: residual_mlp
+  init_scale: 1.0
+  k: 100
+  feature_probability: 0.01
+  data_generation_type: "at_least_zero_active"
+  pretrained_model_path: wandb:spd-train-resid-mlp/runs/lkg96w24

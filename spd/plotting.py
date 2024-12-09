@@ -119,17 +119,18 @@ def plot_subnetwork_correlations(
 
         im = ax.matshow(corr_matrix)
         ax.xaxis.set_ticks_position("bottom")
-        for l in range(corr_matrix.shape[0]):
-            for j in range(corr_matrix.shape[1]):
-                ax.text(
-                    j,
-                    l,
-                    f"{corr_matrix[l, j]:.2f}",
-                    ha="center",
-                    va="center",
-                    color="#EE7777",
-                    fontsize=8,
-                )
+        if corr_matrix.shape[0] * corr_matrix.shape[1] < 200:
+            for l in range(corr_matrix.shape[0]):
+                for j in range(corr_matrix.shape[1]):
+                    ax.text(
+                        j,
+                        l,
+                        f"{corr_matrix[l, j]:.2f}",
+                        ha="center",
+                        va="center",
+                        color="#EE7777",
+                        fontsize=8,
+                    )
     if (im is not None) and (ax is not None):
         divider = make_axes_locatable(plt.gca())
         cax = divider.append_axes("right", size="5%", pad=0.1)
