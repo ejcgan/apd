@@ -4,9 +4,9 @@ wandb_run_name_prefix: "rp_"
 spd_type: rank_penalty
 unit_norm_matrices: false
 seed: 0
-topk: 1.061
+topk: 1.0
 m: null
-hardcode_topk_mask_step: null
+hardcode_topk_mask_step: 5000
 pnorm: 1.0
 batch_topk: true
 param_match_coeff: 1.0
@@ -14,19 +14,19 @@ topk_recon_coeff: 1
 schatten_pnorm: 1.0
 schatten_coeff: 0.1
 lp_sparsity_coeff: null
-topk_act_recon_coeff: null
+act_recon_coeff: null
 lr: 0.001
 batch_size: 1000
-steps: 30_000
+steps: 10_000
 print_freq: 500
 image_freq: 10_000
-save_freq: 30_000
+save_freq: 10_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
 task_config:
   task_name: residual_mlp
   init_scale: 1.0
-  k: 20
+  k: 50
   feature_probability: 0.05
   data_generation_type: "at_least_zero_active"
-  pretrained_model_path: spd/experiments/resid_mlp/out/resid_mlp_identity_act_plus_resid_n-instances8_n-features20_d-resid200_d-mlp10_n-layers1_seed0_p0.05_random_embedding_True_identity_embedding_False_bias_False_False/target_model.pth
+  pretrained_model_path: wandb:spd-train-resid-mlp/runs/zyvoilmr
