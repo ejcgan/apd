@@ -179,6 +179,7 @@ def plot_multiple_subnetwork_params(
 
 def resid_mlp_plot_results_fn(
     model: ResidualMLPSPDRankPenaltyModel,
+    target_model: ResidualMLPModel,
     step: int | None,
     out_dir: Path | None,
     device: str,
@@ -194,7 +195,10 @@ def resid_mlp_plot_results_fn(
     fig_dict = {}
 
     attribution_scores = collect_subnetwork_attributions(
-        model, device, n_instances=model.n_instances
+        spd_model=model,
+        target_model=target_model,
+        device=device,
+        n_instances=model.n_instances,
     )
     fig_dict["subnetwork_attributions"] = plot_subnetwork_attributions(
         attribution_scores, out_dir, step
@@ -204,6 +208,7 @@ def resid_mlp_plot_results_fn(
         if dataloader is not None and config.task_config.k > 1:
             fig_dict_correlations = plot_subnetwork_correlations(
                 dataloader=dataloader,
+                target_model=target_model,
                 spd_model=model,
                 config=config,
                 device=device,

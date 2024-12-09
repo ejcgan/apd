@@ -139,6 +139,15 @@ def test_ablation_attributions():
         def all_subnetwork_params(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
             raise NotImplementedError
 
+        def all_subnetwork_params_summed(
+            self,
+        ) -> dict[
+            str,
+            Float[Tensor, "d_layer_in d_layer_out"]
+            | Float[Tensor, "n_instances d_layer_in d_layer_out"],
+        ]:
+            raise NotImplementedError
+
         def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
             stored_vals = {"subnetwork_params": self.subnetwork_params[subnet_idx].detach().clone()}
             self.subnetwork_params[subnet_idx] = 0.0

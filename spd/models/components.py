@@ -239,7 +239,7 @@ class MLP(nn.Module):
         self, x: Float[Tensor, "... d_model"]
     ) -> tuple[
         Float[Tensor, "... d_model"],
-        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"] | None],
+        dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"]],
         dict[str, Float[Tensor, "... d_model"] | Float[Tensor, "... d_mlp"]],
     ]:
         """Run a forward pass and cache pre and post activations for each parameter.
@@ -251,16 +251,8 @@ class MLP(nn.Module):
         out1 = self.act_fn(out1_pre_act_fn)
         out2 = self.output_layer(out1)
 
-        pre_acts = {
-            "input_layer.weight": x,
-            "input_layer.bias": None,
-            "output_layer.weight": out1,
-        }
-        post_acts = {
-            "input_layer.weight": out1_pre_act_fn,
-            "input_layer.bias": out1_pre_act_fn,
-            "output_layer.weight": out2,
-        }
+        pre_acts = {"input_layer.weight": x, "output_layer.weight": out1}
+        post_acts = {"input_layer.weight": out1_pre_act_fn, "output_layer.weight": out2}
         return out2, pre_acts, post_acts
 
 

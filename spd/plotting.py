@@ -9,7 +9,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from spd.models.base import SPDFullRankModel, SPDRankPenaltyModel
+from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
 from spd.run_spd import Config
 from spd.utils import calc_topk_mask, calculate_attributions
 
@@ -65,6 +65,7 @@ def plot_subnetwork_correlations(
     dataloader: DataLoader[
         tuple[Float[Tensor, "batch n_inputs"] | Float[Tensor, "batch n_instances? n_inputs"], Any]
     ],
+    target_model: Model,
     spd_model: SPDFullRankModel | SPDRankPenaltyModel,
     config: Config,
     device: str,
@@ -75,14 +76,17 @@ def plot_subnetwork_correlations(
         batch = batch.to(device=device)
         assert config.topk is not None
 
+        target_out, pre_acts, post_acts = target_model(batch)
         # Get the topk mask
         model_output_spd, layer_acts, inner_acts = spd_model(batch)
         attribution_scores = calculate_attributions(
             model=spd_model,
             batch=batch,
             out=model_output_spd,
+            target_out=target_out,
+            pre_acts=pre_acts,
+            post_acts=post_acts,
             inner_acts=inner_acts,
-            layer_acts=layer_acts,
             attribution_type=config.attribution_type,
         )
 

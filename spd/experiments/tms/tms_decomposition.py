@@ -230,6 +230,7 @@ def plot_subnetwork_params(
 
 def make_plots(
     model: TMSSPDFullRankModel | TMSSPDRankPenaltyModel,
+    target_model: TMSModel,
     step: int,
     out_dir: Path,
     device: str,
@@ -246,7 +247,12 @@ def make_plots(
         assert topk_mask is not None
         assert isinstance(config.task_config, TMSTaskConfig)
         n_instances = model.config.n_instances if hasattr(model, "config") else model.n_instances
-        attribution_scores = collect_subnetwork_attributions(model, device, n_instances=n_instances)
+        attribution_scores = collect_subnetwork_attributions(
+            spd_model=model,
+            target_model=target_model,
+            device=device,
+            n_instances=n_instances,
+        )
         plots["subnetwork_attributions"] = plot_subnetwork_attributions_multiple_instances(
             attribution_scores=attribution_scores, out_dir=out_dir, step=step
         )

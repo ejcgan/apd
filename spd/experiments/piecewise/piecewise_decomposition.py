@@ -77,6 +77,7 @@ def piecewise_plot_results_fn(
             # Plot correlations
             fig_dict_correlations = plot_subnetwork_correlations(
                 dataloader=dataloader,
+                target_model=target_model,
                 spd_model=model,
                 config=config,
                 device=device,

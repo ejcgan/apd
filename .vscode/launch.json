@@ -122,18 +122,6 @@
             }
         },
         {
-            "name": "resid_linear_topk_rank_penalty_spd",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/resid_linear/resid_linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/resid_linear/resid_linear_topk_rank_penalty_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
             "name": "resid_mlp_rank_penalty_spd",
             "type": "debugpy",
             "request": "launch",

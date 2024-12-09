@@ -9,11 +9,12 @@ from matplotlib.colors import CenteredNorm
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.linear.models import DeepLinearComponentFullRankModel
+from spd.experiments.linear.models import DeepLinearComponentFullRankModel, DeepLinearModel
 from spd.utils import calc_grad_attributions_full_rank_per_layer, permute_to_identity
 
 
 def _collect_permuted_subnetwork_attributions(
+    target_model: DeepLinearModel,
     model: DeepLinearComponentFullRankModel,
     device: str,
 ) -> tuple[
@@ -39,9 +40,15 @@ def _collect_permuted_subnetwork_attributions(
         n_instances=model.n_instances,
     )
 
+    _, pre_acts, post_acts = target_model(test_batch)
     out, test_layer_acts, test_inner_acts = model(test_batch)
+
     layer_attributions = calc_grad_attributions_full_rank_per_layer(
-        out=out, inner_acts=test_inner_acts, layer_acts=test_layer_acts
+        target_out=out,
+        pre_acts=pre_acts,
+        post_acts=post_acts,
+        subnet_params=model.all_subnetwork_params(),
+        k=model.k,
     )
 
     test_attributions_permuted = []
@@ -185,13 +192,16 @@ def plot_multiple_subnetwork_params(
 
 def make_linear_plots(
     model: DeepLinearComponentFullRankModel,
+    target_model: DeepLinearModel,
     step: int | None,
     out_dir: Path | None,
     device: str,
     n_instances: int | None = None,
     **_,
 ) -> dict[str, plt.Figure]:
-    test_batch, test_attributions = _collect_permuted_subnetwork_attributions(model, device)
+    test_batch, test_attributions = _collect_permuted_subnetwork_attributions(
+        model=model, target_model=target_model, device=device
+    )
 
     act_fig = plot_subnetwork_grad_attributions_fn(
         batch=test_batch, attributions=test_attributions, step=step, n_instances=n_instances

@@ -3,9 +3,9 @@ import torch
 from torch import Tensor
 
 from spd.run_spd import (
+    calc_act_recon,
     calc_orthog_loss_full_rank,
     calc_param_match_loss,
-    calc_topk_act_recon,
 )
 
 
@@ -105,7 +105,7 @@ class TestCalcActReconLoss:
         layer_acts_topk = {"layer1": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
         expected = torch.tensor(0.0)
 
-        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        result = calc_act_recon(target_post_acts, layer_acts_topk)
         torch.testing.assert_close(result, expected)
 
     def test_calc_topk_act_recon_different_d_out(self):
@@ -120,7 +120,7 @@ class TestCalcActReconLoss:
         }
         expected = torch.tensor((0.25 + 1) / 2)  # ((0.5^2 * 5) / 5 + (1^2 * 5) / 5) / 2
 
-        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        result = calc_act_recon(target_post_acts, layer_acts_topk)
         torch.testing.assert_close(result, expected)
 
     def test_calc_topk_act_recon_with_n_instances(self):
@@ -134,5 +134,5 @@ class TestCalcActReconLoss:
         }
         expected = torch.tensor([0.25, 0.25])  # (0.5^2 * 8) / 8 for each instance
 
-        result = calc_topk_act_recon(target_post_acts, layer_acts_topk)
+        result = calc_act_recon(target_post_acts, layer_acts_topk)
         torch.testing.assert_close(result, expected)

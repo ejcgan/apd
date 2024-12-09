@@ -30,7 +30,7 @@ def main():
     n_instances = dl_model.n_instances
 
     if config.spd_type == "full_rank":
-        dlc_model = DeepLinearComponentFullRankModel(
+        spd_model = DeepLinearComponentFullRankModel(
             n_features=n_features,
             n_layers=n_layers,
             n_instances=n_instances,
@@ -38,12 +38,19 @@ def main():
         )
     else:
         raise ValueError(f"Unknown/unsupported SPD type: {config.spd_type}")
-    dlc_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
+    spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
 
     out_dir = Path(__file__).parent / "out/figures" / pretrained_path.parent.name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    make_linear_plots(model=dlc_model, step=None, out_dir=out_dir, device="cpu", n_instances=1)
+    make_linear_plots(
+        model=spd_model,
+        target_model=dl_model,
+        step=None,
+        out_dir=out_dir,
+        device="cpu",
+        n_instances=1,
+    )
 
 
 if __name__ == "__main__":

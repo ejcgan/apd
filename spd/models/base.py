@@ -23,7 +23,9 @@ class SPDModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "d_layer_in d_layer_out"]]:
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[str, Float[Tensor, "... d_layer_in d_layer_out"]]:
         pass
 
     @abstractmethod
@@ -61,6 +63,16 @@ class SPDFullRankModel(ABC, nn.Module):
         pass
 
     @abstractmethod
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[
+        str,
+        Float[Tensor, "d_layer_in d_layer_out"]
+        | Float[Tensor, "n_instances d_layer_in d_layer_out"],
+    ]:
+        pass
+
+    @abstractmethod
     def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
         pass
 
@@ -88,6 +100,16 @@ class SPDRankPenaltyModel(ABC, nn.Module):
 
     @abstractmethod
     def all_subnetwork_params(self) -> dict[str, Tensor]:
+        pass
+
+    @abstractmethod
+    def all_subnetwork_params_summed(
+        self,
+    ) -> dict[
+        str,
+        Float[Tensor, "d_layer_in d_layer_out"]
+        | Float[Tensor, "n_instances d_layer_in d_layer_out"],
+    ]:
         pass
 
     @abstractmethod

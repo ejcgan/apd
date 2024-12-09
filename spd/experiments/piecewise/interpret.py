@@ -52,7 +52,15 @@ fig_dict = plot_components_fullrank(model=spd_model, step=-1, out_dir=None, slow
 
 
 if config.topk is not None:
-    fig_dict.update(**plot_subnetwork_correlations(dataloader, spd_model, config, device))
+    fig_dict.update(
+        **plot_subnetwork_correlations(
+            dataloader,
+            target_model=hardcoded_model,
+            spd_model=spd_model,
+            config=config,
+            device=device,
+        )
+    )
     fig_dict.update(**plot_piecewise_network(spd_model))
     fig_dict.update(
         **plot_model_functions(
