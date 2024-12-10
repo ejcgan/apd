@@ -289,7 +289,7 @@ def main(
     with open(out_dir / "final_config.yaml", "w") as f:
         yaml.dump(config.model_dump(mode="json"), f, indent=2)
     if config.wandb_project:
-        wandb.save(str(out_dir / "final_config.yaml"), base_path=out_dir)
+        wandb.save(str(out_dir / "final_config.yaml"), base_path=out_dir, policy="now")
 
     piecewise_model, piecewise_model_spd, dataloader, test_dataloader = get_model_and_dataloader(
         config, device, out_dir

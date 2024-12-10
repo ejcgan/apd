@@ -113,7 +113,7 @@ def train(
         yaml.dump(config.model_dump(mode="json"), f, indent=2)
     logger.info(f"Saved config to {config_path}")
     if config.wandb_project:
-        wandb.save(str(config_path), base_path=out_dir)
+        wandb.save(str(config_path), base_path=out_dir, policy="now")
 
     # Save the coefficients used to generate the labels
     assert isinstance(dataloader.dataset, ResidualMLPDataset)
@@ -124,7 +124,7 @@ def train(
         json.dump(label_coeffs, f)
     logger.info(f"Saved label coefficients to {label_coeffs_path}")
     if config.wandb_project:
-        wandb.save(str(label_coeffs_path), base_path=out_dir)
+        wandb.save(str(label_coeffs_path), base_path=out_dir, policy="now")
 
     optimizer = torch.optim.AdamW(trainable_params, lr=config.lr, weight_decay=0.01)
 
@@ -163,7 +163,7 @@ def train(
     model_path = out_dir / "resid_mlp.pth"
     torch.save(model.state_dict(), model_path)
     if config.wandb_project:
-        wandb.save(str(model_path), base_path=out_dir)
+        wandb.save(str(model_path), base_path=out_dir, policy="now")
     print(f"Saved model to {model_path}")
 
     # Calculate final losses by averaging many batches

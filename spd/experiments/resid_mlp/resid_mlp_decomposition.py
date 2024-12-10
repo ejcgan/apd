@@ -368,9 +368,9 @@ def save_target_model_info(
         json.dump(label_coeffs.detach().cpu().tolist(), f, indent=2)
 
     if save_to_wandb:
-        wandb.save(str(out_dir / "resid_mlp.pth"), base_path=out_dir)
-        wandb.save(str(out_dir / "resid_mlp_train_config.yaml"), base_path=out_dir)
-        wandb.save(str(out_dir / "label_coeffs.json"), base_path=out_dir)
+        wandb.save(str(out_dir / "resid_mlp.pth"), base_path=out_dir, policy="now")
+        wandb.save(str(out_dir / "resid_mlp_train_config.yaml"), base_path=out_dir, policy="now")
+        wandb.save(str(out_dir / "label_coeffs.json"), base_path=out_dir, policy="now")
 
 
 def main(
@@ -411,7 +411,7 @@ def main(
     with open(out_dir / "final_config.yaml", "w") as f:
         yaml.dump(config.model_dump(mode="json"), f, indent=2)
     if config.wandb_project:
-        wandb.save(str(out_dir / "final_config.yaml"), base_path=out_dir)
+        wandb.save(str(out_dir / "final_config.yaml"), base_path=out_dir, policy="now")
 
     save_target_model_info(
         save_to_wandb=config.wandb_project is not None,
