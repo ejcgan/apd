@@ -1,6 +1,7 @@
 """Trains a deep linear model on one-hot input vectors."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -85,7 +86,8 @@ if __name__ == "__main__":
         f"linear_n-features{config.n_features}_n-layers{config.n_layers}_"
         f"n-instances{config.n_instances}_seed{config.seed}"
     )
-    out_dir = Path(__file__).parent / "out" / run_name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    out_dir = Path(__file__).parent / "out" / f"{run_name}_{timestamp}"
 
     model = DeepLinearModel(config.n_features, config.n_layers, config.n_instances).to(device)
     dataset = DeepLinearDataset(config.n_features, config.n_instances)

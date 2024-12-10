@@ -4,6 +4,7 @@ https://colab.research.google.com/github/anthropics/toy-models-of-superposition/
 
 import warnings
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Self
 
@@ -208,7 +209,8 @@ def run_train(config: TMSTrainConfig, device: str) -> None:
         run_name += "_fixed-identity"
     elif config.fixed_random_hidden_layers:
         run_name += "_fixed-random"
-    out_dir = Path(__file__).parent / "out" / run_name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    out_dir = Path(__file__).parent / "out" / f"{run_name}_{timestamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if config.wandb_project:

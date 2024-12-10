@@ -1,6 +1,7 @@
 """Trains a residual linear model on one-hot input vectors."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Self
 
@@ -191,7 +192,8 @@ def run_train(config: ResidMLPTrainConfig, device: str) -> Float[Tensor, " n_ins
         f"identity_embedding_{config.fixed_identity_embedding}_bias_{model_cfg.in_bias}_"
         f"{model_cfg.out_bias}_loss{config.loss_type}"
     )
-    out_dir = Path(__file__).parent / "out" / run_name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    out_dir = Path(__file__).parent / "out" / f"{run_name}_{timestamp}"
 
     model = ResidualMLPModel(config=model_cfg).to(device)
 

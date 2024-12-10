@@ -1,6 +1,7 @@
 """Linear decomposition script."""
 
 import json
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 
@@ -283,7 +284,8 @@ def main(
     assert isinstance(config.task_config, PiecewiseConfig)
     assert config.task_config.k is not None
 
-    out_dir = Path(__file__).parent / "out" / run_name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    out_dir = Path(__file__).parent / "out" / f"{run_name}_{timestamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with open(out_dir / "final_config.yaml", "w") as f:
