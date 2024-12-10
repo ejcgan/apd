@@ -25,7 +25,7 @@ def plot_individual_feature_response(
     device: str,
     model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
     sweep: bool = False,
-    subtract_inputs: bool = False,
+    subtract_inputs: bool = True,
     instance_idx: int = 0,
     ax: plt.Axes | None = None,
 ):
@@ -54,21 +54,20 @@ def plot_individual_feature_response(
         f"d_mlp={model_config.d_mlp}"
     )
     ax.set_title(title)
-    inputs = batch[torch.arange(n_features), instance_idx, torch.arange(n_features)].detach().cpu()
+    if subtract_inputs:
+        out = out - batch[:, instance_idx, :]
     for f in range(n_features):
         x = torch.arange(n_features)
         y = out[f, :].detach().cpu()
-        if subtract_inputs:
-            y = y - inputs
         ax.plot(x, y, color=cmap_viridis(f / n_features))
     # Plot labels
     label_fn = F.relu if model_config.act_fn_name == "relu" else F.gelu
+    inputs = batch[torch.arange(n_features), instance_idx, torch.arange(n_features)].detach().cpu()
     targets = label_fn(inputs) if subtract_inputs else inputs + label_fn(inputs)
     ax.plot(torch.arange(n_features), targets.cpu().detach(), color="red", label="Target")
     baseline = torch.zeros(n_features) if subtract_inputs else inputs
     ax.plot(torch.arange(n_features), baseline, color="red", linestyle=":", label="Baseline")
     ax.legend()
-
     # Colorbar
     sm = plt.cm.ScalarMappable(cmap=cmap_viridis, norm=plt.Normalize(0, n_features))
     sm.set_array([])

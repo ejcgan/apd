@@ -14,7 +14,7 @@ topk_recon_coeff: 1.0
 schatten_pnorm: 1.0
 schatten_coeff: 1.0
 lp_sparsity_coeff: 0.0
-topk_act_recon_coeff: 0.0
+act_recon_coeff: 0.0
 lr: 0.001
 batch_size: 1000
 steps: 10_000
