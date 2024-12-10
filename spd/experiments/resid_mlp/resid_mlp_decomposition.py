@@ -433,6 +433,8 @@ def main(
     # Use the target_model's embedding matrix and don't train it further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()
     model.W_E.requires_grad = False
+    model.W_U.data[:, :] = target_model.W_U.data.detach().clone()
+    model.W_U.requires_grad = False
 
     # Copy the biases from the target model to the SPD model and set requires_grad to False
     for i in range(target_model.config.n_layers):
