@@ -287,11 +287,12 @@ def main(
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     config = load_config(config_path_or_obj, config_model=Config)
-    task_config = config.task_config
-    assert isinstance(task_config, TMSTaskConfig)
 
     if config.wandb_project:
         config = init_wandb(config, config.wandb_project, sweep_config_path)
+
+    task_config = config.task_config
+    assert isinstance(task_config, TMSTaskConfig)
 
     set_seed(config.seed)
     logger.info(config)
