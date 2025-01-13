@@ -48,6 +48,7 @@ def get_run_name(config: Config, tms_model_config: TMSModelConfig) -> str:
         run_suffix += f"ft{tms_model_config.n_features}_"
         run_suffix += f"hid{tms_model_config.n_hidden}"
         run_suffix += f"hid-layers{tms_model_config.n_hidden_layers}"
+        run_suffix += f"k{config.task_config.k}"
     return config.wandb_run_name_prefix + run_suffix
 
 
@@ -215,7 +216,6 @@ def plot_subnetwork_params(
             param = subnet_params[i, j].detach().cpu().numpy()
             ax.matshow(param, cmap="RdBu", vmin=-instance_max, vmax=instance_max)
             ax.set_xticks([])
-            ax.set_yticks([])
 
             if i == 0:
                 ax.set_ylabel(f"k={j}", rotation=0, ha="right", va="center")
@@ -229,6 +229,113 @@ def plot_subnetwork_params(
     return fig
 
 
+def plot_batch_frequencies(
+    frequencies: Float[Tensor, "n_instances k"],
+    xlabel: str,
+    ax: plt.Axes,
+    batch_size: int,
+    title: str | None = None,
+) -> None:
+    """Plot frequency of k activations for each instance on a given axis.
+
+    Args:
+        frequencies: Tensor counting frequencies for each instance
+        xlabel: Label for x-axis
+        ax: Matplotlib axis to plot on
+        batch_size: Size of the batch
+        title: Optional title for the subplot
+    """
+    n_instances = frequencies.shape[0]
+    k = frequencies.shape[1]
+
+    for instance_idx in range(n_instances):
+        bars = ax.bar(
+            np.arange(k) + instance_idx * (k + 1),  # Add spacing between instances
+            frequencies[instance_idx].detach().cpu().numpy(),
+            align="center",
+            width=0.8,
+            label=f"Instance {instance_idx}",
+        )
+
+        # Add value annotations on top of each bar
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(
+                f"{int(height)}",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+            )
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(f"Activation Count (batch_size={batch_size})")
+    if title:
+        ax.set_title(title)
+
+    # Set x-ticks for each instance group
+    all_ticks = []
+    all_labels = []
+    for i in range(n_instances):
+        ticks = np.arange(k) + i * (k + 1)
+        all_ticks.extend(ticks)
+        all_labels.extend([str(j) for j in range(k)])
+    ax.set_xticks(all_ticks)
+    ax.set_xticklabels(all_labels)
+
+
+def plot_batch_statistics(
+    batch: Float[Tensor, "batch n_instances n_features"],
+    topk_mask: Float[Tensor, "batch n_instances k"],
+    out_dir: Path,
+    step: int | None,
+) -> dict[str, plt.Figure]:
+    # Count the number of active features over the batch
+    active_input_feats = (batch != 0).sum(dim=0)
+    topk_activations = topk_mask.sum(dim=0)
+
+    # Create figure with two vertically stacked subplots
+    fig = plt.figure(figsize=(15, 10))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.3)
+
+    # Plot input features
+    ax1 = fig.add_subplot(gs[0])
+    plot_batch_frequencies(
+        frequencies=active_input_feats,
+        xlabel="Input feature index",
+        ax=ax1,
+        batch_size=batch.shape[0],
+        title="Input feature frequencies across batch",
+    )
+
+    # Plot subnetwork frequencies
+    ax2 = fig.add_subplot(gs[1])
+    plot_batch_frequencies(
+        frequencies=topk_activations,
+        xlabel="Component index",
+        ax=ax2,
+        batch_size=batch.shape[0],
+        title="Component frequencies across batch",
+    )
+
+    # Ensure that each ax has the same y-axis maximum
+    y_lims = [ax.get_ylim() for ax in [ax1, ax2]]
+    y_max = max(y_lims[0][1], y_lims[1][1])
+    for ax in [ax1, ax2]:
+        ax.set_ylim(0, y_max)
+
+    # fig.suptitle(f"Batch Statistics (Step {step})")
+
+    # Save the combined figure
+    filename = f"batch_statistics_s{step}.png" if step is not None else "batch_statistics.png"
+    fig.savefig(out_dir / filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    tqdm.write(f"Saved batch statistics to {out_dir / filename}")
+
+    return {"batch_statistics": fig}
+
+
 def make_plots(
     model: TMSSPDFullRankModel | TMSSPDRankPenaltyModel,
     target_model: TMSModel,
@@ -236,7 +343,8 @@ def make_plots(
     out_dir: Path,
     device: str,
     config: Config,
-    topk_mask: Float[Tensor, "batch k"] | None,
+    topk_mask: Float[Tensor, "batch n_instances k"] | None,
+    batch: Float[Tensor, "batch n_instances n_features"],
     **_,
 ) -> dict[str, plt.Figure]:
     plots = {}
@@ -262,6 +370,10 @@ def make_plots(
                 topk_mask=topk_mask, out_dir=out_dir, step=step
             )
         )
+
+        batch_stat_plots = plot_batch_statistics(batch, topk_mask, out_dir, step)
+        plots.update(batch_stat_plots)
+
     return plots
 
 

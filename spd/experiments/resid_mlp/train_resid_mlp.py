@@ -209,6 +209,7 @@ def run_train(config: ResidMLPTrainConfig, device: str) -> Float[Tensor, " n_ins
             model.W_E.data /= model.W_E.data.norm(dim=-1, keepdim=True)
             # Set W_U to W_E^T
             model.W_U.data = model.W_E.data.transpose(-2, -1)
+            assert torch.allclose(model.W_U.data, model.W_E.data.transpose(-2, -1))
         elif config.fixed_identity_embedding:
             assert (
                 model_cfg.n_features == model_cfg.d_embed
@@ -265,30 +266,31 @@ if __name__ == "__main__":
         wandb_project="spd-train-resid-mlp",
         seed=0,
         resid_mlp_config=ResidualMLPConfig(
-            n_instances=5,
-            n_features=10,
-            d_embed=5,
-            d_mlp=5,
+            n_instances=1,
+            n_features=100,
+            d_embed=1000,
+            d_mlp=50,
             n_layers=1,
             act_fn_name="relu",
-            apply_output_act_fn=True,
+            apply_output_act_fn=False,
             in_bias=False,
             out_bias=False,
         ),
         label_fn_seed=0,
-        label_type="abs",
+        label_type="act_plus_resid",
+        loss_type="readoff",
         use_trivial_label_coeffs=True,
-        feature_probability=0.5,
-        importance_val=0.97,
+        feature_probability=0.01,
+        importance_val=1,
         data_generation_type="at_least_zero_active",
-        batch_size=256,
-        steps=1_000,
+        batch_size=2048,
+        steps=10000,
         print_freq=100,
-        lr=5e-3,
+        lr=3e-3,
         lr_schedule="cosine",
-        fixed_random_embedding=False,
+        fixed_random_embedding=True,
         fixed_identity_embedding=False,
-        n_batches_final_losses=1,
+        n_batches_final_losses=10,
     )
 
     set_seed(config.seed)

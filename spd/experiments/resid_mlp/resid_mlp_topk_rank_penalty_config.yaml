@@ -1,28 +1,67 @@
+# ########## 1 layer ##########
 wandb_project: spd-resid-mlp
 wandb_run_name: null
-wandb_run_name_prefix: "rp_"
+wandb_run_name_prefix: ""
 spd_type: rank_penalty
-unit_norm_matrices: false
+unit_norm_matrices: true
 seed: 0
-topk: 1.15
-pnorm: 0.8
+# topk: 1
+topk: 1.28
+m: null
+hardcode_topk_mask_step: null
+pnorm: 1
 batch_topk: true
 param_match_coeff: 1.0
-topk_recon_coeff: 1
-schatten_pnorm: 1.0
-schatten_coeff: 1e-1
-lr: 1e-2
-batch_size: 1024
-steps: 30_000
+topk_recon_coeff: 1.0
+act_recon_coeff: 1.0
+schatten_pnorm: 0.9
+schatten_coeff: 1e1
+lr: 1e-3
+batch_size: 256
+steps: 10_000
 print_freq: 500
-image_freq: 10_000
-save_freq: 30_000
+image_freq: 5_000
+save_freq: 10_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
 task_config:
   task_name: residual_mlp
-  init_scale: 1.0
-  k: 5
-  feature_probability: 0.2
+  init_scale: 2.0
+  k: 130
+  feature_probability: 0.01
   data_generation_type: "at_least_zero_active"
-  pretrained_model_path: wandb:spd-train-resid-mlp/runs/njgvwytn
+  pretrained_model_path: wandb:spd-train-resid-mlp/runs/zas5yjdl # 1 layer
+
+
+########## 2 layer ##########
+# wandb_project: spd-resid-mlp
+# wandb_run_name: null
+# wandb_run_name_prefix: ""
+# spd_type: rank_penalty
+# unit_norm_matrices: false
+# seed: 0
+# topk: 1.28 # bs=256
+# m: null
+# hardcode_topk_mask_step: null
+# pnorm: 1
+# batch_topk: true
+# param_match_coeff: 1.0
+# topk_recon_coeff: 2.0
+# act_recon_coeff: 1.0
+# schatten_pnorm: 0.9
+# schatten_coeff: 7
+# lr: 1e-3
+# batch_size: 256
+# steps: 10_000
+# print_freq: 500
+# image_freq: 10_000
+# save_freq: 10_000
+# lr_warmup_pct: 0.01
+# lr_schedule: cosine
+# task_config:
+#   task_name: residual_mlp
+#   init_scale: 2.0
+#   k: 200
+#   feature_probability: 0.01
+#   data_generation_type: "at_least_zero_active"
+#   pretrained_model_path: wandb:spd-train-resid-mlp/runs/sv23xrhj # 2 layer

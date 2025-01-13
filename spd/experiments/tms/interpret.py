@@ -1,34 +1,33 @@
+# %%
 import matplotlib.collections as mc
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import torch
 from jaxtyping import Float
 from torch import Tensor
 
+from spd.experiments.tms.models import TMSModel, TMSSPDRankPenaltyModel
+from spd.plotting import collect_sparse_dataset_mse_losses, plot_sparse_feature_mse_line_plot
+from spd.run_spd import TMSTaskConfig
+from spd.settings import REPO_ROOT
+from spd.utils import COLOR_PALETTE, DataGenerationType, SparseFeatureDataset
+
 
 def plot_vectors(
     subnets: Float[Tensor, "n_instances n_subnets n_features n_hidden"],
-    n_instances: int | None = None,
-) -> plt.Figure:
+    axs: npt.NDArray[np.object_],
+) -> None:
     """2D polygon plot of each subnetwork.
 
     Adapted from
     https://colab.research.google.com/github/anthropics/toy-models-of-superposition/blob/main/toy_models.ipynb.
     """
-    if n_instances is not None:
-        subnets = subnets[:n_instances]
     n_instances, n_subnets, n_features, n_hidden = subnets.shape
-
-    # Make a new subnet index in the beginning which is the sum of all subnets
-    subnets = torch.cat([subnets.sum(dim=1, keepdim=True), subnets], dim=1)
-    n_subnets += 1
 
     # Use different colors for each subnetwork if there's only one instance
     color_vals = np.linspace(0, 1, n_features) if n_instances == 1 else np.zeros(n_features)
     colors = plt.cm.viridis(color_vals)  # type: ignore
-
-    fig, axs = plt.subplots(n_instances, n_subnets, figsize=(2 * n_subnets, 3 * n_instances))
-    axs = np.atleast_2d(np.array(axs))
 
     for subnet_idx in range(n_subnets):
         for instance_idx, ax in enumerate(axs[:, subnet_idx]):
@@ -42,7 +41,7 @@ def plot_vectors(
                 )
 
             ax.set_aspect("equal")
-            z = 1.5
+            z = 1.3
             ax.set_facecolor("#f6f6f6")
             ax.set_xlim((-z, z))
             ax.set_ylim((-z, z))
@@ -52,38 +51,28 @@ def plot_vectors(
             for spine in ["bottom", "left"]:
                 ax.spines[spine].set_position("center")
 
-            if instance_idx == n_instances - 1:
-                label = "Sum of subnets" if subnet_idx == 0 else f"Subnet {subnet_idx-1}"
-                ax.set_xlabel(label, rotation=0, ha="center", labelpad=60)
-            if subnet_idx == 0 and n_instances > 1:
-                ax.set_ylabel(f"Instance {instance_idx}", rotation=90, ha="center", labelpad=60)
-
-    return fig
+            if instance_idx == 0:  # Only add labels to the first row
+                if subnet_idx == 0:
+                    label = "Target model"
+                elif subnet_idx == 1:
+                    label = "Sum of components"
+                else:
+                    label = f"Component {subnet_idx - 2}"
+                ax.set_title(label, pad=10, fontsize="large")
 
 
 def plot_networks(
     subnets: Float[Tensor, "n_instances n_subnets n_features n_hidden"],
-    n_instances: int | None = None,
-    has_labels: bool = True,
-) -> plt.Figure:
+    axs: npt.NDArray[np.object_],
+) -> None:
     """Plot neural network diagrams for each W matrix in the subnet variable.
 
     Args:
         subnets: Tensor of shape [n_instances, n_subnets, n_features, n_hidden].
-        n_instances: Number of data instances to plot. If None, plot all.
-        has_labels: Whether to add labels to the plot.
-
-    Returns:
-        Matplotlib Figure object containing the network diagrams.
+        axs: Matplotlib axes to plot on.
     """
 
-    if n_instances is not None:
-        subnets = subnets[:n_instances]
     n_instances, n_subnets, n_features, n_hidden = subnets.shape
-
-    # Make a new subnet index in the beginning which is the sum of all subnets
-    subnets = torch.cat([subnets.sum(dim=1, keepdim=True), subnets], dim=1)
-    n_subnets += 1
 
     # Take the absolute value of the weights
     subnets_abs = subnets.abs()
@@ -91,28 +80,21 @@ def plot_networks(
     # Find the maximum weight across each instance
     max_weights = subnets_abs.amax(dim=(1, 2, 3))
 
-    # Create a figure with subplots arranged as per the existing layout
-    fig, axs = plt.subplots(
-        n_instances,
-        n_subnets,
-        figsize=(2 * n_subnets, 3 * n_instances),
-        constrained_layout=True,
-    )
     axs = np.atleast_2d(np.array(axs))
 
     # axs[0, 0].set_xlabel("Outputs (before ReLU and biases)")
     # Add the above but in text because the x-axis is killed
     axs[0, 0].text(
-        0.1,
         0.05,
-        "Outputs (before\nbias and ReLU)",
+        0.05,
+        "Outputs (before bias & ReLU)",
         ha="left",
         va="center",
         transform=axs[0, 0].transAxes,
     )
     # Also add "input label"
     axs[0, 0].text(
-        0.1,
+        0.05,
         0.95,
         "Inputs",
         ha="left",
@@ -187,77 +169,149 @@ def plot_networks(
                     )
 
             # Remove axes for clarity
-            ax.axis("off")
+            # ax.axis("off")
             ax.set_xlim(-0.1, 1.1)
             ax.set_ylim(y_output - 0.5, y_input + 0.5)
+            # Remove x and y ticks and bounding boxes
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ["top", "right", "bottom", "left"]:
+                ax.spines[spine].set_visible(False)
 
-            if has_labels:
-                if instance_idx == n_instances - 1:
-                    label = "Sum of subnets" if subnet_idx == 0 else f"Subnet {subnet_idx - 1}"
-                    ax.text(
-                        0.5,
-                        0,
-                        label,
-                        ha="center",
-                        va="center",
-                        transform=ax.transAxes,
-                    )
-                if subnet_idx == 0 and n_instances > 1:
-                    ax.text(
-                        -0.1,
-                        0.5,
-                        f"Instance {instance_idx}",
-                        ha="center",
-                        va="center",
-                        rotation=90,
-                        transform=ax.transAxes,
-                    )
+
+def plot_combined(
+    subnets: Float[Tensor, "n_instances n_subnets n_features n_hidden"],
+    target_weights: Float[Tensor, "n_instances n_features n_hidden"],
+    n_instances: int | None = None,
+) -> plt.Figure:
+    """Create a combined figure with both vector and network diagrams side by side."""
+    if n_instances is not None:
+        subnets = subnets[:n_instances]
+        target_weights = target_weights[:n_instances]
+    n_instances, n_subnets, n_features, n_hidden = subnets.shape
+
+    # We wish to add two panels to the left: The target model weights and the sum of the subnets
+    # Add an extra dimension to the target weights so we can concatenate them
+    target_subnet = target_weights[:, None, :, :]
+    summed_subnet = subnets.sum(dim=1, keepdim=True)
+    subnets = torch.cat([target_subnet, summed_subnet, subnets], dim=1)
+    n_subnets += 2
+
+    # Create figure with two rows
+    fig, axs = plt.subplots(
+        nrows=n_instances * 2,
+        ncols=n_subnets,
+        figsize=(3 * n_subnets, 6 * n_instances),
+    )
+
+    plt.subplots_adjust(hspace=0)
+
+    axs = np.atleast_2d(np.array(axs))
+
+    # Split axes into left (vectors) and right (networks) sides
+    axs_vectors = axs[:n_instances, :]
+    axs_networks = axs[n_instances:, :]
+
+    # Call existing plotting logic with the split axes
+    plot_vectors(subnets=subnets, axs=axs_vectors)
+    plot_networks(subnets=subnets, axs=axs_networks)
 
     return fig
 
 
-# # %%
-# if __name__ == "__main__":
-#     # pretrained_path = REPO_ROOT / "spd/experiments/tms/demo_spd_model/model_30000.pth"
-#     pretrained_path = (
-#         REPO_ROOT
-#         # / "spd/experiments/tms/out/fr_topk2.80e-01_topkrecon1.00e+01_topkl2_1.00e+00_sd0_attr-gra_lr1.00e-02_bs2048_ft5_hid2/model_20000.pth"
-#         / "spd/experiments/tms/out/fr_p8.00e-01_topk2.50e-01_topkrecon1.00e+01_schatten3.00e+00_sd0_attr-gra_lr1.00e-03_bs2048_ft5_hid2/model_30000.pth"
-#     )
+# %%
+device = "cuda" if torch.cuda.is_available() else "cpu"
+# path = "wandb:spd-tms/runs/bft0pgi8"  # Old 5-2 run with attributions from spd model
+# path = "wandb:spd-tms/runs/sv9padmo"  # 10-5
+# path = "wandb:spd-tms/runs/vt0i4a22"  # 20-5
+path = "wandb:spd-tms/runs/tyo4serm"  # 40-10 with topk=2, topk_recon_coeff=1e1, schatten_coeff=15 # Using in paper
+# path = "wandb:spd-tms/runs/014t4f9n"  # 40-10 with topk=1, topk_recon_coeff=1e1, schatten_coeff=1e1
 
-#     with open(pretrained_path.parent / "final_config.yaml") as f:
-#         config = Config(**yaml.safe_load(f))
+run_id = path.split("/")[-1]
 
-#     # assert config.full_rank, "This script only works for full rank models"
-#     model = torch.load(pretrained_path, map_location="cpu", weights_only=True)
-#     # W = torch.einsum("ikfm,ikmh->ikfh", model["A"], model["B"])
-#     # %%
+# Plot showing polygons for each subnet
+model, config = TMSSPDRankPenaltyModel.from_pretrained(path)
+subnets = model.all_subnetwork_params()["W"].detach().cpu()
 
-#     # subnets = model["subnetwork_params"]
-#     # bias = model["b_final"]
-#     # fig1 = plot_vectors(subnets, n_instances=1)
-#     # fig1.savefig(pretrained_path.parent / "polygon_diagram.png", bbox_inches="tight", dpi=200)
-#     # print(f"Saved figure to {pretrained_path.parent / 'polygon_diagram.png'}")
+assert isinstance(config.task_config, TMSTaskConfig)
+target_model, target_model_train_config_dict = TMSModel.from_pretrained(
+    config.task_config.pretrained_model_path
+)
 
-#     # fig2 = plot_networks(subnets, n_instances=1, has_labels=False)
-#     # fig2.savefig(pretrained_path.parent / "network_diagram.png", bbox_inches="tight", dpi=200)
-#     # print(f"Saved figure to {pretrained_path.parent / 'network_diagram.png'}")
+out_dir = REPO_ROOT / "spd/experiments/tms/out"
+# %%
+target_weights = target_model.W.detach().cpu()
 
+fig = plot_combined(subnets, target_weights, n_instances=1)
+fig.savefig(out_dir / f"tms_combined_diagram_{run_id}.png", bbox_inches="tight", dpi=400)
+print(f"Saved figure to {out_dir / f'tms_combined_diagram_{run_id}.png'}")
 
 # %%
-# from spd.experiments.resid_mlp.models import ResidualMLPSPDRankPenaltyModel
-from spd.experiments.tms.models import TMSSPDRankPenaltyModel
-
-model, spd_config = TMSSPDRankPenaltyModel.from_pretrained(
-    # "wandb:apollo-interp/spd-tms/runs/iv2mwssf"
-    # "wandb:apollo-interp/spd-tms/runs/6avu1crx"
-    # "wandb:apollo-interp/spd-tms/runs/1an9c01t"
-    "wandb:apollo-interp/spd-tms/runs/353croa9"
+# Get the entries for the main loss table in the paper
+dataset = SparseFeatureDataset(
+    n_instances=target_model.config.n_instances,
+    n_features=target_model.config.n_features,
+    feature_probability=config.task_config.feature_probability,
+    device=device,
+    data_generation_type="at_least_zero_active",  # This will be changed in collect_sparse_dataset_mse_losses
+    value_range=(0.0, 1.0),
 )
-# model, config_dict, label_coeffs = ResidualMLPSPDRankPenaltyModel.from_pretrained(
-#     "wandb:spd-resid-mlp/runs/svih4aik"
-# )
-print(model)
-# print(spd_config)
+gen_types: list[DataGenerationType] = [
+    "at_least_zero_active",
+    "exactly_one_active",
+    "exactly_two_active",
+    "exactly_three_active",
+    "exactly_four_active",
+]
+assert config.topk is not None
+results = collect_sparse_dataset_mse_losses(
+    dataset=dataset,
+    target_model=target_model,
+    spd_model=model,
+    batch_size=10000,
+    device=device,
+    topk=config.topk,
+    attribution_type=config.attribution_type,
+    batch_topk=config.batch_topk,
+    distil_from_target=config.distil_from_target,
+    gen_types=gen_types,
+    buffer_ratio=5,
+)
+
+# %%
+# Option to plot a single instance
+inst = None
+if inst is not None:
+    # We only plot the {inst}th instance
+    plot_data = {
+        gen_type: {k: float(v[inst].detach().cpu()) for k, v in results[gen_type].items()}
+        for gen_type in gen_types
+    }
+else:
+    # Take the mean over all instances
+    plot_data = {
+        gen_type: {k: float(v.mean(dim=0).detach().cpu()) for k, v in results[gen_type].items()}
+        for gen_type in gen_types
+    }
+
+# %%
+# Create line plot of results
+color_map = {
+    "target": COLOR_PALETTE[0],
+    "apd_topk": COLOR_PALETTE[1],
+    "baseline_monosemantic": "grey",
+}
+label_map = [
+    ("target", "Target model", color_map["target"]),
+    ("spd", "APD model", color_map["apd_topk"]),
+    ("baseline_monosemantic", "Monosemantic baseline", color_map["baseline_monosemantic"]),
+]
+
+fig = plot_sparse_feature_mse_line_plot(plot_data, label_map=label_map, log_scale=False)
+fig.show()
+# fig.savefig(out_dir / f"tms_mse_{run_id}_inst{inst}.png", dpi=400)
+# print(f"Saved figure to {out_dir / f'tms_mse_{run_id}_inst{inst}.png'}")
+fig.savefig(out_dir / f"tms_mse_{run_id}.png", dpi=400)
+print(f"Saved figure to {out_dir / f'tms_mse_{run_id}.png'}")
 
 # %%

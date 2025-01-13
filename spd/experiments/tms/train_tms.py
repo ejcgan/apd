@@ -2,7 +2,6 @@
 https://colab.research.google.com/github/anthropics/toy-models-of-superposition/blob/main/toy_models.ipynb
 """
 
-import warnings
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -14,10 +13,8 @@ import numpy as np
 import torch
 import wandb
 import yaml
-from jaxtyping import Float
 from matplotlib import collections as mc
 from pydantic import BaseModel, ConfigDict, PositiveInt, model_validator
-from torch import Tensor
 from tqdm import tqdm, trange
 
 from spd.experiments.tms.models import TMSModel, TMSModelConfig
@@ -139,33 +136,39 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
     plt.savefig(filepath)
 
 
-def calculate_feature_cosine_similarities(
+def plot_cosine_similarity_distribution(
     model: TMSModel,
-) -> Float[Tensor, " n_instances"]:
-    """Calculate cosine similarities between feature vectors.
+    filepath: Path,
+) -> None:
+    """Create scatter plots of cosine similarities between feature vectors for each instance.
 
-    Returns:
-        tuple of (mean, min, max) cosine similarities for each instance
+    Args:
+        model: The trained TMS model
+        filepath: Where to save the plot
     """
+    # Calculate cosine similarities
     rows = model.W.detach()
     rows /= rows.norm(dim=-1, keepdim=True)
     cosine_sims = einops.einsum(rows, rows, "i f1 h, i f2 h -> i f1 f2")
-    # Remove self-similarities from consideration
     mask = ~torch.eye(rows.shape[1], device=rows.device, dtype=torch.bool)
     masked_sims = cosine_sims[:, mask].reshape(rows.shape[0], -1)
 
-    max_sims = masked_sims.max(dim=-1).values
-    theoretical_max = (1 / model.config.n_hidden) ** 0.5
+    # Create subplot for each instance
+    fig, axs = plt.subplots(1, model.config.n_instances, figsize=(4 * model.config.n_instances, 4))
+    axs = np.array(axs).flatten()  # Handle case where n_instances = 1
 
-    if (max_sims > theoretical_max).any():
-        warnings.warn(
-            f"Maximum cosine similarity ({max_sims.max().item():.3f}) exceeds theoretical maximum "
-            f"of 1/√d_hidden = {theoretical_max:.3f}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    for i, ax in enumerate(axs):
+        sims = masked_sims[i].cpu().numpy()
+        ax.scatter(sims, np.zeros_like(sims), alpha=0.5)
+        ax.set_title(f"Instance {i}")
+        ax.set_xlim(-1, 1)
+        if i == 0:  # Only show x-label for first plot
+            ax.set_xlabel("Cosine Similarity")
+        ax.set_yticks([])  # Hide y-axis ticks
 
-    return max_sims
+    plt.tight_layout()
+    plt.savefig(filepath)
+    plt.close()
 
 
 def get_model_and_dataloader(
@@ -241,8 +244,12 @@ def run_train(config: TMSTrainConfig, device: str) -> None:
         plot_intro_diagram(model, filepath=out_dir / "polygon.png")
         logger.info(f"Saved diagram to {out_dir / 'polygon.png'}")
 
-    maxs = calculate_feature_cosine_similarities(model)
-    logger.info(f"Cosine sims max: {maxs.tolist()}")
+    plot_cosine_similarity_distribution(
+        model, filepath=out_dir / "cosine_similarity_distribution.png"
+    )
+    logger.info(
+        f"Saved cosine similarity distribution to {out_dir / 'cosine_similarity_distribution.png'}"
+    )
     logger.info(f"1/sqrt(n_hidden): {1 / np.sqrt(model_cfg.n_hidden)}")
 
 
@@ -251,17 +258,17 @@ if __name__ == "__main__":
     config = TMSTrainConfig(
         wandb_project="spd-train-tms",
         tms_model_config=TMSModelConfig(
-            n_features=50,
-            n_hidden=20,
+            n_features=20,
+            n_hidden=5,
             n_hidden_layers=0,
-            n_instances=6,
+            n_instances=3,
             device=device,
         ),
         feature_probability=0.05,
-        batch_size=1024,
-        steps=5_000,
+        batch_size=2048,
+        steps=2000,
         seed=0,
-        lr=5e-3,
+        lr=1e-3,
         data_generation_type="at_least_zero_active",
         fixed_identity_hidden_layers=False,
         fixed_random_hidden_layers=False,

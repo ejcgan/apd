@@ -19,6 +19,20 @@ from spd.settings import REPO_ROOT
 T = TypeVar("T", bound=BaseModel)
 Q = TypeVar("Q")
 
+# Avoid seaborn package installation (sns.color_palette("colorblind").as_hex())
+COLOR_PALETTE = [
+    "#0173B2",
+    "#DE8F05",
+    "#029E73",
+    "#D55E00",
+    "#CC78BC",
+    "#CA9161",
+    "#FBAFE4",
+    "#949494",
+    "#ECE133",
+    "#56B4E9",
+]
+
 
 def to_root_path(path: str | Path) -> Path:
     """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
@@ -152,10 +166,17 @@ def replace_pydantic_model(model: BaseModelType, *updates: dict[str, Any]) -> Ba
     return model.__class__(**deep_update(model.model_dump(), *updates))
 
 
-def init_param_(param: torch.Tensor, scale: float = 1.0) -> None:
-    torch.nn.init.kaiming_uniform_(param)
-    with torch.no_grad():
-        param.mul_(scale)
+def init_param_(
+    param: torch.Tensor,
+    scale: float = 1.0,
+    init_type: Literal["kaiming_uniform", "xavier_normal"] = "kaiming_uniform",
+) -> None:
+    if init_type == "kaiming_uniform":
+        torch.nn.init.kaiming_uniform_(param)
+        with torch.no_grad():
+            param.mul_(scale)
+    elif init_type == "xavier_normal":
+        torch.nn.init.xavier_normal_(param, gain=scale)
 
 
 class DatasetGeneratedDataLoader(DataLoader[Q], Generic[Q]):
@@ -550,6 +571,7 @@ def run_spd_forward_pass(
     batch_topk: bool,
     topk: float,
     distil_from_target: bool,
+    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] | None = None,
 ) -> SPDOutputs:
     # non-SPD model, and SPD-model non-topk forward pass
     target_model_output, pre_acts, post_acts = target_model(input_array)
@@ -566,15 +588,17 @@ def run_spd_forward_pass(
         attribution_type=attribution_type,
     )
 
-    # We always assume the final subnetwork is the one we want to distil
-    topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores
-    topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=batch_topk)
-    if distil_from_target:
-        # Add back the final subnetwork index to the topk mask and set it to True
-        last_subnet_mask = torch.ones(
-            (*topk_mask.shape[:-1], 1), dtype=torch.bool, device=attribution_scores.device
-        )
-        topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
+    if topk_mask is None:
+        # We always assume the final subnetwork is the one we want to distil
+        topk_attrs = attribution_scores[..., :-1] if distil_from_target else attribution_scores
+
+        topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=batch_topk)
+        if distil_from_target:
+            # Add back the final subnetwork index to the topk mask and set it to True
+            last_subnet_mask = torch.ones(
+                (*topk_mask.shape[:-1], 1), dtype=torch.bool, device=attribution_scores.device
+            )
+            topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
 
     model_output_spd_topk, _, _ = spd_model(input_array, topk_mask=topk_mask)
     attribution_scores = attribution_scores.cpu().detach()
@@ -587,6 +611,16 @@ def run_spd_forward_pass(
         attribution_scores=attribution_scores,
         topk_mask=topk_mask,
     )
+
+
+DataGenerationType = Literal[
+    "exactly_one_active",
+    "exactly_two_active",
+    "exactly_three_active",
+    "exactly_four_active",
+    "exactly_five_active",
+    "at_least_zero_active",
+]
 
 
 class SparseFeatureDataset(
@@ -603,9 +637,7 @@ class SparseFeatureDataset(
         n_features: int,
         feature_probability: float,
         device: str,
-        data_generation_type: Literal[
-            "exactly_one_active", "exactly_two_active", "at_least_zero_active"
-        ] = "at_least_zero_active",
+        data_generation_type: DataGenerationType = "at_least_zero_active",
         value_range: tuple[float, float] = (0.0, 1.0),
     ):
         self.n_instances = n_instances
@@ -623,35 +655,39 @@ class SparseFeatureDataset(
     ) -> tuple[
         Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances n_features"]
     ]:
-        if self.data_generation_type == "exactly_one_active":
-            batch = self._generate_one_feature_active_batch(batch_size)
-        elif self.data_generation_type == "exactly_two_active":
-            batch = self._generate_two_feature_active_batch(batch_size)
+        # TODO: This is a hack to keep backward compatibility. Probably best to have
+        # data_generation_type: Literal["exactly_n_active", "at_least_zero_active"] and
+        # data_generation_n: PositiveInt
+        number_map = {
+            "exactly_one_active": 1,
+            "exactly_two_active": 2,
+            "exactly_three_active": 3,
+            "exactly_four_active": 4,
+            "exactly_five_active": 5,
+        }
+        if self.data_generation_type in number_map:
+            n = number_map[self.data_generation_type]
+            batch = self._generate_n_feature_active_batch(batch_size, n=n)
         elif self.data_generation_type == "at_least_zero_active":
             batch = self._generate_multi_feature_batch(batch_size)
         else:
             raise ValueError(f"Invalid generation type: {self.data_generation_type}")
         return batch, batch.clone().detach()
 
-    def _generate_one_feature_active_batch(
-        self, batch_size: int
+    def _generate_n_feature_active_batch(
+        self, batch_size: int, n: int
     ) -> Float[Tensor, "batch n_instances n_features"]:
-        """Generate a batch with one feature active per sample and instance."""
-        batch = torch.zeros(batch_size, self.n_instances, self.n_features, device=self.device)
+        """Generate a batch with exactly n features active per sample and instance.
 
-        active_features = torch.randint(
-            0, self.n_features, (batch_size, self.n_instances), device=self.device
-        )
-        min_val, max_val = self.value_range
-        random_values = torch.rand(batch_size, self.n_instances, 1, device=self.device)
-        random_values = random_values * (max_val - min_val) + min_val
-        batch.scatter_(dim=2, index=active_features.unsqueeze(-1), src=random_values)
-        return batch
+        Args:
+            batch_size: Number of samples in the batch
+            n: Number of features to activate per sample and instance
+        """
+        if n > self.n_features:
+            raise ValueError(
+                f"Cannot activate {n} features when only {self.n_features} features exist"
+            )
 
-    def _generate_two_feature_active_batch(
-        self, batch_size: int
-    ) -> Float[Tensor, "batch n_instances n_features"]:
-        """Generate a batch with exactly two features active per sample and instance."""
         batch = torch.zeros(batch_size, self.n_instances, self.n_features, device=self.device)
 
         # Create indices for all features
@@ -663,34 +699,89 @@ class SparseFeatureDataset(
         perm = torch.rand_like(feature_indices.float()).argsort(dim=-1)
         permuted_features = feature_indices.gather(dim=-1, index=perm)
 
-        # Take first two indices for each instance - guaranteed no duplicates
-        active_features = permuted_features[..., :2]
+        # Take first n indices for each instance - guaranteed no duplicates
+        active_features = permuted_features[..., :n]
 
         # Generate random values in value_range for the active features
         min_val, max_val = self.value_range
-        random_values = torch.rand(batch_size, self.n_instances, 2, device=self.device)
+        random_values = torch.rand(batch_size, self.n_instances, n, device=self.device)
         random_values = random_values * (max_val - min_val) + min_val
 
-        # Place the first active feature
-        batch.scatter_(dim=2, index=active_features[..., 0:1], src=random_values[..., 0:1])
-        # Place the second active feature
-        batch.scatter_(dim=2, index=active_features[..., 1:2], src=random_values[..., 1:2])
+        # Place each active feature
+        for i in range(n):
+            batch.scatter_(
+                dim=2, index=active_features[..., i : i + 1], src=random_values[..., i : i + 1]
+            )
 
         return batch
+
+    def _masked_batch_generator(
+        self, total_batch_size: int
+    ) -> Float[Tensor, "total_batch_size n_features"]:
+        """Generate a batch where each feature activates independently with probability
+        `feature_probability`.
+
+        Args:
+            total_batch_size: Number of samples in the batch (either `batch_size` or
+                `batch_size * n_instances`)
+        """
+        min_val, max_val = self.value_range
+        batch = (
+            torch.rand((total_batch_size, self.n_features), device=self.device)
+            * (max_val - min_val)
+            + min_val
+        )
+        mask = torch.rand_like(batch) < self.feature_probability
+        return batch * mask
 
     def _generate_multi_feature_batch(
         self, batch_size: int
     ) -> Float[Tensor, "batch n_instances n_features"]:
         """Generate a batch where each feature activates independently with probability
         `feature_probability`."""
-        min_val, max_val = self.value_range
-        batch = (
-            torch.rand((batch_size, self.n_instances, self.n_features), device=self.device)
-            * (max_val - min_val)
-            + min_val
+        total_batch_size = batch_size * self.n_instances
+        batch = self._masked_batch_generator(total_batch_size)
+        return einops.rearrange(
+            batch,
+            "(batch n_instances) n_features -> batch n_instances n_features",
+            batch=batch_size,
         )
-        mask = torch.rand_like(batch) < self.feature_probability
-        return batch * mask
+
+    def _generate_multi_feature_batch_no_zero_samples(
+        self, batch_size: int, buffer_ratio: float
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        """Generate a batch where each feature activates independently with probability
+        `feature_probability`.
+
+        Ensures that there are no zero samples in the batch.
+
+        Args:
+            batch_size: Number of samples in the batch
+            buffer_ratio: First generate `buffer_ratio * total_batch_size` samples and count the
+                number of samples with all zeros. Then generate another `buffer_ratio *
+                n_zeros` samples and fill in the zero samples. Continue until there are no zero
+                samples.
+        """
+        total_batch_size = batch_size * self.n_instances
+        buffer_size = int(total_batch_size * buffer_ratio)
+        batch = torch.empty(0, device=self.device, dtype=torch.float32)
+        n_samples_needed = total_batch_size
+        while True:
+            buffer = self._masked_batch_generator(buffer_size)
+            # Get the indices of the non-zero samples in the buffer
+            valid_indices = buffer.sum(dim=-1) != 0
+            batch = torch.cat((batch, buffer[valid_indices][:n_samples_needed]))
+            if len(batch) == total_batch_size:
+                break
+            else:
+                # We don't have enough valid samples
+                n_samples_needed = total_batch_size - len(batch)
+                buffer_size = int(n_samples_needed * buffer_ratio)
+        return einops.rearrange(
+            batch,
+            "(batch n_instances) n_features -> batch n_instances n_features",
+            batch=batch_size,
+        )
 
 
 def compute_feature_importances(
@@ -714,3 +805,19 @@ def compute_feature_importances(
             n_instances=n_instances,
         )
     return importance_tensor
+
+
+def calc_recon_mse(
+    output: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    labels: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    has_instance_dim: bool = False,
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    recon_loss = (output - labels) ** 2
+    if recon_loss.ndim == 3:
+        assert has_instance_dim
+        recon_loss = einops.reduce(recon_loss, "b i f -> i", "mean")
+    elif recon_loss.ndim == 2:
+        recon_loss = recon_loss.mean()
+    else:
+        raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
+    return recon_loss

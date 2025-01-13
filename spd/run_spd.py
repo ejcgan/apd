@@ -26,7 +26,7 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
 from spd.types import ModelPath, Probability, RootPath
-from spd.utils import calc_topk_mask, calculate_attributions
+from spd.utils import calc_recon_mse, calc_topk_mask, calculate_attributions
 
 
 class TMSTaskConfig(BaseModel):
@@ -103,6 +103,7 @@ class Config(BaseModel):
     topk: PositiveFloat | None = None
     batch_topk: bool = True
     hardcode_topk_mask_step: int | None = None
+    exact_topk: bool = False
     batch_size: PositiveInt
     steps: PositiveInt
     print_freq: PositiveInt
@@ -249,6 +250,8 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
     if config.topk_l2_coeff is not None:
         run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
+    if config.schatten_pnorm is not None:
+        run_suffix += f"schatp{config.schatten_pnorm:.2e}_"
     if config.schatten_coeff is not None:
         run_suffix += f"schatten{config.schatten_coeff:.2e}_"
     if config.act_recon_coeff is not None:
@@ -309,22 +312,6 @@ def get_lr_with_warmup(
     if step < warmup_steps:
         return lr * (step / warmup_steps)
     return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
-
-
-def calc_recon_mse(
-    output: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
-    labels: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
-    has_instance_dim: bool = False,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    recon_loss = (output - labels) ** 2
-    if recon_loss.ndim == 3:
-        assert has_instance_dim
-        recon_loss = einops.reduce(recon_loss, "b i f -> i", "mean")
-    elif recon_loss.ndim == 2:
-        recon_loss = recon_loss.mean()
-    else:
-        raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
-    return recon_loss
 
 
 def calc_topk_l2_full_rank(
@@ -399,7 +386,7 @@ def calc_schatten_loss(
         As_and_Bs_vals: List of tuples containing A and B matrices for each layer
         mask: The mask to use for the Schatten p-norm penalty. May be a binary mask (if topk) or
             a float mask (if lp sparsity).
-        p: The Schatten p-norm to use (from config.pnorm)
+        p: The Schatten p-norm to use (from config.schatten_pnorm)
         n_params: The number of parameters in the model
     Returns:
         The Schatten p-norm penalty for the topk subnetworks
@@ -817,7 +804,14 @@ def optimize(
             topk_attrs: Float[Tensor, "batch ... k"] = (
                 attributions[..., :-1] if config.distil_from_target else attributions
             )
-            if (
+            if config.exact_topk:
+                # Only valid if n_instances = 1
+                assert has_instance_dim, "exact_topk only works if has_instance_dim is True"
+                assert model.n_instances == 1, "exact_topk only works if n_instances = 1"
+                # Get the exact number of active features over the batch
+                exact_topk = ((batch != 0).sum() / batch.shape[0]).item()
+                topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=config.batch_topk)
+            elif (
                 config.hardcode_topk_mask_step is not None
                 and step <= config.hardcode_topk_mask_step
             ):
@@ -827,6 +821,15 @@ def optimize(
                     "i.e. corresponds to subnetworks"
                 )
                 topk_mask = (batch != 0).float().to(device=device)
+                # Note, the below won't actually work when there is an n_instance dimension because
+                # there needs to be a different topk for each instance, and torch.topk only takes
+                # in an int. Would need code that calculates the topk mask over a for loop and
+                # concatenates the results.
+                # elif config.exact_topk:
+                #     # Instead of config.topk, use the exact number of active features over the batch
+                #     n_active = (batch != 0).sum()
+                #     topk = n_active / batch.shape[0]
+                #     topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=config.batch_topk)
             else:
                 topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
@@ -866,10 +869,27 @@ def optimize(
 
         act_recon_loss = None
         if config.act_recon_coeff is not None:
-            act_recon_loss = calc_act_recon(
-                target_post_acts=post_acts,
-                layer_acts=layer_acts if layer_acts_topk is None else layer_acts_topk,
-            )
+            if isinstance(config.task_config, ResidualMLPTaskConfig):
+                # For now, we treat resid-mlp special in that we take the post-relu activations
+                assert layer_acts_topk is not None
+                post_acts_after_relu = {}
+                layer_acts_topk_after_relu = {}
+                for i in range(len(model.layers)):
+                    post_acts_after_relu[f"layers.{i}.linear1"] = torch.nn.functional.relu(
+                        post_acts[f"layers.{i}.linear1"]
+                    )
+                    layer_acts_topk_after_relu[f"layers.{i}.linear1"] = torch.nn.functional.relu(
+                        layer_acts_topk[f"layers.{i}.linear1"]
+                    )
+
+                act_recon_loss = calc_act_recon(
+                    target_post_acts=post_acts_after_relu, layer_acts=layer_acts_topk_after_relu
+                )
+            else:
+                act_recon_loss = calc_act_recon(
+                    target_post_acts=post_acts,
+                    layer_acts=layer_acts if layer_acts_topk is None else layer_acts_topk,
+                )
 
         if config.schatten_coeff is not None:
             assert isinstance(
@@ -996,6 +1016,7 @@ def optimize(
                 config=config,
                 topk_mask=topk_mask,
                 pre_acts=pre_acts,
+                batch=batch,
             )
             if config.wandb_project:
                 wandb.log(

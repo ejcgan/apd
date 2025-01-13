@@ -22,10 +22,7 @@ from spd.models.components import (
     ParamComponentsFullRank,
     ParamComponentsRankPenalty,
 )
-from spd.run_spd import (
-    calc_recon_mse,
-)
-from spd.utils import run_spd_forward_pass
+from spd.utils import calc_recon_mse, run_spd_forward_pass
 
 
 def get_weight_matrix(

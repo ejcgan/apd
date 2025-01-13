@@ -1,8 +1,10 @@
 from collections.abc import Callable
+from typing import Literal
 
 import einops
 import torch
 from jaxtyping import Bool, Float
+from numpy import ndim
 from torch import Tensor, nn
 
 from spd.utils import init_param_
@@ -21,12 +23,13 @@ class InstancesParamComponentsRankPenalty(nn.Module):
         out_dim: int,
         k: int,
         bias: bool,
+        init_type: Literal["kaiming_uniform", "xavier_normal"] = "kaiming_uniform",
         init_scale: float = 1.0,
         m: int | None = None,
     ):
         super().__init__()
         self.n_instances = n_instances
-        self.in_dim = in_dim
+        self.in_dim = ndim
         self.out_dim = out_dim
         self.k = k
         self.m = min(in_dim, out_dim) if m is None else m
@@ -36,8 +39,8 @@ class InstancesParamComponentsRankPenalty(nn.Module):
         self.B = nn.Parameter(torch.empty(n_instances, k, self.m, out_dim))
         self.bias = nn.Parameter(torch.zeros(n_instances, out_dim)) if bias else None
 
-        init_param_(self.A, scale=init_scale)
-        init_param_(self.B, scale=init_scale)
+        init_param_(self.A, scale=init_scale, init_type=init_type)
+        init_param_(self.B, scale=init_scale, init_type=init_type)
 
     @property
     def subnetwork_params(self) -> Float[Tensor, "n_instances k d_in d_out"]:

@@ -14,6 +14,7 @@ import wandb
 import yaml
 from jaxtyping import Float
 from matplotlib.colors import CenteredNorm
+from pydantic import PositiveFloat
 from torch import Tensor
 from tqdm import tqdm
 
@@ -25,8 +26,10 @@ from spd.experiments.resid_mlp.models import (
 from spd.experiments.resid_mlp.plotting import (
     analyze_per_feature_performance,
     plot_individual_feature_response,
+    plot_per_feature_performance,
     plot_spd_relu_contribution,
     plot_virtual_weights_target_spd,
+    spd_calculate_diag_relu_conns,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import (
     ResidualMLPDataset,
@@ -43,6 +46,7 @@ from spd.run_spd import (
     optimize,
 )
 from spd.utils import (
+    COLOR_PALETTE,
     DatasetGeneratedDataLoader,
     collect_subnetwork_attributions,
     load_config,
@@ -54,15 +58,50 @@ from spd.wandb_utils import init_wandb
 wandb.require("core")
 
 
-def get_run_name(config: Config, n_features: int, n_layers: int, d_resid: int, d_mlp: int) -> str:
+def get_run_name(
+    config: Config,
+    n_features: int,
+    n_layers: int,
+    d_resid: int,
+    d_mlp: int,
+    k: int,
+    m: int | None,
+    init_scale: float,
+) -> str:
     """Generate a run name based on the config."""
     run_suffix = ""
     if config.wandb_run_name:
         run_suffix = config.wandb_run_name
     else:
         run_suffix = get_common_run_name_suffix(config)
-        run_suffix += f"ft{n_features}_lay{n_layers}_resid{d_resid}_mlp{d_mlp}"
+        run_suffix += (
+            f"scale{init_scale}_ft{n_features}_lay{n_layers}_resid{d_resid}_mlp{d_mlp}_k{k}"
+        )
+        if m is not None:
+            run_suffix += f"_m{m}"
     return config.wandb_run_name_prefix + run_suffix
+
+
+def calc_n_active_features_per_subnet(
+    model: ResidualMLPSPDRankPenaltyModel, cutoff: float, device: str
+) -> tuple[Float[Tensor, "n_instances k"], Float[Tensor, "n_instances n_features"]]:
+    """Calculate the number of active features per subnet (and per instance if n_instances > 1)."""
+    n_active_features_per_subnet: Float[Tensor, "n_instances k"] = torch.zeros(
+        (model.config.n_instances, model.k), device=device
+    )
+    active_feature_counts_per_subnet: Float[Tensor, "n_instances n_features"] = torch.zeros(
+        (model.config.n_instances, model.config.n_features), device=device
+    )
+    for k in range(model.k):
+        relu_conns: Float[Tensor, "n_instances n_features d_mlp"] = spd_calculate_diag_relu_conns(
+            model, device, k_select=k
+        )
+        # Count the number of features for which each subnet fires beyond the cutoff
+        above_cutoff = relu_conns.max(dim=-1).values > cutoff
+        n_active_features_per_subnet[:, k] = above_cutoff.sum(dim=-1)
+        active_feature_counts_per_subnet[:] += above_cutoff
+
+    return n_active_features_per_subnet, active_feature_counts_per_subnet
 
 
 def plot_subnetwork_attributions(
@@ -186,6 +225,56 @@ def plot_multiple_subnetwork_params(
     return fig
 
 
+def plot_subnet_categories(
+    model: ResidualMLPSPDRankPenaltyModel, device: str, cutoff: float = 4e-2
+) -> plt.Figure:
+    n_active_features_per_subnet, active_feature_counts_per_subnet = (
+        calc_n_active_features_per_subnet(model, cutoff=cutoff, device=device)
+    )
+    n_dead_subnets = (n_active_features_per_subnet == 0).sum(dim=-1).detach().tolist()
+    n_monosemantic_subnets = (n_active_features_per_subnet == 1).sum(dim=-1).detach().tolist()
+    n_duosemantic_subnets = (n_active_features_per_subnet == 2).sum(dim=-1).detach().tolist()
+    n_polysemantic_subnets = (n_active_features_per_subnet > 2).sum(dim=-1).detach().tolist()
+    n_unique_features_represented = (
+        (active_feature_counts_per_subnet > 0).sum(dim=-1).detach().tolist()
+    )
+
+    n_instances = len(n_dead_subnets)
+    fig, ax = plt.subplots(
+        nrows=1, ncols=n_instances, figsize=(5 * n_instances, 5), constrained_layout=True
+    )
+    axs = np.array([ax]) if n_instances == 1 else np.array(ax)
+    categories = ["Dead", "Mono", "Duo", "Poly", "Represented"]
+
+    for i in range(n_instances):
+        counts = [
+            n_dead_subnets[i],
+            n_monosemantic_subnets[i],
+            n_duosemantic_subnets[i],
+            n_polysemantic_subnets[i],
+            n_unique_features_represented[i],
+        ]
+        bars = axs[i].bar(categories, counts)
+        axs[i].set_xlabel("Category")
+        axs[i].set_ylabel("Count")
+        axs[i].set_title(f"Subnet Categories (Instance {i})")
+
+        # Add numbers in the middle of the bars
+        for bar, count in zip(bars, counts, strict=False):
+            height = bar.get_height()
+            axs[i].text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height / 2.0,
+                f"{count}",
+                ha="center",
+                va="center",
+                color="white",
+                fontsize=10,
+            )
+
+    return fig
+
+
 def resid_mlp_plot_results_fn(
     model: ResidualMLPSPDRankPenaltyModel,
     target_model: ResidualMLPModel,
@@ -202,6 +291,8 @@ def resid_mlp_plot_results_fn(
 ) -> dict[str, plt.Figure]:
     assert isinstance(config.task_config, ResidualMLPTaskConfig)
     fig_dict = {}
+
+    fig_dict["subnet_categories"] = plot_subnet_categories(model, device)
 
     ############################################################################################
     # Feature contributions
@@ -222,22 +313,25 @@ def resid_mlp_plot_results_fn(
     # Individual feature responses + per-feature performance
     ############################################################################################
     def spd_model_fn(
-        batch: Float[Tensor, "batch n_instances"],
+        batch: Float[Tensor, "batch n_instances n_features"],
+        topk: PositiveFloat | None = config.topk,
+        batch_topk: bool = config.batch_topk,
     ) -> Float[Tensor, "batch n_instances n_features"]:
-        assert config.topk is not None
+        assert topk is not None
+        if config.exact_topk:
+            assert model.n_instances == 1, "exact_topk only works if n_instances = 1"
+            topk = ((batch != 0).sum() / batch.shape[0]).item()
         return run_spd_forward_pass(
             spd_model=model,
             target_model=target_model,
             input_array=batch,
             attribution_type=config.attribution_type,
-            batch_topk=config.batch_topk,
-            topk=config.topk,
+            batch_topk=batch_topk,
+            topk=topk,
             distil_from_target=config.distil_from_target,
         ).spd_topk_model_output
 
-    def target_model_fn(
-        batch: Float[Tensor, "batch n_instances"],
-    ) -> Float[Tensor, "batch n_instances n_features"]:
+    def target_model_fn(batch: Float[Tensor, "batch n_instances"]):
         return target_model(batch)[0]
 
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(15, 15), constrained_layout=True)
@@ -280,25 +374,77 @@ def resid_mlp_plot_results_fn(
     axes[0, 1].set_xlabel("")
     fig_dict["individual_feature_responses"] = fig
 
-    fig, ax = plt.subplots(figsize=(15, 5))
-    sorted_indices = analyze_per_feature_performance(
+    # Plot per-feature performance when setting topk=1 and batch_topk=False
+    fig, ax1 = plt.subplots(figsize=(15, 5))
+
+    losses_target = analyze_per_feature_performance(
         model_fn=target_model_fn,
         model_config=target_model.config,
-        ax=ax,
-        label="Target",
         device=device,
-        sorted_indices=None,
+        batch_size=config.batch_size,
     )
-    analyze_per_feature_performance(
+    indices = losses_target.argsort()
+    fn_without_batch_topk = lambda batch: spd_model_fn(batch, topk=1, batch_topk=False)  # type: ignore
+    losses_spd = analyze_per_feature_performance(
+        model_fn=fn_without_batch_topk,
+        model_config=model.config,
+        device=device,
+        batch_size=config.batch_size,
+    )
+
+    plot_per_feature_performance(
+        losses=losses_spd,
+        sorted_indices=indices,
+        ax=ax1,
+        label="SPD",
+        color=COLOR_PALETTE[1],
+    )
+    plot_per_feature_performance(
+        losses=losses_target,
+        sorted_indices=indices,
+        ax=ax1,
+        label="Target",
+        color=COLOR_PALETTE[0],
+    )
+    ax1.legend()
+
+    fig_dict["loss_by_feature_topk_1"] = fig
+
+    # Plot per-feature performance when using batch_topk
+    fig, ax2 = plt.subplots(figsize=(15, 5))
+
+    target_losses_batch_topk = analyze_per_feature_performance(
+        model_fn=target_model_fn,
+        model_config=target_model.config,
+        device=device,
+        batch_size=config.batch_size,
+    )
+
+    spd_losses_batch_topk = analyze_per_feature_performance(
         model_fn=spd_model_fn,
         model_config=model.config,
-        ax=ax,
-        label="SPD",
         device=device,
-        sorted_indices=sorted_indices,
+        batch_size=config.batch_size,
     )
-    ax.legend()
-    fig_dict["loss_by_feature"] = fig
+
+    plot_per_feature_performance(
+        losses=spd_losses_batch_topk,
+        sorted_indices=indices,
+        ax=ax2,
+        label="SPD",
+        color=COLOR_PALETTE[1],
+    )
+    plot_per_feature_performance(
+        losses=target_losses_batch_topk,
+        sorted_indices=indices,
+        ax=ax2,
+        label="Target",
+        color=COLOR_PALETTE[0],
+    )
+    ax2.legend()
+    # Use the same y-axis limits as the topk=1 plot
+    ax2.set_ylim(ax1.get_ylim())
+    fig_dict["loss_by_feature_batch_topk"] = fig
 
     ############################################################################################
     # Virtual weights
@@ -340,9 +486,12 @@ def resid_mlp_plot_results_fn(
     # Subnetwork parameters
     ############################################################################################
 
-    fig_dict["subnetwork_params"] = plot_multiple_subnetwork_params(
-        model=model, out_dir=out_dir, step=step
-    )
+    # This can be too big to plot
+    n_matrix_params = target_model.config.d_mlp * target_model.config.d_embed
+    if n_matrix_params < 1000:
+        fig_dict["subnetwork_params"] = plot_multiple_subnetwork_params(
+            model=model, out_dir=out_dir, step=step
+        )
 
     # Save plots to files
     if out_dir:
@@ -401,6 +550,9 @@ def main(
         n_layers=target_model.config.n_layers,
         d_resid=target_model.config.d_embed,
         d_mlp=target_model.config.d_mlp,
+        k=config.task_config.k,
+        m=config.m,
+        init_scale=config.task_config.init_scale,
     )
     if config.wandb_project:
         assert wandb.run, "wandb.run must be initialized before training"
@@ -426,7 +578,18 @@ def main(
     # Create the SPD model
     if config.spd_type == "rank_penalty":
         model_config = ResidualMLPSPDRankPenaltyConfig(
-            **target_model.config.model_dump(mode="json"), k=config.task_config.k, m=config.m
+            n_instances=target_model.config.n_instances,
+            n_features=target_model.config.n_features,
+            d_embed=target_model.config.d_embed,
+            d_mlp=target_model.config.d_mlp,
+            n_layers=target_model.config.n_layers,
+            act_fn_name=target_model.config.act_fn_name,
+            apply_output_act_fn=target_model.config.apply_output_act_fn,
+            in_bias=target_model.config.in_bias,
+            out_bias=target_model.config.out_bias,
+            init_scale=config.task_config.init_scale,
+            k=config.task_config.k,
+            m=config.m,
         )
         model = ResidualMLPSPDRankPenaltyModel(config=model_config).to(device)
     else:

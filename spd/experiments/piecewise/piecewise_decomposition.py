@@ -32,11 +32,10 @@ from spd.plotting import plot_subnetwork_attributions_statistics, plot_subnetwor
 from spd.run_spd import (
     Config,
     PiecewiseConfig,
-    calc_recon_mse,
     get_common_run_name_suffix,
     optimize,
 )
-from spd.utils import BatchedDataLoader, load_config, set_seed
+from spd.utils import BatchedDataLoader, calc_recon_mse, load_config, set_seed
 from spd.wandb_utils import init_wandb
 
 wandb.require("core")
