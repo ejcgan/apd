@@ -1,4 +1,5 @@
 # spd - Sparse Parameter Decomposition
+Note: now called Attribution-based Parameter Decomposition (APD), but this repository uses SPD everywhere.
 
 ## Installation
 
