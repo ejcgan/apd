@@ -639,6 +639,7 @@ class SparseFeatureDataset(
         device: str,
         data_generation_type: DataGenerationType = "at_least_zero_active",
         value_range: tuple[float, float] = (0.0, 1.0),
+        synced_inputs: list[list[int]] | None = None,
     ):
         self.n_instances = n_instances
         self.n_features = n_features
@@ -646,9 +647,31 @@ class SparseFeatureDataset(
         self.device = device
         self.data_generation_type = data_generation_type
         self.value_range = value_range
+        self.synced_inputs = synced_inputs
 
     def __len__(self) -> int:
         return 2**31
+
+    def sync_inputs(
+        self, batch: Float[Tensor, "batch n_instances n_features"]
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        assert self.synced_inputs is not None
+        all_indices = [item for sublist in self.synced_inputs for item in sublist]
+        assert len(all_indices) == len(set(all_indices)), "Synced inputs must be non-overlapping"
+        for indices in self.synced_inputs:
+            mask = torch.zeros_like(batch, dtype=torch.bool)
+            # First, get the samples for which there is a non-zero value for any of the indices
+            non_zero_samples = (batch[..., indices] != 0.0).any(dim=-1)
+            for idx in indices:
+                mask[..., idx] = non_zero_samples
+            # Now generate random values in value_range and apply them to the masked elements
+            max_val, min_val = self.value_range
+            random_values = torch.rand(
+                batch.shape[0], self.n_instances, self.n_features, device=self.device
+            )
+            random_values = random_values * (max_val - min_val) + min_val
+            batch = torch.where(mask, random_values, batch)
+        return batch
 
     def generate_batch(
         self, batch_size: int
@@ -670,8 +693,11 @@ class SparseFeatureDataset(
             batch = self._generate_n_feature_active_batch(batch_size, n=n)
         elif self.data_generation_type == "at_least_zero_active":
             batch = self._generate_multi_feature_batch(batch_size)
+            if self.synced_inputs is not None:
+                batch = self.sync_inputs(batch)
         else:
             raise ValueError(f"Invalid generation type: {self.data_generation_type}")
+
         return batch, batch.clone().detach()
 
     def _generate_n_feature_active_batch(

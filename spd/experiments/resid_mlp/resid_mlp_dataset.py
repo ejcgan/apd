@@ -24,6 +24,7 @@ class ResidualMLPDataset(SparseFeatureDataset):
         data_generation_type: Literal[
             "exactly_one_active", "exactly_two_active", "at_least_zero_active"
         ] = "at_least_zero_active",
+        synced_inputs: list[list[int]] | None = None,
     ):
         """Sparse feature dataset for use in training a resid_mlp model or running SPD on it.
 
@@ -46,6 +47,7 @@ class ResidualMLPDataset(SparseFeatureDataset):
             label_coeffs: The label coefficients to use. If None, the coefficients are generated
                 randomly (unless calc_labels is False).
             data_generation_type: The number of active features in each sample.
+            synced_inputs: The indices of the inputs to sync.
         """
         super().__init__(
             n_instances=n_instances,
@@ -54,6 +56,7 @@ class ResidualMLPDataset(SparseFeatureDataset):
             device=device,
             data_generation_type=data_generation_type,
             value_range=(-1.0, 1.0),
+            synced_inputs=synced_inputs,
         )
 
         self.label_fn = None

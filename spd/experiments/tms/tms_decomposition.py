@@ -470,6 +470,7 @@ def main(
         for i in range(len(model.hidden_layers)):
             param_map[f"hidden_{i}"] = f"hidden_{i}"
 
+    synced_inputs = target_model_train_config_dict.get("synced_inputs", None)
     dataset = SparseFeatureDataset(
         n_instances=target_model.config.n_instances,
         n_features=target_model.config.n_features,
@@ -477,6 +478,7 @@ def main(
         device=device,
         data_generation_type=task_config.data_generation_type,
         value_range=(0.0, 1.0),
+        synced_inputs=synced_inputs,
     )
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size)
 

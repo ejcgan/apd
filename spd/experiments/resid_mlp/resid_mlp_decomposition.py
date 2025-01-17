@@ -621,6 +621,7 @@ def main(
         param_map[f"layers.{i}.linear1"] = f"layers.{i}.linear1"
         param_map[f"layers.{i}.linear2"] = f"layers.{i}.linear2"
 
+    synced_inputs = target_model_train_config_dict.get("synced_inputs", None)
     dataset = ResidualMLPDataset(
         n_instances=model.config.n_instances,
         n_features=model.config.n_features,
@@ -632,6 +633,7 @@ def main(
         label_fn_seed=None,
         label_coeffs=None,
         data_generation_type=config.task_config.data_generation_type,
+        synced_inputs=synced_inputs,
     )
 
     dataloader = DatasetGeneratedDataLoader(dataset, batch_size=config.batch_size, shuffle=False)

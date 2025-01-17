@@ -352,3 +352,46 @@ def test_compute_feature_importances(
         batch_size=2, n_instances=2, n_features=3, importance_val=importance_val, device="cpu"
     )
     torch.testing.assert_close(importances, expected_tensor)
+
+
+def test_sync_inputs_non_overlapping():
+    dataset = SparseFeatureDataset(
+        n_instances=1,
+        n_features=6,
+        feature_probability=0.5,
+        device="cpu",
+        data_generation_type="at_least_zero_active",
+        value_range=(0.0, 1.0),
+        synced_inputs=[[0, 1], [2, 3, 4]],
+    )
+
+    batch, _ = dataset.generate_batch(5)
+    # Ignore the n_instances dimension
+    batch = batch[:, 0, :]
+    for sample in batch:
+        # If there is a value in 0 or 1, there should be a value in 1 or
+        if sample[0] != 0.0:
+            assert sample[1] != 0.0
+        if sample[1] != 0.0:
+            assert sample[0] != 0.0
+        if sample[2] != 0.0:
+            assert sample[3] != 0.0 and sample[4] != 0.0
+        if sample[3] != 0.0:
+            assert sample[2] != 0.0 and sample[4] != 0.0
+        if sample[4] != 0.0:
+            assert sample[2] != 0.0 and sample[3] != 0.0
+
+
+def test_sync_inputs_overlapping():
+    dataset = SparseFeatureDataset(
+        n_instances=1,
+        n_features=6,
+        feature_probability=0.5,
+        device="cpu",
+        data_generation_type="at_least_zero_active",
+        value_range=(0.0, 1.0),
+        synced_inputs=[[0, 1], [1, 2, 3]],
+    )
+    # Should raise an assertion error with the word "overlapping"
+    with pytest.raises(AssertionError, match="overlapping"):
+        dataset.generate_batch(5)

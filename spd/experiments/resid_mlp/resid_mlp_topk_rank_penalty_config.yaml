@@ -31,6 +31,7 @@ task_config:
   feature_probability: 0.01
   data_generation_type: "at_least_zero_active"
   pretrained_model_path: wandb:spd-train-resid-mlp/runs/zas5yjdl # 1 layer
+  # pretrained_model_path: wandb:spd-train-resid-mlp/runs/zszf82yg # 1 layer synced inputs
 
 
 ########## 2 layer ##########
