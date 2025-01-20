@@ -540,6 +540,10 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
+
+        # Map topk_act_recon_coeff to act_recon_coeff for backwards compatibility
+        final_config_dict["act_recon_coeff"] = final_config_dict["topk_act_recon_coeff"]
+        del final_config_dict["topk_act_recon_coeff"]
         spd_config = Config(**final_config_dict)
 
         with open(paths.tms_train_config) as f:
