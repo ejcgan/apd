@@ -328,7 +328,6 @@ results = collect_sparse_dataset_mse_losses(
     batch_topk=config.batch_topk,
     distil_from_target=config.distil_from_target,
     gen_types=gen_types,
-    buffer_ratio=2,
 )
 
 # Convert all results to floats

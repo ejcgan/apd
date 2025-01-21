@@ -10,7 +10,6 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDRankPenaltyModel
-from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
 from spd.experiments.tms.models import TMSModel, TMSSPDRankPenaltyModel
 from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
 from spd.run_spd import Config
@@ -167,8 +166,6 @@ def collect_sparse_dataset_mse_losses(
     batch_topk: bool,
     distil_from_target: bool,
     gen_types: list[DataGenerationType],
-    buffer_ratio: float = 1,
-    exact_topk: bool = False,
 ) -> dict[str, dict[str, Float[Tensor, ""] | Float[Tensor, " n_instances"]]]:
     """Collect the MSE losses for specific number of active features, as well as for
     'at_least_zero_active'.
@@ -186,42 +183,56 @@ def collect_sparse_dataset_mse_losses(
     spd_model.to(device)
     # Get the entries for the main loss table in the paper
     results = {gen_type: {} for gen_type in gen_types}
+    word_to_num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
     for gen_type in gen_types:
         dataset.data_generation_type = gen_type
-        if gen_type == "at_least_zero_active":
-            # In the future this will be merged into generate_batch
-            batch = dataset._generate_multi_feature_batch_no_zero_samples(batch_size, buffer_ratio)
-            if isinstance(dataset, ResidualMLPDataset) and dataset.label_fn is not None:
-                labels = dataset.label_fn(batch)
-            else:
-                labels = batch.clone().detach()
-        else:
-            batch, labels = dataset.generate_batch(batch_size)
+        batch, labels = dataset.generate_batch(batch_size)
+
         batch = batch.to(device)
         labels = labels.to(device)
 
         target_model_output, _, _ = target_model(batch)
 
-        if exact_topk:
-            assert spd_model.n_instances == 1, "exact_topk only works if n_instances = 1"
-            # Get the exact number of active features over the batch
-            topk = ((batch != 0).sum() / batch.shape[0]).item()
+        if gen_type == "at_least_zero_active":
+            run_batch_topk = batch_topk
+            run_topk = topk
+        else:
+            run_batch_topk = False
+            assert gen_type.startswith("exactly_")
+            n_active = word_to_num[gen_type.split("_")[1]]
+            run_topk = n_active
 
         spd_outputs = run_spd_forward_pass(
             spd_model=spd_model,
             target_model=target_model,
             input_array=batch,
             attribution_type=attribution_type,
-            batch_topk=batch_topk,
-            topk=topk,
+            batch_topk=run_batch_topk,
+            topk=run_topk,
             distil_from_target=distil_from_target,
         )
+        # Combine the batch and n_instances dimension for batch, labels, target_model_output,
+        # spd_outputs.spd_topk_model_output
+        ein_str = "batch n_instances n_features -> (batch n_instances) n_features"
+        batch = einops.rearrange(batch, ein_str)
+        labels = einops.rearrange(labels, ein_str)
+        target_model_output = einops.rearrange(target_model_output, ein_str)
+        spd_topk_model_output = einops.rearrange(spd_outputs.spd_topk_model_output, ein_str)
+
+        if gen_type == "at_least_zero_active":
+            # Remove all entries where there are no active features
+            mask = (batch != 0).any(dim=-1)
+            batch = batch[mask]
+            labels = labels[mask]
+            target_model_output = target_model_output[mask]
+            spd_topk_model_output = spd_topk_model_output[mask]
+
         topk_recon_loss_labels = calc_recon_mse(
-            spd_outputs.spd_topk_model_output, labels, has_instance_dim=True
+            spd_topk_model_output, labels, has_instance_dim=False
         )
-        recon_loss = calc_recon_mse(target_model_output, labels, has_instance_dim=True)
-        baseline_batch = calc_recon_mse(batch, labels, has_instance_dim=True)
+        recon_loss = calc_recon_mse(target_model_output, labels, has_instance_dim=False)
+        baseline_batch = calc_recon_mse(batch, labels, has_instance_dim=False)
 
         # Monosemantic baseline
         monosemantic_out = batch.clone()
@@ -233,7 +244,7 @@ def collect_sparse_dataset_mse_losses(
             d_mlp = target_model.config.n_hidden  # type: ignore
             # The first d_mlp features are the true labels (i.e. the batch) and the rest are 0
             monosemantic_out[..., d_mlp:] = 0
-        baseline_monosemantic = calc_recon_mse(monosemantic_out, labels, has_instance_dim=True)
+        baseline_monosemantic = calc_recon_mse(monosemantic_out, labels, has_instance_dim=False)
 
         results[gen_type]["target"] = recon_loss
         results[gen_type]["spd"] = topk_recon_loss_labels
