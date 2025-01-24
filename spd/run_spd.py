@@ -111,7 +111,6 @@ class Config(BaseModel):
     slow_images: bool = False
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
-    orthog_coeff: NonNegativeFloat | None = None
     out_recon_coeff: NonNegativeFloat | None = None
     act_recon_coeff: NonNegativeFloat | None = None
     param_match_coeff: NonNegativeFloat | None = 1.0
@@ -242,8 +241,6 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"p{config.pnorm:.2e}_"
     if config.lp_sparsity_coeff is not None:
         run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
-    if config.orthog_coeff is not None:
-        run_suffix += f"orth{config.orthog_coeff:.2e}_"
     if config.topk is not None:
         run_suffix += f"topk{config.topk:.2e}_"
     if config.topk_recon_coeff is not None:
@@ -463,51 +460,6 @@ def calc_param_match_loss(
             dim=mean_dims
         )
     return param_match_loss / n_params
-
-
-def calc_orthog_loss_full_rank(
-    subnet_param_vals: list[
-        Float[Tensor, "k d_out"]
-        | Float[Tensor, "k d_in d_out"]
-        | Float[Tensor, "n_instances k d_out"]
-        | Float[Tensor, "n_instances k d_in d_out"]
-    ],
-    has_instance_dim: bool = False,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the sum of the absolute values of inner products of different subnets.
-
-    NOTE: We could and maybe should try L2 instead of absolute. Note that it is important that we
-    use the dot product rather than the cosine sim normalized by layer (though we may normalize
-    at the end).
-
-    Args:
-        subnetwork_params: The parameters of the SPD Model.
-        has_instance_dim: Whether the model has an n_instances dimension.
-    Returns:
-        The orthogonality loss of shape [n_instances] if the model has an n_instances dimension,
-        otherwise of shape [].
-    """
-    first_param = subnet_param_vals[0]
-    if has_instance_dim:
-        # params: [n_instances, k, d_out] or [n_instances, k, d_in, d_out]
-        assert all(param.ndim in (3, 4) for param in subnet_param_vals), "Invalid number of dims"
-        k = first_param.shape[1]
-        dot_prods = torch.zeros((first_param.shape[0], k, k), device=first_param.device)
-        ein_str = "n_instances k1 ... d_out, n_instances k2 ... d_out -> n_instances k1 k2"
-    else:
-        # params: [k, d_out] or [k, d_in, d_out]
-        assert all(param.ndim in (2, 3) for param in subnet_param_vals), "Invalid number of dims"
-        k = first_param.shape[0]
-        dot_prods = torch.zeros((k, k), device=first_param.device)
-        ein_str = "k1 ... d_out, k2 ... d_out -> k1 k2"
-
-    for subnet in subnet_param_vals:
-        dot_prods += einops.einsum(subnet, subnet, ein_str)
-
-    # Multiply the k l diagonal by 0
-    dot_prods.diagonal(dim1=-2, dim2=-1).zero_()
-    orthog_loss = (dot_prods.abs()).mean(dim=(-2, -1))
-    return orthog_loss
 
 
 def calc_lp_sparsity_loss(
@@ -750,17 +702,6 @@ def optimize(
         # Calculate losses
         out_recon_loss = calc_recon_mse(out, target_out, has_instance_dim)
 
-        orthog_loss = None
-        if config.orthog_coeff is not None:
-            subnet_param_vals = list(model.all_subnetwork_params().values())
-            if config.distil_from_target:
-                # Remove the final subnetwork index from all params
-                subnet_param_vals = [
-                    param[:, :-1] if has_instance_dim else param[:-1] for param in subnet_param_vals
-                ]
-
-            orthog_loss = calc_orthog_loss_full_rank(subnet_param_vals=subnet_param_vals)
-
         param_match_loss = None
         if config.param_match_coeff is not None:
             assert param_map is not None, "Need a param_map for param_match loss"
@@ -915,9 +856,6 @@ def optimize(
 
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
-        if orthog_loss is not None:
-            assert config.orthog_coeff is not None
-            loss = loss + config.orthog_coeff * orthog_loss.mean()
         if param_match_loss is not None:
             assert config.param_match_coeff is not None
             loss = loss + config.param_match_coeff * param_match_loss.mean()
@@ -959,8 +897,6 @@ def optimize(
                 tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
             if param_match_loss is not None:
                 tqdm.write(f"Param match loss:{nl}{param_match_loss}")
-            if orthog_loss is not None:
-                tqdm.write(f"Orthog loss:{nl}{orthog_loss}")
             if topk_param_attrib_loss is not None:
                 tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
             if act_recon_loss is not None:
@@ -985,9 +921,6 @@ def optimize(
                         else None,
                         "topk_l2_loss": topk_l2_loss.mean().item()
                         if topk_l2_loss is not None
-                        else None,
-                        "orthog_loss": orthog_loss.mean().item()
-                        if orthog_loss is not None
                         else None,
                         "topk_param_attrib_loss": topk_param_attrib_loss.mean().item()
                         if topk_param_attrib_loss is not None

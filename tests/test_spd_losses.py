@@ -1,12 +1,6 @@
-import pytest
 import torch
-from torch import Tensor
 
-from spd.run_spd import (
-    calc_act_recon,
-    calc_orthog_loss_full_rank,
-    calc_param_match_loss,
-)
+from spd.run_spd import calc_act_recon, calc_param_match_loss
 
 
 class TestCalcParamMatchLoss:
@@ -81,20 +75,6 @@ class TestCalcParamMatchLoss:
         # diff^2: [[[1, 1], [1, 1]], [[4, 4], [4, 4]]]
         # Sum together and divide by n_params: [4, 16] / 12 = [1/3, 4/3]
         expected = torch.tensor([1.0 / 3.0, 4.0 / 3.0])
-        assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
-
-
-class TestCalcOrthogLoss:
-    @pytest.mark.parametrize(
-        "subnet, expected",
-        [
-            (torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]]), torch.tensor(0.0)),  # Orthogonal
-            (torch.tensor([[[1.0, 0.0]], [[-4.0, 1.0]]]), torch.tensor(2.0)),  # Not orthogonal
-        ],
-    )
-    def test_calc_orthog_loss_full_rank(self, subnet: Tensor, expected: Tensor) -> None:
-        result = calc_orthog_loss_full_rank(subnet_param_vals=[subnet])
-        # Note that we take the dot product, then abs, then mean over the subnetwork indices
         assert torch.allclose(result, expected), f"Expected {expected}, but got {result}"
 
 
