@@ -119,7 +119,6 @@ class Config(BaseModel):
     schatten_coeff: NonNegativeFloat | None = None
     schatten_pnorm: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
-    topk_param_attrib_coeff: NonNegativeFloat | None = None
     distil_from_target: bool = False
     pnorm: PositiveFloat | None = None
     pnorm_end: PositiveFloat | None = None
@@ -212,11 +211,6 @@ class Config(BaseModel):
                 self.schatten_pnorm is not None
             ), "schatten_pnorm must be set if schatten_coeff is set"
 
-        if self.topk_param_attrib_coeff is not None and not isinstance(
-            self.task_config, PiecewiseConfig
-        ):
-            raise ValueError("topk_param_attrib_coeff is currenlty only suppported for piecewise")
-
         if self.distil_from_target and not isinstance(self.task_config, PiecewiseConfig):
             raise ValueError("distil_from_target is currently only supported for piecewise")
 
@@ -253,8 +247,6 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"schatten{config.schatten_coeff:.2e}_"
     if config.act_recon_coeff is not None:
         run_suffix += f"actrecon_{config.act_recon_coeff:.2e}_"
-    if config.topk_param_attrib_coeff is not None:
-        run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
     run_suffix += f"sd{config.seed}_"
     run_suffix += f"attr-{config.attribution_type[:3]}_"
     run_suffix += f"lr{config.lr:.2e}_"
@@ -487,97 +479,6 @@ def calc_lp_sparsity_loss(
     return lp_sparsity_loss_per_k
 
 
-def calc_topk_param_attrib_loss(
-    target_out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    target_params: dict[str, Tensor],
-    subnetwork_params: dict[str, Tensor],
-    topk_mask: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
-    target_pre_acts: dict[str, Tensor],
-    target_post_acts: dict[str, Tensor],
-    has_instance_dim: bool,
-    n_params: int,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Attribution patch loss of original params to sum of active subnetwork params.
-
-    This function is (an efficient implementation of) dout/dW_target * (W_spd - W_target) where
-    W_spd is the sum of currently-active (topk) subnetworks. The actual implementation is based on
-    activations to simplify (and maybe speed up) calculations. This is because activations
-    (i) have a batch dimension which makes autograd simpler and (ii) only have one not two embedding
-    dimensions dimensions.
-
-    Formula:
-        d(f(x, W)) / d(a(x, W)) * (W - spd_W) * p(x, W)
-    where
-    - a(x, W) are the activations after the parameter matrix is applied in the target model,
-    - p(x, W) are the activations before the parameter matrix is applied in the SPD model (
-        this is set to 1 if W is a bias parameter)
-    - f(x, W) is the output of the target model.
-
-    Args:
-        target_out: The output of the target model for the batch.
-        target_params: The parameters of the target model which are decomposable.
-        subnetwork_params: The parameters of the SPD model.
-        topk_mask: The topk mask for the SPD model on the batch.
-        target_pre_acts: The activations before the parameter matrix is applied in the target
-            model.
-        target_post_acts: The activations after the parameter matrix is applied in the target
-            model.
-        has_instance_dim: Whether the model has an n_instances dimension.
-        n_params: The number of decomposable parameters in the model.
-
-    Returns:
-        The topk parameter attribution loss. Will have an n_instances dimension if the model has an
-            n_instances dimension.
-    """
-    assert target_params.keys() == target_pre_acts.keys() == target_post_acts.keys()
-    # Every parameter that we are decomposing must have an entry in target_params
-    assert set(target_params.keys()) <= set(subnetwork_params.keys())
-
-    device = next(iter(subnetwork_params.values())).device
-    loss = torch.tensor(0.0, device=device)
-    for out_idx in range(target_out.shape[-1]):
-        # Get the derivative of the output w.r.t. the target_post_acts
-        dout_d_post_acts = torch.autograd.grad(
-            target_out[..., out_idx].sum(), list(target_post_acts.values()), retain_graph=True
-        )
-        loss_out_idx = torch.tensor(0.0, device=device)
-        for i, param_name in enumerate(subnetwork_params):
-            # Sum over the subnetwork dim
-            ein_str = "k i ..., b i k -> b i ..." if has_instance_dim else "k ..., b k -> b ..."
-            topk_subnet_sum = einops.einsum(
-                subnetwork_params[param_name],
-                topk_mask.to(dtype=subnetwork_params[param_name].dtype),
-                ein_str,
-            )
-            param_diff = target_params[param_name] - topk_subnet_sum
-
-            if "bias" in param_name:
-                # Derivative @ param_diff
-                ein_str = (
-                    "b i d_out, b i d_out -> b i" if has_instance_dim else "b d_out, b d_out -> b"
-                )
-                param_loss = einops.einsum(dout_d_post_acts[i].detach(), param_diff, ein_str)
-            else:
-                # Derivative @ param_diff @ pre_acts
-                ein_str = (
-                    "b i d_out, b i d_in d_out, b i d_in -> b i"
-                    if has_instance_dim
-                    else "b d_out, b d_in d_out, b d_in -> b"
-                )
-                param_loss = einops.einsum(
-                    dout_d_post_acts[i].detach(),
-                    param_diff,
-                    target_pre_acts[param_name],
-                    ein_str,
-                )
-
-            loss_out_idx = loss_out_idx + param_loss
-
-        loss = loss + loss_out_idx**2
-    loss = (loss / target_out.shape[-1] + 1e-16).mean(dim=0)  # Mean over the batch dim
-    return loss / n_params
-
-
 def calc_act_recon(
     target_post_acts: dict[
         str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]
@@ -737,9 +638,8 @@ def optimize(
             schatten_loss,
             topk_recon_loss,
             topk_mask,
-            topk_param_attrib_loss,
             layer_acts_topk,
-        ) = None, None, None, None, None, None, None
+        ) = None, None, None, None, None, None
         if config.topk is not None:
             # We always assume the final subnetwork is the one we want to distil
             topk_attrs: Float[Tensor, "batch ... k"] = (
@@ -795,19 +695,6 @@ def optimize(
                 assert out_topk is not None
                 topk_recon_loss = calc_recon_mse(out_topk, target_out, has_instance_dim)
 
-            if config.topk_param_attrib_coeff is not None:
-                assert pre_acts is not None and post_acts is not None
-                topk_param_attrib_loss = calc_topk_param_attrib_loss(
-                    target_out=target_out,
-                    target_params=pretrained_model.all_decomposable_params(),
-                    subnetwork_params=model.all_subnetwork_params(),
-                    topk_mask=topk_mask,
-                    target_pre_acts=pre_acts,
-                    target_post_acts=post_acts,
-                    has_instance_dim=has_instance_dim,
-                    n_params=n_params,
-                )
-
         act_recon_loss = None
         if config.act_recon_coeff is not None:
             if isinstance(config.task_config, ResidualMLPTaskConfig):
@@ -847,12 +734,10 @@ def optimize(
                 n_params=n_params,
             )
 
-        # Sum over the k dimension (-1) and mean over the batch dimension (0)
-        lp_sparsity_loss = (
-            lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
-            if lp_sparsity_loss_per_k is not None
-            else None
-        )
+        lp_sparsity_loss = None
+        if lp_sparsity_loss_per_k is not None:
+            # Sum over the k dimension (-1) and mean over the batch dimension (0)
+            lp_sparsity_loss = lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
 
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
@@ -870,9 +755,6 @@ def optimize(
         if topk_l2_loss is not None:
             assert config.topk_l2_coeff is not None
             loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()
-        if topk_param_attrib_loss is not None:
-            assert config.topk_param_attrib_coeff is not None
-            loss = loss + config.topk_param_attrib_coeff * topk_param_attrib_loss.mean()
         if act_recon_loss is not None:
             assert config.act_recon_coeff is not None
             loss = loss + config.act_recon_coeff * act_recon_loss.mean()
@@ -897,8 +779,6 @@ def optimize(
                 tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
             if param_match_loss is not None:
                 tqdm.write(f"Param match loss:{nl}{param_match_loss}")
-            if topk_param_attrib_loss is not None:
-                tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
             if act_recon_loss is not None:
                 tqdm.write(f"Act recon loss:{nl}{act_recon_loss}")
             if schatten_loss is not None:
@@ -921,9 +801,6 @@ def optimize(
                         else None,
                         "topk_l2_loss": topk_l2_loss.mean().item()
                         if topk_l2_loss is not None
-                        else None,
-                        "topk_param_attrib_loss": topk_param_attrib_loss.mean().item()
-                        if topk_param_attrib_loss is not None
                         else None,
                         "act_recon_loss": act_recon_loss.mean().item()
                         if act_recon_loss is not None
