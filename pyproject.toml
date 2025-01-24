@@ -10,7 +10,6 @@ dependencies = [
     "pydantic",
     "wandb",
     "fire",
-    "graphviz",
     "tqdm",
     "pytest",
     "ipykernel",
