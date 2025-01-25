@@ -854,10 +854,8 @@ def calc_recon_mse(
 
 def handle_deprecated_config_keys(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Remove deprecated config keys and change names of any keys that have been renamed."""
-    for key in config_dict:
-        if key in DEPRECATED_CONFIG_KEYS:
-            del config_dict[key]
-        elif key in RENAMED_CONFIG_KEYS:
-            config_dict[RENAMED_CONFIG_KEYS[key]] = config_dict[key]
-            del config_dict[key]
-    return config_dict
+    return {
+        RENAMED_CONFIG_KEYS.get(key, key): value
+        for key, value in config_dict.items()
+        if key not in DEPRECATED_CONFIG_KEYS
+    }
