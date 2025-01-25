@@ -6,7 +6,6 @@ from typing import Literal, Self
 
 import einops
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
@@ -26,7 +25,13 @@ from tqdm import tqdm
 from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
 from spd.types import ModelPath, Probability
-from spd.utils import calc_recon_mse, calc_topk_mask, calculate_attributions
+from spd.utils import (
+    calc_recon_mse,
+    calc_topk_mask,
+    calculate_attributions,
+    get_lr_schedule_fn,
+    get_lr_with_warmup,
+)
 
 
 class TMSTaskConfig(BaseModel):
@@ -85,6 +90,7 @@ class Config(BaseModel):
     steps: PositiveInt
     print_freq: PositiveInt
     image_freq: PositiveInt | None = None
+    image_on_first_step: bool = True
     slow_images: bool = False
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
@@ -221,39 +227,6 @@ def get_common_run_name_suffix(config: Config) -> str:
     run_suffix += f"lr{config.lr:.2e}_"
     run_suffix += f"bs{config.batch_size}_"
     return run_suffix
-
-
-def get_lr_schedule_fn(
-    lr_schedule: Literal["linear", "constant", "cosine", "exponential"],
-    lr_exponential_halflife: PositiveFloat | None = None,
-) -> Callable[[int, int], float]:
-    if lr_schedule == "linear":
-        return lambda step, steps: 1 - (step / steps)
-    elif lr_schedule == "constant":
-        return lambda *_: 1.0
-    elif lr_schedule == "cosine":
-        return lambda step, steps: 1.0 if steps == 1 else np.cos(0.5 * np.pi * step / (steps - 1))
-    elif lr_schedule == "exponential":
-        assert lr_exponential_halflife is not None  # Should have been caught by model validator
-        halflife = lr_exponential_halflife
-        gamma = 0.5 ** (1 / halflife)
-        logger.info(f"Using exponential LR schedule with halflife {halflife} steps (gamma {gamma})")
-        return lambda step, steps: gamma**step
-    else:
-        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
-
-
-def get_lr_with_warmup(
-    step: int,
-    steps: int,
-    lr: float,
-    lr_schedule_fn: Callable[[int, int], float],
-    lr_warmup_pct: float,
-) -> float:
-    warmup_steps = int(steps * lr_warmup_pct)
-    if step < warmup_steps:
-        return lr * (step / warmup_steps)
-    return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
 
 
 def calc_topk_l2_full_rank(
@@ -656,83 +629,50 @@ def optimize(
             # Sum over the k dimension (-1) and mean over the batch dimension (0)
             lp_sparsity_loss = lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
 
+        loss_terms = {
+            "param_match_loss": (param_match_loss, config.param_match_coeff),
+            "out_recon_loss": (out_recon_loss, config.out_recon_coeff),
+            "lp_sparsity_loss": (lp_sparsity_loss, config.lp_sparsity_coeff),
+            "topk_recon_loss": (topk_recon_loss, config.topk_recon_coeff),
+            "topk_l2_loss": (topk_l2_loss, config.topk_l2_coeff),
+            "act_recon_loss": (act_recon_loss, config.act_recon_coeff),
+            "schatten_loss": (schatten_loss, config.schatten_coeff),
+        }
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
-        if param_match_loss is not None:
-            assert config.param_match_coeff is not None
-            loss = loss + config.param_match_coeff * param_match_loss.mean()
-        if config.out_recon_coeff is not None:
-            loss = loss + config.out_recon_coeff * out_recon_loss.mean()
-        if lp_sparsity_loss is not None:
-            assert config.lp_sparsity_coeff is not None
-            loss = loss + config.lp_sparsity_coeff * lp_sparsity_loss.mean()
-        if topk_recon_loss is not None:
-            assert config.topk_recon_coeff is not None
-            loss = loss + config.topk_recon_coeff * topk_recon_loss.mean()
-        if topk_l2_loss is not None:
-            assert config.topk_l2_coeff is not None
-            loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()
-        if act_recon_loss is not None:
-            assert config.act_recon_coeff is not None
-            loss = loss + config.act_recon_coeff * act_recon_loss.mean()
-        if schatten_loss is not None:
-            assert config.schatten_coeff is not None
-            loss = loss + config.schatten_coeff * schatten_loss.mean()
+        for loss_name, (loss_term, coeff) in loss_terms.items():
+            if coeff is not None:
+                assert loss_term is not None, f"{loss_name} is None but coeff is not"
+                loss = loss + coeff * loss_term.mean()  # Mean over n_instances dimension
 
         # Logging
         if step % config.print_freq == 0:
-            # If using multiple instances, print the losses as tensors in new lines
-            nl = "\n" if has_instance_dim else " "
             tqdm.write(f"Step {step}")
             tqdm.write(f"Total loss: {loss.item()}")
-            if config.pnorm is not None:
-                tqdm.write(f"Current pnorm:{nl}{config.pnorm}")
-            if lp_sparsity_loss is not None:
-                tqdm.write(f"LP sparsity loss:{nl}{lp_sparsity_loss}")
-            if topk_recon_loss is not None:
-                tqdm.write(f"Topk recon loss:{nl}{topk_recon_loss}")
-            tqdm.write(f"Out recon loss:{nl}{out_recon_loss}")
-            if topk_l2_loss is not None:
-                tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
-            if param_match_loss is not None:
-                tqdm.write(f"Param match loss:{nl}{param_match_loss}")
-            if act_recon_loss is not None:
-                tqdm.write(f"Act recon loss:{nl}{act_recon_loss}")
-            if schatten_loss is not None:
-                tqdm.write(f"Schatten loss:{nl}{schatten_loss}")
-            if config.wandb_project:
-                wandb.log(
-                    {
-                        "pnorm": config.pnorm,
-                        "lr": step_lr,
-                        "total_loss": loss.mean().item(),
-                        "lp_sparsity_loss": lp_sparsity_loss.mean().item()
-                        if lp_sparsity_loss is not None
-                        else None,
-                        "topk_recon_loss": topk_recon_loss.mean().item()
-                        if topk_recon_loss is not None
-                        else None,
-                        "recon_loss": out_recon_loss.mean().item(),
-                        "param_match_loss": param_match_loss.mean().item()
-                        if param_match_loss is not None
-                        else None,
-                        "topk_l2_loss": topk_l2_loss.mean().item()
-                        if topk_l2_loss is not None
-                        else None,
-                        "act_recon_loss": act_recon_loss.mean().item()
-                        if act_recon_loss is not None
-                        else None,
-                        "schatten_loss": schatten_loss.mean().item()
-                        if schatten_loss is not None
-                        else None,
-                    },
-                    step=step,
-                )
+            tqdm.write(f"lr: {step_lr}")
+            for loss_name, (val, _) in loss_terms.items():
+                if val is not None:
+                    val_repr = f"\n{val.tolist()}" if val.numel() > 1 else f" {val.item()}"
+                    tqdm.write(f"{loss_name}:{val_repr}")
 
+            if config.wandb_project:
+                metrics = {
+                    "pnorm": config.pnorm,
+                    "lr": step_lr,
+                    "total_loss": loss.item(),
+                    **{
+                        name: val.mean().item() if val is not None else None
+                        for name, (val, _) in loss_terms.items()
+                    },
+                }
+                wandb.log(metrics, step=step)
+
+        # Make plots
         if (
             plot_results_fn is not None
             and config.image_freq is not None
             and step % config.image_freq == 0
+            and (step > 0 or config.image_on_first_step)
         ):
             fig_dict = plot_results_fn(
                 model=model,
@@ -751,6 +691,7 @@ def optimize(
                     step=step,
                 )
 
+        # Save model
         if (
             (config.save_freq is not None and step % config.save_freq == 0 and step > 0)
             or step == config.steps

@@ -1,5 +1,5 @@
 import random
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
@@ -8,11 +8,12 @@ import numpy as np
 import torch
 import yaml
 from jaxtyping import Float, Int
-from pydantic import BaseModel
+from pydantic import BaseModel, PositiveFloat
 from pydantic.v1.utils import deep_update
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDModel, SPDRankPenaltyModel
 from spd.settings import REPO_ROOT
 
@@ -864,3 +865,36 @@ def handle_deprecated_config_keys(config_dict: dict[str, Any]) -> dict[str, Any]
         for key, value in config_dict.items()
         if key not in DEPRECATED_CONFIG_KEYS
     }
+
+
+def get_lr_schedule_fn(
+    lr_schedule: Literal["linear", "constant", "cosine", "exponential"],
+    lr_exponential_halflife: PositiveFloat | None = None,
+) -> Callable[[int, int], float]:
+    if lr_schedule == "linear":
+        return lambda step, steps: 1 - (step / steps)
+    elif lr_schedule == "constant":
+        return lambda *_: 1.0
+    elif lr_schedule == "cosine":
+        return lambda step, steps: 1.0 if steps == 1 else np.cos(0.5 * np.pi * step / (steps - 1))
+    elif lr_schedule == "exponential":
+        assert lr_exponential_halflife is not None  # Should have been caught by model validator
+        halflife = lr_exponential_halflife
+        gamma = 0.5 ** (1 / halflife)
+        logger.info(f"Using exponential LR schedule with halflife {halflife} steps (gamma {gamma})")
+        return lambda step, steps: gamma**step
+    else:
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
+
+
+def get_lr_with_warmup(
+    step: int,
+    steps: int,
+    lr: float,
+    lr_schedule_fn: Callable[[int, int], float],
+    lr_warmup_pct: float,
+) -> float:
+    warmup_steps = int(steps * lr_warmup_pct)
+    if step < warmup_steps:
+        return lr * (step / warmup_steps)
+    return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)

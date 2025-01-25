@@ -23,6 +23,7 @@ image_freq: 5_000
 save_freq: 10_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
+image_on_first_step: false
 task_config:
   task_name: residual_mlp
   init_scale: 2.0
@@ -56,6 +57,7 @@ task_config:
 # save_freq: 10_000
 # lr_warmup_pct: 0.01
 # lr_schedule: cosine
+# image_on_first_step: false
 # task_config:
 #   task_name: residual_mlp
 #   init_scale: 2.0

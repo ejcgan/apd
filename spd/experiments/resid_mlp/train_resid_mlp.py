@@ -19,8 +19,12 @@ from spd.experiments.resid_mlp.resid_mlp_dataset import (
     ResidualMLPDataset,
 )
 from spd.log import logger
-from spd.run_spd import get_lr_schedule_fn
-from spd.utils import DatasetGeneratedDataLoader, compute_feature_importances, set_seed
+from spd.utils import (
+    DatasetGeneratedDataLoader,
+    compute_feature_importances,
+    get_lr_schedule_fn,
+    set_seed,
+)
 from spd.wandb_utils import init_wandb
 
 wandb.require("core")
@@ -71,7 +75,6 @@ def loss_function(
     out: Float[Tensor, "batch n_instances n_features"] | Float[Tensor, "batch n_instances d_embed"],
     labels: Float[Tensor, "batch n_instances n_features"],
     feature_importances: Float[Tensor, "batch n_instances n_features"],
-    post_acts: dict[str, Float[Tensor, "batch n_instances d_embed"]],
     model: ResidualMLPModel,
     config: ResidMLPTrainConfig,
 ) -> Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_embed"]:
@@ -152,11 +155,11 @@ def train(
         optimizer.zero_grad()
         batch: Float[Tensor, "batch n_instances n_features"] = batch.to(device)
         labels: Float[Tensor, "batch n_instances n_features"] = labels.to(device)
-        out, pre_acts, post_acts = model(batch, return_residual=config.loss_type == "resid")
+        out = model(batch, return_residual=config.loss_type == "resid")[0]
         loss: (
             Float[Tensor, "batch n_instances n_features"]
             | Float[Tensor, "batch n_instances d_embed"]
-        ) = loss_function(out, labels, feature_importances, post_acts, model, config)
+        ) = loss_function(out, labels, feature_importances, model, config)
         loss = loss.mean(dim=(0, 2))
         current_losses = loss.detach()
         loss = loss.mean(dim=0)
@@ -179,8 +182,8 @@ def train(
         batch, labels = next(iter(dataloader))
         batch = batch.to(device)
         labels = labels.to(device)
-        out, _, post_acts = model(batch, return_residual=config.loss_type == "resid")
-        loss = loss_function(out, labels, feature_importances, post_acts, model, config)
+        out = model(batch, return_residual=config.loss_type == "resid")[0]
+        loss = loss_function(out, labels, feature_importances, model, config)
         loss = loss.mean(dim=(0, 2))
         final_losses.append(loss)
     final_losses = torch.stack(final_losses).mean(dim=0).cpu().detach()
