@@ -103,7 +103,6 @@ class Config(BaseModel):
     lr_exponential_halflife: PositiveFloat | None = None
     lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
-    sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
     task_config: PiecewiseConfig | TMSTaskConfig | ResidualMLPTaskConfig = Field(
@@ -242,15 +241,6 @@ def get_lr_schedule_fn(
         return lambda step, steps: gamma**step
     else:
         raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
-
-
-def get_sparsity_coeff_linear_warmup(
-    step: int, steps: int, max_sparsity_coeff: float, sparsity_warmup_pct: float
-) -> float:
-    warmup_steps = int(steps * sparsity_warmup_pct)
-    if step < warmup_steps:
-        return max_sparsity_coeff * (step / warmup_steps)
-    return max_sparsity_coeff
 
 
 def get_lr_with_warmup(
@@ -506,8 +496,6 @@ def optimize(
         # All subnetwork param have an n_instances dimension
         n_params = n_params / model.n_instances
 
-    step_lp_sparsity_coeff = None
-    step_topk_recon_coeff = None
     epoch = 0
     total_samples = 0
     data_iter = iter(dataloader)
@@ -541,21 +529,6 @@ def optimize(
         target_out, pre_acts, post_acts = pretrained_model(batch)
 
         total_samples += batch.shape[0]
-
-        if config.topk_recon_coeff is not None:
-            step_topk_recon_coeff = get_sparsity_coeff_linear_warmup(
-                step=step,
-                steps=config.steps,
-                max_sparsity_coeff=config.topk_recon_coeff,
-                sparsity_warmup_pct=config.sparsity_warmup_pct,
-            )
-        if config.lp_sparsity_coeff is not None:
-            step_lp_sparsity_coeff = get_sparsity_coeff_linear_warmup(
-                step=step,
-                steps=config.steps,
-                max_sparsity_coeff=config.lp_sparsity_coeff,
-                sparsity_warmup_pct=config.sparsity_warmup_pct,
-            )
 
         # Do a forward pass with all subnetworks
         out, layer_acts, inner_acts = model(batch)
@@ -691,11 +664,11 @@ def optimize(
         if config.out_recon_coeff is not None:
             loss = loss + config.out_recon_coeff * out_recon_loss.mean()
         if lp_sparsity_loss is not None:
-            assert step_lp_sparsity_coeff is not None
-            loss = loss + step_lp_sparsity_coeff * lp_sparsity_loss.mean()
+            assert config.lp_sparsity_coeff is not None
+            loss = loss + config.lp_sparsity_coeff * lp_sparsity_loss.mean()
         if topk_recon_loss is not None:
-            assert step_topk_recon_coeff is not None
-            loss = loss + step_topk_recon_coeff * topk_recon_loss.mean()
+            assert config.topk_recon_coeff is not None
+            loss = loss + config.topk_recon_coeff * topk_recon_loss.mean()
         if topk_l2_loss is not None:
             assert config.topk_l2_coeff is not None
             loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()

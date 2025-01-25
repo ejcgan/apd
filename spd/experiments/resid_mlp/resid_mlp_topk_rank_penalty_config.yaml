@@ -8,7 +8,6 @@ seed: 0
 # topk: 1
 topk: 1.28
 m: null
-hardcode_topk_mask_step: null
 pnorm: 1
 batch_topk: true
 param_match_coeff: 1.0
@@ -31,7 +30,6 @@ task_config:
   feature_probability: 0.01
   data_generation_type: "at_least_zero_active"
   pretrained_model_path: wandb:spd-train-resid-mlp/runs/zas5yjdl # 1 layer
-  # pretrained_model_path: wandb:spd-train-resid-mlp/runs/zszf82yg # 1 layer synced inputs
 
 
 ########## 2 layer ##########
@@ -43,7 +41,6 @@ task_config:
 # seed: 0
 # topk: 1.28 # bs=256
 # m: null
-# hardcode_topk_mask_step: null
 # pnorm: 1
 # batch_topk: true
 # param_match_coeff: 1.0
