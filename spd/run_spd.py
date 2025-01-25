@@ -98,7 +98,6 @@ class Config(BaseModel):
     lp_sparsity_coeff: NonNegativeFloat | None = None
     distil_from_target: bool = False
     pnorm: PositiveFloat | None = None
-    pnorm_end: PositiveFloat | None = None
     m: PositiveInt | None = None
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"] = "constant"
     lr_exponential_halflife: PositiveFloat | None = None
@@ -134,11 +133,9 @@ class Config(BaseModel):
         if self.topk_recon_coeff is not None:
             assert self.topk is not None, "topk must be set if topk_recon_coeff is set"
 
-        # If lp_sparsity_coeff is set, pnorm or pnorm_end must be set
+        # If lp_sparsity_coeff is set, pnorm must be set
         if self.lp_sparsity_coeff is not None:
-            assert (
-                self.pnorm is not None or self.pnorm_end is not None
-            ), "pnorm or pnorm_end must be set if lp_sparsity_coeff is set"
+            assert self.pnorm is not None, "pnorm must be set if lp_sparsity_coeff is set"
 
         # Check that topk_l2_coeff and topk_recon_coeff are None if topk is None
         if self.topk is None:
@@ -245,13 +242,6 @@ def get_lr_schedule_fn(
         return lambda step, steps: gamma**step
     else:
         raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
-
-
-def get_step_pnorm(step: int, total_steps: int, pnorm_end: float | None = None) -> float:
-    if pnorm_end is None:
-        return 1.0
-    progress = step / total_steps
-    return 1 + (pnorm_end - 1) * progress
 
 
 def get_sparsity_coeff_linear_warmup(
@@ -538,8 +528,6 @@ def optimize(
         for group in opt.param_groups:
             group["lr"] = step_lr
 
-        step_pnorm = None
-
         opt.zero_grad(set_to_none=True)
         try:
             batch = next(data_iter)[0]  # Ignore labels here, we use the output of pretrained_model
@@ -599,9 +587,9 @@ def optimize(
 
         lp_sparsity_loss_per_k = None
         if config.lp_sparsity_coeff is not None:
-            step_pnorm = config.pnorm or get_step_pnorm(step, config.steps, config.pnorm_end)
+            assert config.pnorm is not None, "pnorm must be set if lp_sparsity_coeff is set"
             lp_sparsity_loss_per_k = calc_lp_sparsity_loss(
-                out=out, attributions=attributions, step_pnorm=step_pnorm
+                out=out, attributions=attributions, step_pnorm=config.pnorm
             )
 
         (
@@ -724,8 +712,8 @@ def optimize(
             nl = "\n" if has_instance_dim else " "
             tqdm.write(f"Step {step}")
             tqdm.write(f"Total loss: {loss.item()}")
-            if step_pnorm is not None:
-                tqdm.write(f"Current pnorm:{nl}{step_pnorm}")
+            if config.pnorm is not None:
+                tqdm.write(f"Current pnorm:{nl}{config.pnorm}")
             if lp_sparsity_loss is not None:
                 tqdm.write(f"LP sparsity loss:{nl}{lp_sparsity_loss}")
             if topk_recon_loss is not None:
@@ -742,7 +730,7 @@ def optimize(
             if config.wandb_project:
                 wandb.log(
                     {
-                        "pnorm": step_pnorm,
+                        "pnorm": config.pnorm,
                         "lr": step_lr,
                         "total_loss": loss.mean().item(),
                         "lp_sparsity_loss": lp_sparsity_loss.mean().item()

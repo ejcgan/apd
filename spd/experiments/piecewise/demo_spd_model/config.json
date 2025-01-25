@@ -19,7 +19,6 @@
     "topk_l2_coeff": 1.0,
     "lp_sparsity_coeff": null,
     "pnorm": null,
-    "pnorm_end": null,
     "lr_schedule": "cosine",
     "lr_exponential_halflife": null,
     "lr_warmup_pct": 0.004,
