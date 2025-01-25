@@ -1433,6 +1433,7 @@ class ScrubbedLosses:
     loss_spd: Float[Tensor, " n_features"]
     loss_zero: Float[Tensor, " n_features"]
     loss_monosemantic: Float[Tensor, " n_features"]
+    n_samples: int
 
 
 def get_scrubbed_losses(
@@ -1458,11 +1459,14 @@ def get_scrubbed_losses(
     ],
     n_batches: int,
 ) -> ScrubbedLosses:
+    assert model.config.n_instances == 1, "Can only handle n_instances = 1 for now"
+
     # Dictionary feature_idx -> subnet_idx
     subnet_indices = get_feature_subnet_map(top1_model_fn, device, model.config, instance_idx=0)
 
     batch_size = config.batch_size
 
+    n_samples = 0
     # Initialize tensors to store all losses
     all_loss_scrubbed = []
     all_loss_antiscrubbed = []
@@ -1472,11 +1476,14 @@ def get_scrubbed_losses(
     all_loss_monosemantic = []
     for _ in tqdm(range(n_batches)):
         # In the future this will be merged into generate_batch
-        batch = dataset._generate_multi_feature_batch_no_zero_samples(batch_size, buffer_ratio=2)
+        batch = dataset._generate_multi_feature_batch(batch_size)
         if isinstance(dataset, ResidualMLPDataset) and dataset.label_fn is not None:
             labels = dataset.label_fn(batch)
         else:
             labels = batch.clone().detach()
+
+        # Count the number of samples in which there is at least one active feature
+        n_samples += int((batch != 0).any(dim=-1).sum().item())
 
         batch = batch.to(device)
         active_features = torch.where(batch != 0)
@@ -1546,6 +1553,7 @@ def get_scrubbed_losses(
         loss_spd=loss_spd,
         loss_zero=loss_zero,
         loss_monosemantic=loss_monosemantic,
+        n_samples=n_samples,
     )
 
 
@@ -1592,7 +1600,7 @@ def plot_scrub_losses(
         label="Monosemantic neuron solution",
     )
     ax.legend()
-    ax.set_ylabel(f"Count (out of {config.batch_size * n_batches} samples)")
+    ax.set_ylabel("Count")
     ax.set_xlabel("MSE loss with target model output")
     ax.set_xscale("log")
 
