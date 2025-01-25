@@ -619,12 +619,15 @@ def optimize(
                 attributions[..., :-1] if config.distil_from_target else attributions
             )
             if config.exact_topk:
-                # Only valid if n_instances = 1
-                assert has_instance_dim, "exact_topk only works if has_instance_dim is True"
-                assert model.n_instances == 1, "exact_topk only works if n_instances = 1"
+                # Currently only valid for batch_topk and n_instances = 1. Would need to change the
+                # topk argument in calc_topk_mask to allow for tensors if relaxing these constraints
+                assert config.batch_topk, "exact_topk only works if batch_topk is True"
+                assert (
+                    hasattr(model, "n_instances") and model.n_instances == 1
+                ), "exact_topk only works if n_instances = 1"
                 # Get the exact number of active features over the batch
                 exact_topk = ((batch != 0).sum() / batch.shape[0]).item()
-                topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=config.batch_topk)
+                topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=True)
             elif (
                 config.hardcode_topk_mask_step is not None
                 and step <= config.hardcode_topk_mask_step
@@ -635,15 +638,6 @@ def optimize(
                     "i.e. corresponds to subnetworks"
                 )
                 topk_mask = (batch != 0).float().to(device=device)
-                # Note, the below won't actually work when there is an n_instance dimension because
-                # there needs to be a different topk for each instance, and torch.topk only takes
-                # in an int. Would need code that calculates the topk mask over a for loop and
-                # concatenates the results.
-                # elif config.exact_topk:
-                #     # Instead of config.topk, use the exact number of active features over the batch
-                #     n_active = (batch != 0).sum()
-                #     topk = n_active / batch.shape[0]
-                #     topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=config.batch_topk)
             else:
                 topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
