@@ -263,8 +263,6 @@ fig.savefig(
     out_dir / f"resid_mlp_scrub_hist_{n_layers}layers_{wandb_id}.png", bbox_inches="tight", dpi=300
 )
 print(f"Saved figure to {out_dir / f'resid_mlp_scrub_hist_{n_layers}layers_{wandb_id}.png'}")
-fig.show()
-
 
 # %% Linearity test: Enable one subnet after the other
 # candlestick plot
