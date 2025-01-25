@@ -1,4 +1,8 @@
 # APD - Attribution-based Parameter Decomposition
+Code used in the paper [Interpretability in Parameter Space: Minimizing
+Mechanistic Description Length with
+Attribution-based Parameter Decomposition](https://publications.apolloresearch.ai/apd)
+
 Note: previously called Sparse Parameter Decomposition (SPD). The package name will remain as `spd`
 for now, but the repository has been renamed to `apd`.
 
