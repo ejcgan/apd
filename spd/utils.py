@@ -33,7 +33,7 @@ COLOR_PALETTE = [
     "#56B4E9",
 ]
 
-DEPRECATED_CONFIG_KEYS = ["topk_param_attrib_coeff", "orthog_coeff"]
+DEPRECATED_CONFIG_KEYS = ["topk_param_attrib_coeff", "orthog_coeff", "hardcode_topk_mask_step"]
 RENAMED_CONFIG_KEYS = {"topk_act_recon_coeff": "act_recon_coeff"}
 
 

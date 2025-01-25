@@ -80,7 +80,6 @@ class Config(BaseModel):
     seed: int = 0
     topk: PositiveFloat | None = None
     batch_topk: bool = True
-    hardcode_topk_mask_step: int | None = None
     exact_topk: bool = False
     batch_size: PositiveInt
     steps: PositiveInt
@@ -628,16 +627,6 @@ def optimize(
                 # Get the exact number of active features over the batch
                 exact_topk = ((batch != 0).sum() / batch.shape[0]).item()
                 topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=True)
-            elif (
-                config.hardcode_topk_mask_step is not None
-                and step <= config.hardcode_topk_mask_step
-            ):
-                batch: Float[Tensor, "batch ... d_in"]
-                assert batch.shape[-1] == topk_attrs.shape[-1], (
-                    "Hardcoded topk mask only works if the input dimension is features,"
-                    "i.e. corresponds to subnetworks"
-                )
-                topk_mask = (batch != 0).float().to(device=device)
             else:
                 topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
