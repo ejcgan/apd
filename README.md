@@ -23,7 +23,6 @@ models and run APD.
 - `spd/experiments/resid_mlp` - Toy model of compressed computation and toy model of distributed
   representations
 - `spd/experiments/piecewise` - Handcoded gated function model
-- `spd/experiments/linear` - Deep linear network without non-linearities (not in paper)
 
 ### Train a target model
 All experiments apart from `spd/experiments/piecewise` require training a target model. Look for the

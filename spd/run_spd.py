@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 from spd.log import logger
 from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
-from spd.types import ModelPath, Probability, RootPath
+from spd.types import ModelPath, Probability
 from spd.utils import calc_recon_mse, calc_topk_mask, calculate_attributions
 
 
@@ -40,16 +40,6 @@ class TMSTaskConfig(BaseModel):
         "at_least_zero_active"
     )
     pretrained_model_path: ModelPath  # e.g. wandb:spd-tms/runs/si0zbfxf
-
-
-class DeepLinearConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["deep_linear"] = "deep_linear"
-    n_features: PositiveInt | None = None
-    n_layers: PositiveInt | None = None
-    n_instances: PositiveInt | None = None
-    k: PositiveInt | None = None
-    pretrained_model_path: RootPath
 
 
 class PiecewiseConfig(BaseModel):
@@ -67,18 +57,6 @@ class PiecewiseConfig(BaseModel):
     dataset_seed: int | None = None
     simple_bias: bool = False
     handcoded_AB: bool = False
-
-
-class ResidualLinearConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["residual_linear"] = "residual_linear"
-    k: PositiveInt
-    feature_probability: Probability
-    init_scale: float = 1.0
-    data_generation_type: Literal["exactly_one_active", "at_least_zero_active"] = (
-        "at_least_zero_active"
-    )
-    pretrained_model_path: RootPath
 
 
 class ResidualMLPTaskConfig(BaseModel):
@@ -130,13 +108,9 @@ class Config(BaseModel):
     sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
-    task_config: (
-        DeepLinearConfig
-        | PiecewiseConfig
-        | TMSTaskConfig
-        | ResidualLinearConfig
-        | ResidualMLPTaskConfig
-    ) = Field(..., discriminator="task_name")
+    task_config: PiecewiseConfig | TMSTaskConfig | ResidualMLPTaskConfig = Field(
+        ..., discriminator="task_name"
+    )
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -326,8 +300,7 @@ def calc_topk_l2_full_rank(
         n_instances: The number of instances in the model.
 
     Returns:
-        The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
-            deep linear toy models).
+        The L2 penalty for the topk subnetworks. One value for each n_instance.
     """
     assert len(subnet_param_vals) > 0, "No subnetwork parameters provided"
 

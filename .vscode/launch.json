@@ -38,42 +38,6 @@
             }
         },
         {
-            "name": "linear_lp",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/linear/linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/linear/linear_lp_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "linear_topk",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/linear/linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/linear/linear_topk_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "linear_topk_full_rank",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/linear/linear_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/linear/linear_topk_full_rank_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
             "name": "piecewise_lp_spd",
             "type": "debugpy",
             "request": "launch",
