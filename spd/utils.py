@@ -33,6 +33,9 @@ COLOR_PALETTE = [
     "#56B4E9",
 ]
 
+DEPRECATED_CONFIG_KEYS = ["topk_param_attrib_coeff", "orthog_coeff"]
+RENAMED_CONFIG_KEYS = {"topk_act_recon_coeff": "act_recon_coeff"}
+
 
 def to_root_path(path: str | Path) -> Path:
     """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
@@ -847,3 +850,14 @@ def calc_recon_mse(
     else:
         raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
     return recon_loss
+
+
+def handle_deprecated_config_keys(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated config keys and change names of any keys that have been renamed."""
+    for key in config_dict:
+        if key in DEPRECATED_CONFIG_KEYS:
+            del config_dict[key]
+        elif key in RENAMED_CONFIG_KEYS:
+            config_dict[RENAMED_CONFIG_KEYS[key]] = config_dict[key]
+            del config_dict[key]
+    return config_dict

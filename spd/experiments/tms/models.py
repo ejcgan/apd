@@ -19,7 +19,7 @@ from spd.models.components import (
 )
 from spd.run_spd import Config, TMSTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath, RootPath
-from spd.utils import remove_grad_parallel_to_subnetwork_vecs
+from spd.utils import handle_deprecated_config_keys, remove_grad_parallel_to_subnetwork_vecs
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
@@ -541,10 +541,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
 
-        if "topk_act_recon_coeff" in final_config_dict:
-            # Map topk_act_recon_coeff to act_recon_coeff for backwards compatibility
-            final_config_dict["act_recon_coeff"] = final_config_dict["topk_act_recon_coeff"]
-            del final_config_dict["topk_act_recon_coeff"]
+        final_config_dict = handle_deprecated_config_keys(final_config_dict)
         spd_config = Config(**final_config_dict)
 
         with open(paths.tms_train_config) as f:

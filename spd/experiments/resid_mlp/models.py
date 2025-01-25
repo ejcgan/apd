@@ -18,7 +18,11 @@ from spd.models.base import Model, SPDRankPenaltyModel
 from spd.models.components import InstancesParamComponentsRankPenalty
 from spd.run_spd import Config, ResidualMLPTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
-from spd.utils import init_param_, remove_grad_parallel_to_subnetwork_vecs
+from spd.utils import (
+    handle_deprecated_config_keys,
+    init_param_,
+    remove_grad_parallel_to_subnetwork_vecs,
+)
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
@@ -581,6 +585,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
+        final_config_dict = handle_deprecated_config_keys(final_config_dict)
         config = Config(**final_config_dict)
 
         with open(paths.resid_mlp_train_config) as f:
