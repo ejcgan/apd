@@ -3,6 +3,8 @@ Code used in the paper [Interpretability in Parameter Space: Minimizing
 Mechanistic Description Length with
 Attribution-based Parameter Decomposition](https://publications.apolloresearch.ai/apd)
 
+Weights and Bias report accompanying the paper: https://api.wandb.ai/links/apollo-interp/h5ekyxm7
+
 Note: previously called Sparse Parameter Decomposition (SPD). The package name will remain as `spd`
 for now, but the repository has been renamed to `apd`.
 
