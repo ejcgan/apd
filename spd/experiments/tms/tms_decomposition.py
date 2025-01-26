@@ -21,8 +21,8 @@ from tqdm import tqdm
 from spd.experiments.tms.models import (
     TMSModel,
     TMSModelConfig,
-    TMSSPDRankPenaltyModel,
-    TMSSPDRankPenaltyModelConfig,
+    TMSSPDModel,
+    TMSSPDModelConfig,
 )
 from spd.log import logger
 from spd.run_spd import Config, TMSTaskConfig, get_common_run_name_suffix, optimize
@@ -187,9 +187,7 @@ def plot_subnetwork_attributions_statistics_multiple_instances(
     return fig
 
 
-def plot_subnetwork_params(
-    model: TMSSPDRankPenaltyModel, step: int, out_dir: Path, **_
-) -> plt.Figure:
+def plot_subnetwork_params(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
     """Plot the subnetwork parameter matrix."""
     all_params = model.all_subnetwork_params()
     if len(all_params) > 1:
@@ -336,7 +334,7 @@ def plot_batch_statistics(
 
 
 def make_plots(
-    model: TMSSPDRankPenaltyModel,
+    model: TMSSPDModel,
     target_model: TMSModel,
     step: int,
     out_dir: Path,
@@ -434,13 +432,13 @@ def main(
         tms_model_train_config_dict=target_model_train_config_dict,
     )
 
-    tms_spd_rank_penalty_model_config = TMSSPDRankPenaltyModelConfig(
+    tms_spd_model_config = TMSSPDModelConfig(
         **target_model.config.model_dump(mode="json"),
         k=task_config.k,
         m=config.m,
         bias_val=task_config.bias_val,
     )
-    model = TMSSPDRankPenaltyModel(config=tms_spd_rank_penalty_model_config)
+    model = TMSSPDModel(config=tms_spd_model_config)
 
     # Manually set the bias for the SPD model from the bias in the pretrained model
     model.b_final.data[:] = target_model.b_final.data.clone()

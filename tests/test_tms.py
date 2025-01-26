@@ -6,8 +6,8 @@ import torch
 from spd.experiments.tms.models import (
     TMSModel,
     TMSModelConfig,
-    TMSSPDRankPenaltyModel,
-    TMSSPDRankPenaltyModelConfig,
+    TMSSPDModel,
+    TMSSPDModelConfig,
 )
 from spd.experiments.tms.train_tms import TMSTrainConfig, get_model_and_dataloader, train
 from spd.run_spd import Config, TMSTaskConfig, optimize
@@ -24,7 +24,7 @@ TMS_TASK_CONFIG = TMSTaskConfig(
 )
 
 
-def tms_spd_rank_penalty_happy_path(config: Config, n_hidden_layers: int = 0):
+def tms_spd_happy_path(config: Config, n_hidden_layers: int = 0):
     set_seed(0)
     device = "cpu"
     assert isinstance(config.task_config, TMSTaskConfig)
@@ -39,12 +39,12 @@ def tms_spd_rank_penalty_happy_path(config: Config, n_hidden_layers: int = 0):
     )
     target_model = TMSModel(config=tms_model_config)
 
-    tms_spd_rank_penalty_model_config = TMSSPDRankPenaltyModelConfig(
+    tms_spd_model_config = TMSSPDModelConfig(
         **tms_model_config.model_dump(mode="json"),
         k=config.task_config.k,
         bias_val=config.task_config.bias_val,
     )
-    model = TMSSPDRankPenaltyModel(config=tms_spd_rank_penalty_model_config)
+    model = TMSSPDModel(config=tms_spd_model_config)
     # Randomly initialize the bias for the pretrained model
     target_model.b_final.data = torch.randn_like(target_model.b_final.data)
     # Manually set the bias for the SPD model from the bias in the pretrained model
@@ -101,7 +101,7 @@ def test_tms_batch_topk_no_schatten():
         schatten_coeff=None,
         task_config=TMS_TASK_CONFIG,
     )
-    tms_spd_rank_penalty_happy_path(config)
+    tms_spd_happy_path(config)
 
 
 @pytest.mark.parametrize("n_hidden_layers", [0, 2])
@@ -119,7 +119,7 @@ def test_tms_batch_topk_and_schatten(n_hidden_layers: int):
         schatten_coeff=1e-1,
         task_config=TMS_TASK_CONFIG,
     )
-    tms_spd_rank_penalty_happy_path(config, n_hidden_layers)
+    tms_spd_happy_path(config, n_hidden_layers)
 
 
 def test_tms_topk_and_l2():
@@ -136,7 +136,7 @@ def test_tms_topk_and_l2():
         schatten_coeff=1e-1,
         task_config=TMS_TASK_CONFIG,
     )
-    tms_spd_rank_penalty_happy_path(config)
+    tms_spd_happy_path(config)
 
 
 def test_tms_lp():
@@ -152,7 +152,7 @@ def test_tms_lp():
         pnorm=0.9,
         task_config=TMS_TASK_CONFIG,
     )
-    tms_spd_rank_penalty_happy_path(config)
+    tms_spd_happy_path(config)
 
 
 @pytest.mark.parametrize("n_hidden_layers", [0, 2])
@@ -170,7 +170,7 @@ def test_tms_topk_and_lp(n_hidden_layers: int):
         lp_sparsity_coeff=1,
         task_config=TMS_TASK_CONFIG,
     )
-    tms_spd_rank_penalty_happy_path(config, n_hidden_layers)
+    tms_spd_happy_path(config, n_hidden_layers)
 
 
 def test_train_tms_happy_path():

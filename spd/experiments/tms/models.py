@@ -12,8 +12,8 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from wandb.apis.public import Run
 
-from spd.models.base import Model, SPDRankPenaltyModel
-from spd.models.components import InstancesParamComponentsRankPenalty
+from spd.models.base import Model, SPDModel
+from spd.models.components import InstancesParamComponents
 from spd.run_spd import Config, TMSTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
 from spd.utils import handle_deprecated_config_keys, remove_grad_parallel_to_subnetwork_vecs
@@ -155,15 +155,15 @@ class TMSModel(Model):
         return tms, tms_train_config_dict
 
 
-class TMSSPDRankPenaltyPaths(BaseModel):
-    """Paths to output files from a TMSSPDRankPenaltyModel training run."""
+class TMSSPDPaths(BaseModel):
+    """Paths to output files from a TMSSPDModel training run."""
 
     final_config: Path
     tms_train_config: Path
     checkpoint: Path
 
 
-class TMSSPDRankPenaltyModelConfig(BaseModel):
+class TMSSPDModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     n_instances: PositiveInt
     n_features: PositiveInt
@@ -175,8 +175,8 @@ class TMSSPDRankPenaltyModelConfig(BaseModel):
     m: PositiveInt | None = None
 
 
-class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
-    def __init__(self, config: TMSSPDRankPenaltyModelConfig):
+class TMSSPDModel(SPDModel):
+    def __init__(self, config: TMSSPDModelConfig):
         super().__init__()
         self.config = config
         self.n_instances = config.n_instances  # Required for backwards compatibility
@@ -208,7 +208,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         if config.n_hidden_layers > 0:
             self.hidden_layers = nn.ModuleList(
                 [
-                    InstancesParamComponentsRankPenalty(
+                    InstancesParamComponents(
                         n_instances=config.n_instances,
                         in_dim=config.n_hidden,
                         out_dim=config.n_hidden,
@@ -234,7 +234,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         params: dict[str, Float[Tensor, "n_instances k d_in d_out"]] = {"W": W, "W_T": W_T}
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 params[f"hidden_{i}"] = einops.einsum(
                     layer.A,
                     layer.B,
@@ -273,7 +273,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         # Hidden layers
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 x, hidden_inner_act_i = layer(x, topk_mask)
                 layer_acts[f"hidden_{i}"] = x
                 inner_acts[f"hidden_{i}"] = hidden_inner_act_i
@@ -300,7 +300,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.B.data[:, subnet_idx, :, :] = 0.0
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 stored_vals[f"hidden_{i}_A"] = layer.A.data[:, subnet_idx, :, :].detach().clone()
                 stored_vals[f"hidden_{i}_B"] = layer.B.data[:, subnet_idx, :, :].detach().clone()
                 layer.A.data[:, subnet_idx, :, :] = 0.0
@@ -319,7 +319,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.B.data[:, subnet_idx, :, :] = stored_vals["B"]
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 layer.A.data[:, subnet_idx, :, :] = stored_vals[f"hidden_{i}_A"]
                 layer.B.data[:, subnet_idx, :, :] = stored_vals[f"hidden_{i}_B"]
 
@@ -341,7 +341,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         }
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 params[f"hidden_{i}"] = (layer.A, layer.B)
         return params
 
@@ -350,7 +350,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         self.A.data /= self.A.data.norm(p=2, dim=-2, keepdim=True)
         if self.hidden_layers is not None:
             for layer in self.hidden_layers:
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 layer.A.data /= layer.A.data.norm(p=2, dim=-2, keepdim=True)
 
     def fix_normalized_adam_gradients(self) -> None:
@@ -359,12 +359,12 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         remove_grad_parallel_to_subnetwork_vecs(self.A.data, self.A.grad)
         if self.hidden_layers is not None:
             for layer in self.hidden_layers:
-                assert isinstance(layer, InstancesParamComponentsRankPenalty)
+                assert isinstance(layer, InstancesParamComponents)
                 assert layer.A.grad is not None
                 remove_grad_parallel_to_subnetwork_vecs(layer.A.data, layer.A.grad)
 
     @staticmethod
-    def _download_wandb_files(wandb_project_run_id: str) -> TMSSPDRankPenaltyPaths:
+    def _download_wandb_files(wandb_project_run_id: str) -> TMSSPDPaths:
         """Download the relevant files from a wandb run."""
         api = wandb.Api()
         run: Run = api.run(wandb_project_run_id)
@@ -376,14 +376,14 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
         final_config_path = download_wandb_file(run, run_dir, "final_config.yaml")
         tms_train_config_path = download_wandb_file(run, run_dir, "tms_train_config.yaml")
         checkpoint_path = download_wandb_file(run, run_dir, checkpoint.name)
-        return TMSSPDRankPenaltyPaths(
+        return TMSSPDPaths(
             final_config=final_config_path,
             tms_train_config=tms_train_config_path,
             checkpoint=checkpoint_path,
         )
 
     @classmethod
-    def from_pretrained(cls, path: ModelPath) -> tuple["TMSSPDRankPenaltyModel", Config]:
+    def from_pretrained(cls, path: ModelPath) -> tuple["TMSSPDModel", Config]:
         """Fetch a pretrained model from wandb or a local path to a checkpoint.
 
         Args:
@@ -398,7 +398,7 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
             wandb_path = path.removeprefix(WANDB_PATH_PREFIX)
             paths = cls._download_wandb_files(wandb_path)
         else:
-            paths = TMSSPDRankPenaltyPaths(
+            paths = TMSSPDPaths(
                 final_config=Path(path).parent / "final_config.yaml",
                 tms_train_config=Path(path).parent / "tms_train_config.yaml",
                 checkpoint=Path(path),
@@ -414,13 +414,13 @@ class TMSSPDRankPenaltyModel(SPDRankPenaltyModel):
             tms_train_config_dict = yaml.safe_load(f)
 
         assert isinstance(spd_config.task_config, TMSTaskConfig)
-        tms_spd_rank_penalty_config = TMSSPDRankPenaltyModelConfig(
+        tms_spd_config = TMSSPDModelConfig(
             **tms_train_config_dict["tms_model_config"],
             k=spd_config.task_config.k,
             m=spd_config.m,
             bias_val=spd_config.task_config.bias_val,
         )
-        model = cls(config=tms_spd_rank_penalty_config)
+        model = cls(config=tms_spd_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
         model.load_state_dict(params)
         return model, spd_config

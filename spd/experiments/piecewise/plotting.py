@@ -13,15 +13,15 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 
 from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDRankPenaltyTransformer,
+    PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.models.components import ParamComponentsRankPenalty
+from spd.models.components import ParamComponents
 from spd.utils import calc_recon_mse, run_spd_forward_pass
 
 
 def get_weight_matrix(
-    general_param_components: ParamComponentsRankPenalty,
+    general_param_components: ParamComponents,
 ) -> Float[Tensor, "k i j"]:
     a: Float[Tensor, "k i m"] = general_param_components.A
     b: Float[Tensor, "k m j"] = general_param_components.B
@@ -63,8 +63,8 @@ def plot_matrix(
         ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])
 
 
-def plot_components_rank_penalty(
-    model: PiecewiseFunctionSPDRankPenaltyTransformer,
+def plot_components(
+    model: PiecewiseFunctionSPDTransformer,
     step: int,
     out_dir: Path | None,
     slow_images: bool,
@@ -136,7 +136,7 @@ def plot_components_rank_penalty(
 
 
 def plot_model_functions(
-    spd_model: PiecewiseFunctionSPDRankPenaltyTransformer,
+    spd_model: PiecewiseFunctionSPDTransformer,
     target_model: PiecewiseFunctionTransformer,
     attribution_type: Literal["gradient", "ablation", "activation"],
     device: str,
@@ -352,7 +352,7 @@ def plot_single_network(ax: plt.Axes, weights: list[dict[str, Float[Tensor, "i j
 
 
 def plot_piecewise_network(
-    model: PiecewiseFunctionSPDRankPenaltyTransformer,
+    model: PiecewiseFunctionSPDTransformer,
 ) -> dict[str, plt.Figure]:
     n_components = model.k
     mlps: torch.nn.ModuleList = model.mlps

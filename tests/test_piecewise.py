@@ -1,7 +1,7 @@
 import torch
 from jaxtyping import Float
 
-from spd.experiments.piecewise.models import PiecewiseFunctionSPDRankPenaltyTransformer
+from spd.experiments.piecewise.models import PiecewiseFunctionSPDTransformer
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.run_spd import (
@@ -49,7 +49,7 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 
-    assert isinstance(piecewise_model_spd, PiecewiseFunctionSPDRankPenaltyTransformer)
+    assert isinstance(piecewise_model_spd, PiecewiseFunctionSPDTransformer)
     optimize(
         model=piecewise_model_spd,
         config=config,

@@ -10,7 +10,7 @@ from spd.experiments.piecewise.models import (
 )
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.experiments.piecewise.plotting import (
-    plot_components_rank_penalty,
+    plot_components,
     plot_model_functions,
     plot_piecewise_network,
 )
@@ -45,7 +45,7 @@ hardcoded_model, spd_model, dataloader, test_dataloader = get_model_and_dataload
 assert isinstance(hardcoded_model, PiecewiseFunctionTransformer)
 spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
 
-fig_dict = plot_components_rank_penalty(model=spd_model, step=-1, out_dir=None, slow_images=True)
+fig_dict = plot_components(model=spd_model, step=-1, out_dir=None, slow_images=True)
 
 
 if config.topk is not None:

@@ -6,8 +6,8 @@ from jaxtyping import Float
 from spd.experiments.resid_mlp.models import (
     ResidualMLPConfig,
     ResidualMLPModel,
-    ResidualMLPSPDRankPenaltyConfig,
-    ResidualMLPSPDRankPenaltyModel,
+    ResidualMLPSPDConfig,
+    ResidualMLPSPDModel,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
 from spd.run_spd import Config, ResidualMLPTaskConfig, optimize
@@ -24,7 +24,7 @@ RESID_MLP_TASK_CONFIG = ResidualMLPTaskConfig(
 )
 
 
-def test_resid_mlp_rank_penalty_decomposition_happy_path() -> None:
+def test_resid_mlp_decomposition_happy_path() -> None:
     # Just noting that this test will only work on 98/100 seeds. So it's possible that future
     # changes will break this test.
     set_seed(0)
@@ -66,10 +66,8 @@ def test_resid_mlp_rank_penalty_decomposition_happy_path() -> None:
     target_model = ResidualMLPModel(config=resid_mlp_config).to(device)
 
     # Create the SPD model
-    spd_config = ResidualMLPSPDRankPenaltyConfig(
-        **resid_mlp_config.model_dump(), k=config.task_config.k
-    )
-    model = ResidualMLPSPDRankPenaltyModel(config=spd_config).to(device)
+    spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), k=config.task_config.k)
+    model = ResidualMLPSPDModel(config=spd_config).to(device)
 
     # Use the pretrained model's embedding matrices and don't train them further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()
@@ -145,7 +143,7 @@ def test_resid_mlp_rank_penalty_decomposition_happy_path() -> None:
     assert torch.allclose(model.W_E, target_model.W_E, atol=1e-6)
 
 
-def test_resid_mlp_rank_penalty_equivalent_to_raw_model() -> None:
+def test_resid_mlp_equivalent_to_raw_model() -> None:
     device = "cpu"
     set_seed(0)
     resid_mlp_config = ResidualMLPConfig(
@@ -164,8 +162,8 @@ def test_resid_mlp_rank_penalty_equivalent_to_raw_model() -> None:
     target_model = ResidualMLPModel(config=resid_mlp_config).to(device)
 
     # Create the SPD model with k=1
-    resid_mlp_spd_config = ResidualMLPSPDRankPenaltyConfig(**resid_mlp_config.model_dump(), k=k)
-    spd_model = ResidualMLPSPDRankPenaltyModel(config=resid_mlp_spd_config).to(device)
+    resid_mlp_spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), k=k)
+    spd_model = ResidualMLPSPDModel(config=resid_mlp_spd_config).to(device)
 
     # Init all params to random values
     for param in spd_model.parameters():

@@ -9,10 +9,10 @@ import torch.nn.functional as F
 from jaxtyping import Bool, Float
 from torch import Tensor
 
-from spd.models.base import Model, SPDRankPenaltyModel
+from spd.models.base import Model, SPDModel
 from spd.models.components import (
     MLP,
-    MLPComponentsRankPenalty,
+    MLPComponents,
 )
 from spd.utils import calc_neuron_indices, remove_grad_parallel_to_subnetwork_vecs
 
@@ -580,7 +580,7 @@ class PiecewiseFunctionTransformer(Model):
         plt.show()
 
 
-class PiecewiseFunctionSPDRankPenaltyTransformer(SPDRankPenaltyModel):
+class PiecewiseFunctionSPDTransformer(SPDModel):
     """An Schatten SPD model for piecewise functions.
 
     Args:
@@ -623,7 +623,7 @@ class PiecewiseFunctionSPDRankPenaltyTransformer(SPDRankPenaltyModel):
 
         self.mlps = nn.ModuleList(
             [
-                MLPComponentsRankPenalty(
+                MLPComponents(
                     d_embed=self.d_embed,
                     d_mlp=d_mlp,
                     k=k,

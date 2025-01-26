@@ -15,12 +15,12 @@ from torch import Tensor
 from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDRankPenaltyTransformer,
+    PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.plotting import (
-    plot_components_rank_penalty,
+    plot_components,
     plot_model_functions,
     plot_piecewise_network,
 )
@@ -40,7 +40,7 @@ wandb.require("core")
 
 
 def piecewise_plot_results_fn(
-    model: PiecewiseFunctionSPDRankPenaltyTransformer,
+    model: PiecewiseFunctionSPDTransformer,
     target_model: PiecewiseFunctionTransformer,
     step: int,
     out_dir: Path | None,
@@ -89,7 +89,7 @@ def piecewise_plot_results_fn(
 
     # Plot components
     if config.task_config.n_layers == 1:
-        fig_dict_components = plot_components_rank_penalty(
+        fig_dict_components = plot_components(
             model=model, step=step, out_dir=out_dir, slow_images=slow_images
         )
         fig_dict.update(fig_dict_components)
@@ -124,7 +124,7 @@ def get_model_and_dataloader(
     out_dir: Path | None = None,
 ) -> tuple[
     PiecewiseFunctionTransformer,
-    PiecewiseFunctionSPDRankPenaltyTransformer,
+    PiecewiseFunctionSPDTransformer,
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
 ]:
@@ -165,7 +165,7 @@ def get_model_and_dataloader(
     set_seed(config.seed)
 
     # Initialize the SPD model
-    piecewise_model_spd = PiecewiseFunctionSPDRankPenaltyTransformer(
+    piecewise_model_spd = PiecewiseFunctionSPDTransformer(
         n_inputs=piecewise_model.n_inputs,
         d_mlp=piecewise_model.d_mlp,
         n_layers=piecewise_model.n_layers,

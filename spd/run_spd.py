@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.base import Model, SPDRankPenaltyModel
+from spd.models.base import Model, SPDModel
 from spd.types import ModelPath, Probability
 from spd.utils import (
     calc_recon_mse,
@@ -363,7 +363,7 @@ def calc_act_recon(
 
 
 def optimize(
-    model: SPDRankPenaltyModel,
+    model: SPDModel,
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
@@ -398,9 +398,7 @@ def optimize(
     data_iter = iter(dataloader)
     for step in tqdm(range(config.steps + 1), ncols=0):
         if config.unit_norm_matrices:
-            assert isinstance(
-                model, SPDRankPenaltyModel
-            ), "Can only norm matrices in SPDRankPenaltyModel instances"
+            assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
             model.set_matrices_to_unit_norm()
 
         step_lr = get_lr_with_warmup(
@@ -625,9 +623,7 @@ def optimize(
                 wandb.log({"grad_norm": grad_norm}, step=step)
 
             if config.unit_norm_matrices:
-                assert isinstance(
-                    model, SPDRankPenaltyModel
-                ), "Can only norm matrices in SPDRankPenaltyModel instances"
+                assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
                 model.fix_normalized_adam_gradients()
 
             opt.step()

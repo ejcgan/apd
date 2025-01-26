@@ -7,7 +7,7 @@ from jaxtyping import Float
 from pydantic import PositiveFloat
 from torch import Tensor
 
-from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDRankPenaltyModel
+from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDModel
 from spd.experiments.resid_mlp.plotting import (
     analyze_per_feature_performance,
     collect_average_components_per_feature,
@@ -57,7 +57,7 @@ wandb_path = "wandb:spd-resid-mlp/runs/8qz1si1l"  # 1 layer 40k steps (R6) topk=
 wandb_id = wandb_path.split("/")[-1]
 
 # Load the pretrained SPD model
-model, config, label_coeffs = ResidualMLPSPDRankPenaltyModel.from_pretrained(wandb_path)
+model, config, label_coeffs = ResidualMLPSPDModel.from_pretrained(wandb_path)
 assert isinstance(config.task_config, ResidualMLPTaskConfig)
 
 # Path must be local

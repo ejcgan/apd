@@ -4,7 +4,7 @@ from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
 
-class SPDRankPenaltyModel(ABC, nn.Module):
+class SPDModel(ABC, nn.Module):
     @abstractmethod
     def forward(
         self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"] | None = None

@@ -10,8 +10,8 @@ from torch import Tensor, nn
 from spd.utils import init_param_
 
 
-class InstancesParamComponentsRankPenalty(nn.Module):
-    """A linear layer decomposed into A and B matrices for rank penalty SPD.
+class InstancesParamComponents(nn.Module):
+    """A linear layer decomposed into A and B matrices for SPD.
 
     The weight matrix W is decomposed as W = A @ B, where A and B are learned parameters.
     """
@@ -139,8 +139,8 @@ class MLP(nn.Module):
         return out2, pre_acts, post_acts
 
 
-class ParamComponentsRankPenalty(nn.Module):
-    """A linear layer decomposed into A and B matrices for rank penalty SPD.
+class ParamComponents(nn.Module):
+    """A linear layer decomposed into A and B matrices for SPD.
 
     The weight matrix W is decomposed as W = A @ B, where A and B are learned parameters.
     """
@@ -209,8 +209,8 @@ class ParamComponentsRankPenalty(nn.Module):
         return out, inner_acts
 
 
-class MLPComponentsRankPenalty(nn.Module):
-    """A module that contains two linear layers with an activation in between for rank penalty SPD.
+class MLPComponents(nn.Module):
+    """A module that contains two linear layers with an activation in between for SPD.
 
     Each linear layer is decomposed into A and B matrices, where the weight matrix W = A @ B.
     The biases are (optionally) part of the "linear" layers, and have a subnetwork dimension.
@@ -229,10 +229,10 @@ class MLPComponentsRankPenalty(nn.Module):
     ):
         super().__init__()
         self.act_fn = act_fn
-        self.linear1 = ParamComponentsRankPenalty(
+        self.linear1 = ParamComponents(
             in_dim=d_embed, out_dim=d_mlp, k=k, bias=in_bias, init_scale=init_scale, m=m
         )
-        self.linear2 = ParamComponentsRankPenalty(
+        self.linear2 = ParamComponents(
             in_dim=d_mlp, out_dim=d_embed, k=k, bias=out_bias, init_scale=init_scale, m=m
         )
 

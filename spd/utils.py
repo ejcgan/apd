@@ -14,7 +14,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 from spd.log import logger
-from spd.models.base import Model, SPDRankPenaltyModel
+from spd.models.base import Model, SPDModel
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
@@ -199,8 +199,8 @@ def calc_grad_attributions(
     pre_acts by the subnet parameters.
 
     NOTE: Multplying the pre_acts by the subnet parameters would be less efficient than multiplying
-    the pre_acts by A and then B in the case where subnet_params is rank one or rank penalty. In
-    the future, we can implement this more efficient version. For now, this simpler version is fine.
+    the pre_acts by A and then B. In the future, we can implement this more efficient version. For
+    now, this simpler version is fine.
 
     Note: This code may be run in between the training forward pass, and the loss.backward() and
     opt.step() calls; it must not mess with the training. The reason the current implementation is
@@ -252,7 +252,7 @@ def calc_grad_attributions(
 
 
 def collect_subnetwork_attributions(
-    spd_model: SPDRankPenaltyModel,
+    spd_model: SPDModel,
     target_model: Model,
     device: str,
     n_instances: int | None = None,
@@ -292,7 +292,7 @@ def collect_subnetwork_attributions(
 
 @torch.inference_mode()
 def calc_ablation_attributions(
-    model: SPDRankPenaltyModel,
+    model: SPDModel,
     batch: Float[Tensor, "batch ... n_features"],
     out: Float[Tensor, "batch ... d_model_out"],
 ) -> Float[Tensor, "batch ... k"]:
@@ -333,7 +333,7 @@ def calc_activation_attributions(
 
 
 def calculate_attributions(
-    model: SPDRankPenaltyModel,
+    model: SPDModel,
     batch: Float[Tensor, "... n_features"],
     out: Float[Tensor, "... n_features"],
     target_out: Float[Tensor, "... n_features"],
@@ -462,18 +462,14 @@ class SPDOutputs(NamedTuple):
     )
     layer_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]]
     inner_acts: dict[
-        str,
-        Float[Tensor, "batch k d_out"]  # full rank
-        | Float[Tensor, "batch n_instances k d_out"]  # full rank
-        | Float[Tensor, "batch k"]  # rank one
-        | Float[Tensor, "batch n_instances k"],  # rank one
+        str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
     ]
     attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
     topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
 
 
 def run_spd_forward_pass(
-    spd_model: SPDRankPenaltyModel,
+    spd_model: SPDModel,
     target_model: Model,
     input_array: Float[Tensor, "batch n_inputs"],
     attribution_type: Literal["gradient", "ablation", "activation"],
