@@ -3,6 +3,8 @@ Code used in the paper [Interpretability in Parameter Space: Minimizing
 Mechanistic Description Length with
 Attribution-based Parameter Decomposition](https://publications.apolloresearch.ai/apd)
 
+Weights and Bias report accompanying the paper: https://api.wandb.ai/links/apollo-interp/h5ekyxm7
+
 Note: previously called Sparse Parameter Decomposition (SPD). The package name will remain as `spd`
 for now, but the repository has been renamed to `apd`.
 
@@ -23,7 +25,6 @@ models and run APD.
 - `spd/experiments/resid_mlp` - Toy model of compressed computation and toy model of distributed
   representations
 - `spd/experiments/piecewise` - Handcoded gated function model
-- `spd/experiments/linear` - Deep linear network without non-linearities (not in paper)
 
 ### Train a target model
 All experiments apart from `spd/experiments/piecewise` require training a target model. Look for the
@@ -35,10 +36,10 @@ APD can be run by executing any of the `*_decomposition.py` scripts defined in t
 subdirectories. A config file is required for each experiment, which can be found in the same
 directory. For example:
 ```bash
-python spd/experiments/tms/tms_decomposition.py spd/experiments/tms/tms_topk_rank_penalty_config.yaml
+python spd/experiments/tms/tms_decomposition.py spd/experiments/tms/tms_topk_config.yaml
 ```
-will run SPD on TMS with the config file `tms_topk_rank_penalty_config.yaml` (which is the main
-config file used for the TMS experiments in the paper).
+will run SPD on TMS with the config file `tms_topk_config.yaml` (which is the main config file used
+for the TMS experiments in the paper).
 
 Wandb sweep files are also provided in the experiment subdirectories, and can be run with e.g.:
 ```bash

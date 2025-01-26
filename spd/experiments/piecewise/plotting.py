@@ -13,38 +13,20 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 
 from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDFullRankTransformer,
-    PiecewiseFunctionSPDRankPenaltyTransformer,
+    PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
-from spd.models.components import (
-    ParamComponents,
-    ParamComponentsFullRank,
-    ParamComponentsRankPenalty,
-)
+from spd.models.components import ParamComponents
 from spd.utils import calc_recon_mse, run_spd_forward_pass
 
 
 def get_weight_matrix(
-    general_param_components: ParamComponents
-    | ParamComponentsFullRank
-    | ParamComponentsRankPenalty,
+    general_param_components: ParamComponents,
 ) -> Float[Tensor, "k i j"]:
-    if isinstance(general_param_components, ParamComponentsFullRank):
-        weight: Float[Tensor, "k i j"] = general_param_components.subnetwork_params
-        return weight
-    elif isinstance(general_param_components, ParamComponents):
-        a: Float[Tensor, "i k"] = general_param_components.A
-        b: Float[Tensor, "k j"] = general_param_components.B
-        weight: Float[Tensor, "k i j"] = einsum(a, b, "i k, k j -> k i j")
-        return weight
-    elif isinstance(general_param_components, ParamComponentsRankPenalty):
-        a: Float[Tensor, "k i m"] = general_param_components.A
-        b: Float[Tensor, "k m j"] = general_param_components.B
-        weight: Float[Tensor, "k i j"] = einsum(a, b, "k i m, k m j -> k i j")
-        return weight
-    else:
-        raise ValueError(f"Unknown type: {type(general_param_components)}")
+    a: Float[Tensor, "k i m"] = general_param_components.A
+    b: Float[Tensor, "k m j"] = general_param_components.B
+    weight: Float[Tensor, "k i j"] = einsum(a, b, "k i m, k m j -> k i j")
+    return weight
 
 
 def plot_matrix(
@@ -81,8 +63,8 @@ def plot_matrix(
         ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])
 
 
-def plot_components_fullrank(
-    model: PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
+def plot_components(
+    model: PiecewiseFunctionSPDTransformer,
     step: int,
     out_dir: Path | None,
     slow_images: bool,
@@ -154,7 +136,7 @@ def plot_components_fullrank(
 
 
 def plot_model_functions(
-    spd_model: PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
+    spd_model: PiecewiseFunctionSPDTransformer,
     target_model: PiecewiseFunctionTransformer,
     attribution_type: Literal["gradient", "ablation", "activation"],
     device: str,
@@ -260,26 +242,24 @@ def plot_model_functions(
                 assert len(inner_acts) <= 2, "Didn't implement more than 2 SPD 'layers' yet"
                 for j, layer_name in enumerate(inner_acts.keys()):
                     ls = ["-", "--"][j]
-                    if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
-                        ax_inner.plot(
-                            input_xs[s],
-                            inner_acts[layer_name].cpu().detach()[s][:, k],
-                            color=color0,
-                            ls=ls,
-                            label=f"cb={cb}, k_cb={k}" if j == 0 else None,
-                        )
+                    ax_inner.plot(
+                        input_xs[s],
+                        inner_acts[layer_name].cpu().detach()[s][:, k],
+                        color=color0,
+                        ls=ls,
+                        label=f"cb={cb}, k_cb={k}" if j == 0 else None,
+                    )
             else:
                 ax_attrib.plot(input_xs[s], attribution_scores[s][:, k], color=color0, alpha=0.2)
                 for j, layer_name in enumerate(inner_acts.keys()):
                     ls = ["-", "--"][j]
-                    if not isinstance(spd_model, PiecewiseFunctionSPDFullRankTransformer):
-                        ax_inner.plot(
-                            input_xs[s],
-                            inner_acts[layer_name].cpu().detach()[s][:, k],
-                            color="k",
-                            ls=ls,
-                            lw=0.2,
-                        )
+                    ax_inner.plot(
+                        input_xs[s],
+                        inner_acts[layer_name].cpu().detach()[s][:, k],
+                        color="k",
+                        ls=ls,
+                        lw=0.2,
+                    )
     ax_inner.plot([], [], color=colors[0], label="W_in", ls="-")
     ax_inner.plot([], [], color=colors[0], label="W_out", ls="--")
     ax_inner.plot([], [], color="k", label="k!=k_cb", ls="-", lw=0.2)
@@ -372,7 +352,7 @@ def plot_single_network(ax: plt.Axes, weights: list[dict[str, Float[Tensor, "i j
 
 
 def plot_piecewise_network(
-    model: PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
+    model: PiecewiseFunctionSPDTransformer,
 ) -> dict[str, plt.Figure]:
     n_components = model.k
     mlps: torch.nn.ModuleList = model.mlps

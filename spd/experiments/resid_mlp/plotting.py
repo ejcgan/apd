@@ -18,8 +18,8 @@ from spd.experiments.piecewise.plotting import plot_matrix
 from spd.experiments.resid_mlp.models import (
     ResidualMLPConfig,
     ResidualMLPModel,
-    ResidualMLPSPDRankPenaltyConfig,
-    ResidualMLPSPDRankPenaltyModel,
+    ResidualMLPSPDConfig,
+    ResidualMLPSPDModel,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
 from spd.run_spd import Config
@@ -29,7 +29,7 @@ from spd.utils import SPDOutputs, calc_topk_mask, calculate_attributions
 def plot_individual_feature_response(
     model_fn: Callable[[Tensor], Tensor],
     device: str,
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     sweep: bool = False,
     subtract_inputs: bool = True,
     instance_idx: int = 0,
@@ -137,7 +137,7 @@ def plot_individual_feature_response(
 def plot_single_feature_response(
     model_fn: Callable[[Tensor], Tensor],
     device: str,
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     subtract_inputs: bool = True,
     instance_idx: int = 0,
     feature_idx: int = 15,
@@ -216,7 +216,7 @@ def plot_single_feature_response(
 def plot_single_relu_curve(
     model_fn: Callable[[Tensor], Tensor],
     device: str,
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     subtract_inputs: bool = True,
     instance_idx: int = 0,
     feature_idx: int = 15,
@@ -266,7 +266,7 @@ def plot_single_relu_curve(
 def plot_all_relu_curves(
     model_fn: Callable[[Tensor], Tensor],
     device: str,
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     ax: plt.Axes,
     subtract_inputs: bool = True,
     instance_idx: int = 0,
@@ -434,7 +434,7 @@ def relu_contribution_plot(
     ax1: plt.Axes,
     ax2: plt.Axes,
     all_diag_relu_conns: Float[Tensor, "n_instances n_features d_mlp"],
-    model: ResidualMLPModel | ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPModel | ResidualMLPSPDModel,
     device: str,
     instance_idx: int = 0,
 ):
@@ -474,7 +474,7 @@ def relu_contribution_plot(
 def feature_contribution_plot(
     ax: plt.Axes,
     all_diag_relu_conns: Float[Tensor, "n_features d_mlp"],
-    model: ResidualMLPModel | ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPModel | ResidualMLPSPDModel,
     n_features: int,
     pre_labelled_neurons: dict[int, list[int]] | None = None,
     legend: bool = True,
@@ -549,9 +549,7 @@ def feature_contribution_plot(
     return labelled_neurons
 
 
-def spd_calculate_virtual_weights(
-    model: ResidualMLPSPDRankPenaltyModel, device: str
-) -> dict[str, Tensor]:
+def spd_calculate_virtual_weights(model: ResidualMLPSPDModel, device: str) -> dict[str, Tensor]:
     """Currently ignoring interactions between layers. Just flattening (n_layers, d_mlp)"""
     old_device = next(model.parameters()).device
     model.to(device)
@@ -627,7 +625,7 @@ def spd_calculate_virtual_weights(
 
 
 def spd_calculate_diag_relu_conns(
-    model: ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPSPDModel,
     device: str,
     k_select: int | Literal["sum_before", "sum_nocrossterms", "sum_onlycrossterms"] = 0,
 ) -> Float[Tensor, "n_instances n_features d_mlp"]:
@@ -663,7 +661,7 @@ def spd_calculate_diag_relu_conns(
 
 
 def plot_spd_relu_contribution(
-    spd_model: ResidualMLPSPDRankPenaltyModel,
+    spd_model: ResidualMLPSPDModel,
     target_model: ResidualMLPModel,
     device: str = "cuda",
     k_plot_limit: int | None = None,
@@ -712,7 +710,7 @@ def plot_spd_relu_contribution(
 
 
 def plot_spd_feature_contributions(
-    spd_model: ResidualMLPSPDRankPenaltyModel,
+    spd_model: ResidualMLPSPDModel,
     target_model: ResidualMLPModel,
     device: str = "cuda",
     k_plot_limit: int | None = None,
@@ -810,7 +808,7 @@ def plot_spd_feature_contributions(
 
 
 def plot_spd_feature_contributions_truncated(
-    spd_model: ResidualMLPSPDRankPenaltyModel,
+    spd_model: ResidualMLPSPDModel,
     target_model: ResidualMLPModel,
     device: str = "cuda",
     n_features: int | None = 10,
@@ -894,7 +892,7 @@ def plot_spd_feature_contributions_truncated(
 
 def collect_per_feature_losses(
     target_model: ResidualMLPModel,
-    spd_model: ResidualMLPSPDRankPenaltyModel,
+    spd_model: ResidualMLPSPDModel,
     config: Config,
     dataset: ResidualMLPDataset,
     device: str,
@@ -1106,7 +1104,7 @@ def collect_average_components_per_feature(
 
 def analyze_per_feature_performance(
     model_fn: Callable[[Float[Tensor, "batch n_instances"]], Float[Tensor, "batch n_instances"]],
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     device: str,
     batch_size: int = 128,
     target_model_fn: Callable[
@@ -1161,7 +1159,7 @@ def plot_per_feature_performance(
 
 
 def plot_virtual_weights_target_spd(
-    target_model: ResidualMLPModel, model: ResidualMLPSPDRankPenaltyModel, device: str
+    target_model: ResidualMLPModel, model: ResidualMLPSPDModel, device: str
 ):
     target_virtual_weights = calculate_virtual_weights(target_model, device)
     spd_virtual_weights = spd_calculate_virtual_weights(model=model, device=device)
@@ -1438,7 +1436,7 @@ class ScrubbedLosses:
 
 def get_scrubbed_losses(
     dataset: ResidualMLPDataset,
-    model: ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPSPDModel,
     target_model: ResidualMLPModel,
     device: str,
     config: Config,
@@ -1620,7 +1618,7 @@ def plot_feature_response_with_subnets(
         SPDOutputs,
     ],
     device: str,
-    model_config: ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPSPDConfig,
     feature_idx: int = 0,
     subnet_idx: int = 0,
     instance_idx: int = 0,
@@ -1762,7 +1760,7 @@ def get_feature_subnet_map(
         SPDOutputs,
     ],
     device: str,
-    model_config: ResidualMLPConfig | ResidualMLPSPDRankPenaltyConfig,
+    model_config: ResidualMLPConfig | ResidualMLPSPDConfig,
     instance_idx: int = 0,
 ) -> dict[int, int]:
     n_instances = model_config.n_instances

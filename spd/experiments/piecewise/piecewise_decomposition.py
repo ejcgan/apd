@@ -15,14 +15,12 @@ from torch import Tensor
 from tqdm import tqdm
 
 from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDFullRankTransformer,
-    PiecewiseFunctionSPDRankPenaltyTransformer,
     PiecewiseFunctionSPDTransformer,
     PiecewiseFunctionTransformer,
 )
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.plotting import (
-    plot_components_fullrank,
+    plot_components,
     plot_model_functions,
     plot_piecewise_network,
 )
@@ -42,7 +40,7 @@ wandb.require("core")
 
 
 def piecewise_plot_results_fn(
-    model: PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
+    model: PiecewiseFunctionSPDTransformer,
     target_model: PiecewiseFunctionTransformer,
     step: int,
     out_dir: Path | None,
@@ -91,7 +89,7 @@ def piecewise_plot_results_fn(
 
     # Plot components
     if config.task_config.n_layers == 1:
-        fig_dict_components = plot_components_fullrank(
+        fig_dict_components = plot_components(
             model=model, step=step, out_dir=out_dir, slow_images=slow_images
         )
         fig_dict.update(fig_dict_components)
@@ -115,8 +113,6 @@ def get_run_name(config: Config) -> str:
         run_suffix = get_common_run_name_suffix(config)
         if config.task_config.target_seed is not None:
             run_suffix += f"target-seed{config.task_config.target_seed}_"
-        if config.task_config.handcoded_AB:
-            run_suffix += "hAB_"
         run_suffix += f"lay{config.task_config.n_layers}"
 
     return config.wandb_run_name_prefix + run_suffix
@@ -128,9 +124,7 @@ def get_model_and_dataloader(
     out_dir: Path | None = None,
 ) -> tuple[
     PiecewiseFunctionTransformer,
-    PiecewiseFunctionSPDTransformer
-    | PiecewiseFunctionSPDFullRankTransformer
-    | PiecewiseFunctionSPDRankPenaltyTransformer,
+    PiecewiseFunctionSPDTransformer,
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
     BatchedDataLoader[tuple[Float[Tensor, " n_inputs"], Float[Tensor, ""]]],
 ]:
@@ -171,29 +165,14 @@ def get_model_and_dataloader(
     set_seed(config.seed)
 
     # Initialize the SPD model
-    if config.spd_type == "full_rank":
-        piecewise_model_spd = PiecewiseFunctionSPDFullRankTransformer(
-            n_inputs=piecewise_model.n_inputs,
-            d_mlp=piecewise_model.d_mlp,
-            n_layers=piecewise_model.n_layers,
-            k=config.task_config.k,
-            init_scale=config.task_config.init_scale,
-        )
-    elif config.spd_type == "rank_penalty":
-        piecewise_model_spd = PiecewiseFunctionSPDRankPenaltyTransformer(
-            n_inputs=piecewise_model.n_inputs,
-            d_mlp=piecewise_model.d_mlp,
-            n_layers=piecewise_model.n_layers,
-            k=config.task_config.k,
-            init_scale=config.task_config.init_scale,
-            m=config.m,
-        )
-    else:
-        raise ValueError(f"Unknown/unsupported SPD type: {config.spd_type}")
-
-    if config.distil_from_target:
-        assert config.spd_type == "full_rank", "Distillation only supported for full rank"
-        piecewise_model_spd.set_subnet_to_target(piecewise_model)
+    piecewise_model_spd = PiecewiseFunctionSPDTransformer(
+        n_inputs=piecewise_model.n_inputs,
+        d_mlp=piecewise_model.d_mlp,
+        n_layers=piecewise_model.n_layers,
+        k=config.task_config.k,
+        init_scale=config.task_config.init_scale,
+        m=config.m,
+    )
 
     # Copy the biases (never decomposed)
     for i in range(piecewise_model_spd.n_layers):
@@ -204,26 +183,6 @@ def get_model_and_dataloader(
         piecewise_model_spd.mlps[i].linear1.bias.requires_grad_(False)
         # Make sure that there is no output bias
         assert piecewise_model_spd.mlps[i].linear2.bias is None
-
-    # Handcoded the parameters if requested
-    if config.task_config.handcoded_AB:
-        if config.task_config.n_layers > 1:
-            raise ValueError(
-                "Handcoded AB not supported for >1 layer models due to an unsolved "
-                "bug in the W_out matrices (noticed in full_rank, unsure about others)"
-            )
-        logger.info("Setting handcoded A and B matrices (!)")
-
-        # Create a rank-one handcoded model & copy its SPD weights
-        rank_one_spd_model = PiecewiseFunctionSPDTransformer(
-            n_inputs=piecewise_model.n_inputs,
-            d_mlp=piecewise_model.d_mlp,
-            n_layers=piecewise_model.n_layers,
-            k=config.task_config.k,
-            init_scale=config.task_config.init_scale,
-        )
-        rank_one_spd_model.set_handcoded_spd_params(piecewise_model)
-        piecewise_model_spd.set_handcoded_spd_params(rank_one_spd_model)
 
     piecewise_model_spd.to(device)
 
@@ -320,10 +279,6 @@ def main(
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 
-    assert isinstance(
-        piecewise_model_spd,
-        PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
-    )
     optimize(
         model=piecewise_model_spd,
         config=config,

@@ -6,7 +6,6 @@ from typing import Literal, Self
 
 import einops
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
@@ -24,9 +23,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
-from spd.types import ModelPath, Probability, RootPath
-from spd.utils import calc_recon_mse, calc_topk_mask, calculate_attributions
+from spd.models.base import Model, SPDModel
+from spd.types import ModelPath, Probability
+from spd.utils import (
+    calc_recon_mse,
+    calc_topk_mask,
+    calculate_attributions,
+    get_lr_schedule_fn,
+    get_lr_with_warmup,
+)
 
 
 class TMSTaskConfig(BaseModel):
@@ -40,16 +45,6 @@ class TMSTaskConfig(BaseModel):
         "at_least_zero_active"
     )
     pretrained_model_path: ModelPath  # e.g. wandb:spd-tms/runs/si0zbfxf
-
-
-class DeepLinearConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["deep_linear"] = "deep_linear"
-    n_features: PositiveInt | None = None
-    n_layers: PositiveInt | None = None
-    n_instances: PositiveInt | None = None
-    k: PositiveInt | None = None
-    pretrained_model_path: RootPath
 
 
 class PiecewiseConfig(BaseModel):
@@ -66,19 +61,6 @@ class PiecewiseConfig(BaseModel):
     target_seed: int | None = None
     dataset_seed: int | None = None
     simple_bias: bool = False
-    handcoded_AB: bool = False
-
-
-class ResidualLinearConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["residual_linear"] = "residual_linear"
-    k: PositiveInt
-    feature_probability: Probability
-    init_scale: float = 1.0
-    data_generation_type: Literal["exactly_one_active", "at_least_zero_active"] = (
-        "at_least_zero_active"
-    )
-    pretrained_model_path: RootPath
 
 
 class ResidualMLPTaskConfig(BaseModel):
@@ -98,47 +80,37 @@ class Config(BaseModel):
     wandb_project: str | None = None
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
-    spd_type: Literal["full_rank", "rank_penalty"] = "rank_penalty"
     seed: int = 0
     topk: PositiveFloat | None = None
     batch_topk: bool = True
-    hardcode_topk_mask_step: int | None = None
     exact_topk: bool = False
     batch_size: PositiveInt
     steps: PositiveInt
     print_freq: PositiveInt
     image_freq: PositiveInt | None = None
+    image_on_first_step: bool = True
     slow_images: bool = False
     save_freq: PositiveInt | None = None
     lr: PositiveFloat
-    orthog_coeff: NonNegativeFloat | None = None
     out_recon_coeff: NonNegativeFloat | None = None
     act_recon_coeff: NonNegativeFloat | None = None
     param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
-    topk_l2_coeff: NonNegativeFloat | None = None
     schatten_coeff: NonNegativeFloat | None = None
     schatten_pnorm: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
-    topk_param_attrib_coeff: NonNegativeFloat | None = None
     distil_from_target: bool = False
     pnorm: PositiveFloat | None = None
-    pnorm_end: PositiveFloat | None = None
     m: PositiveInt | None = None
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"] = "constant"
     lr_exponential_halflife: PositiveFloat | None = None
     lr_warmup_pct: Probability = 0.0
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
-    sparsity_warmup_pct: Probability = 0.0
     unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
-    task_config: (
-        DeepLinearConfig
-        | PiecewiseConfig
-        | TMSTaskConfig
-        | ResidualLinearConfig
-        | ResidualMLPTaskConfig
-    ) = Field(..., discriminator="task_name")
+    task_config: PiecewiseConfig | TMSTaskConfig | ResidualMLPTaskConfig = Field(
+        ..., discriminator="task_name"
+    )
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -163,15 +135,12 @@ class Config(BaseModel):
         if self.topk_recon_coeff is not None:
             assert self.topk is not None, "topk must be set if topk_recon_coeff is set"
 
-        # If lp_sparsity_coeff is set, pnorm or pnorm_end must be set
+        # If lp_sparsity_coeff is set, pnorm must be set
         if self.lp_sparsity_coeff is not None:
-            assert (
-                self.pnorm is not None or self.pnorm_end is not None
-            ), "pnorm or pnorm_end must be set if lp_sparsity_coeff is set"
+            assert self.pnorm is not None, "pnorm must be set if lp_sparsity_coeff is set"
 
-        # Check that topk_l2_coeff and topk_recon_coeff are None if topk is None
+        # Check that topk_recon_coeff is None if topk is None
         if self.topk is None:
-            assert self.topk_l2_coeff is None, "topk_l2_coeff is not None but topk is"
             assert self.topk_recon_coeff is None, "topk_recon_coeff is not None but topk is"
 
         # Give a warning if both out_recon_coeff and param_match_coeff are > 0
@@ -187,8 +156,6 @@ class Config(BaseModel):
 
         # If any of the coeffs are 0, raise a warning
         msg = "is 0, you may wish to instead set it to null to avoid calculating the loss"
-        if self.topk_l2_coeff == 0:
-            logger.warning(f"topk_l2_coeff {msg}")
         if self.topk_recon_coeff == 0:
             logger.warning(f"topk_recon_coeff {msg}")
         if self.lp_sparsity_coeff == 0:
@@ -202,35 +169,16 @@ class Config(BaseModel):
                 self.lr_exponential_halflife is not None
             ), "lr_exponential_halflife must be set if lr_schedule is exponential"
 
-        if self.spd_type in ["full_rank"]:
-            assert not self.unit_norm_matrices, "Can't unit norm matrices if using full rank"
-
         if self.schatten_coeff is not None:
-            assert (
-                self.spd_type == "rank_penalty"
-            ), "schatten_coeff is not None but spd_type is not rank_penalty"
             assert (
                 self.schatten_pnorm is not None
             ), "schatten_pnorm must be set if schatten_coeff is set"
 
-        if self.topk_param_attrib_coeff is not None and not isinstance(
-            self.task_config, PiecewiseConfig
-        ):
-            raise ValueError("topk_param_attrib_coeff is currenlty only suppported for piecewise")
-
         if self.distil_from_target and not isinstance(self.task_config, PiecewiseConfig):
             raise ValueError("distil_from_target is currently only supported for piecewise")
 
-        if self.m is not None:
-            assert self.spd_type == "rank_penalty", "Cannot set m for non-rank penalty SPD"
-
-        if isinstance(self.task_config, PiecewiseConfig) and self.task_config.handcoded_AB:
-            assert (
-                self.task_config.n_layers == 1
-            ), "Handcoded AB not supported for >1 layer models due to a bug in the W_out matrices"
-
-        if isinstance(self.task_config, ResidualMLPTaskConfig):
-            assert self.spd_type == "rank_penalty", "Only rank penalty supported for residual mlp"
+        if isinstance(self.task_config, PiecewiseConfig):
+            assert not self.distil_from_target, "distil_from_target not supported for piecewise"
 
         return self
 
@@ -242,131 +190,21 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"p{config.pnorm:.2e}_"
     if config.lp_sparsity_coeff is not None:
         run_suffix += f"lpsp{config.lp_sparsity_coeff:.2e}_"
-    if config.orthog_coeff is not None:
-        run_suffix += f"orth{config.orthog_coeff:.2e}_"
     if config.topk is not None:
         run_suffix += f"topk{config.topk:.2e}_"
     if config.topk_recon_coeff is not None:
         run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
-    if config.topk_l2_coeff is not None:
-        run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
     if config.schatten_pnorm is not None:
         run_suffix += f"schatp{config.schatten_pnorm:.2e}_"
     if config.schatten_coeff is not None:
         run_suffix += f"schatten{config.schatten_coeff:.2e}_"
     if config.act_recon_coeff is not None:
         run_suffix += f"actrecon_{config.act_recon_coeff:.2e}_"
-    if config.topk_param_attrib_coeff is not None:
-        run_suffix += f"topkattrib_{config.topk_param_attrib_coeff:.2e}_"
     run_suffix += f"sd{config.seed}_"
     run_suffix += f"attr-{config.attribution_type[:3]}_"
     run_suffix += f"lr{config.lr:.2e}_"
     run_suffix += f"bs{config.batch_size}_"
     return run_suffix
-
-
-def get_lr_schedule_fn(
-    lr_schedule: Literal["linear", "constant", "cosine", "exponential"],
-    lr_exponential_halflife: PositiveFloat | None = None,
-) -> Callable[[int, int], float]:
-    if lr_schedule == "linear":
-        return lambda step, steps: 1 - (step / steps)
-    elif lr_schedule == "constant":
-        return lambda *_: 1.0
-    elif lr_schedule == "cosine":
-        return lambda step, steps: 1.0 if steps == 1 else np.cos(0.5 * np.pi * step / (steps - 1))
-    elif lr_schedule == "exponential":
-        assert lr_exponential_halflife is not None  # Should have been caught by model validator
-        halflife = lr_exponential_halflife
-        gamma = 0.5 ** (1 / halflife)
-        logger.info(f"Using exponential LR schedule with halflife {halflife} steps (gamma {gamma})")
-        return lambda step, steps: gamma**step
-    else:
-        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
-
-
-def get_step_pnorm(step: int, total_steps: int, pnorm_end: float | None = None) -> float:
-    if pnorm_end is None:
-        return 1.0
-    progress = step / total_steps
-    return 1 + (pnorm_end - 1) * progress
-
-
-def get_sparsity_coeff_linear_warmup(
-    step: int, steps: int, max_sparsity_coeff: float, sparsity_warmup_pct: float
-) -> float:
-    warmup_steps = int(steps * sparsity_warmup_pct)
-    if step < warmup_steps:
-        return max_sparsity_coeff * (step / warmup_steps)
-    return max_sparsity_coeff
-
-
-def get_lr_with_warmup(
-    step: int,
-    steps: int,
-    lr: float,
-    lr_schedule_fn: Callable[[int, int], float],
-    lr_warmup_pct: float,
-) -> float:
-    warmup_steps = int(steps * lr_warmup_pct)
-    if step < warmup_steps:
-        return lr * (step / warmup_steps)
-    return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
-
-
-def calc_topk_l2_full_rank(
-    subnet_param_vals: list[
-        Float[Tensor, "k d_out"]
-        | Float[Tensor, "k d_in d_out"]
-        | Float[Tensor, "n_instances k d_out"]
-        | Float[Tensor, "n_instances k d_in d_out"]
-    ],
-    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
-    n_params: int,
-    n_instances: int | None = None,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the L2 of the sum of the topk subnetworks.
-
-    Note that we explicitly write the batch dimension to aid understanding. The einsums
-    produce the same operation without it. The ... indicates an optional n_instances dimension.
-
-    Args:
-        subnetwork_params: The parameters of the subnetwork.
-        topk_mask: The topk mask to use for the L2 penalty.
-        n_params: The number of decomposable parameters in the model.
-        n_instances: The number of instances in the model.
-
-    Returns:
-        The L2 penalty for the topk subnetworks. One value for each n_instance (used in tms and
-            deep linear toy models).
-    """
-    assert len(subnet_param_vals) > 0, "No subnetwork parameters provided"
-
-    accumulate_shape = (n_instances,) if n_instances is not None else ()
-
-    topk_mask = topk_mask.to(subnet_param_vals[0].dtype)
-    topk_l2_penalty = torch.zeros(accumulate_shape, device=subnet_param_vals[0].device)
-    batch_size = topk_mask.shape[0]
-    for subnetwork_param_val in subnet_param_vals:
-        if n_instances is None:
-            # subnetwork_param_val: [k, d_in, d_out] or [k, d_out] (if bias param)
-            # topk_mask: [batch, k]
-            ein_str = "k ... d_out, batch k -> batch ... d_out"
-            # mean over all dims
-            assert subnetwork_param_val.ndim in (3, 2), "Invalid number of dimensions"
-            mean_dims = tuple(range(subnetwork_param_val.ndim))
-        else:
-            # subnetwork_param_val: [n_instances, k, d_in, d_out] or [n_instances, k, d_out]
-            # topk_mask: [batch, n_instances, k]
-            ein_str = "n_instances k ... d_out, batch n_instances k -> batch n_instances ... d_out"
-            # mean over all dims except the n_instances dim
-            assert subnetwork_param_val.ndim in (4, 3), "Invalid number of dimensions"
-            mean_dims = (0, -2, -1) if subnetwork_param_val.ndim == 4 else (0, -1)
-
-        topk_params = einops.einsum(subnetwork_param_val, topk_mask, ein_str)
-        topk_l2_penalty = topk_l2_penalty + ((topk_params) ** 2).sum(dim=mean_dims)
-
-    return topk_l2_penalty / n_params / batch_size
 
 
 def calc_schatten_loss(
@@ -465,51 +303,6 @@ def calc_param_match_loss(
     return param_match_loss / n_params
 
 
-def calc_orthog_loss_full_rank(
-    subnet_param_vals: list[
-        Float[Tensor, "k d_out"]
-        | Float[Tensor, "k d_in d_out"]
-        | Float[Tensor, "n_instances k d_out"]
-        | Float[Tensor, "n_instances k d_in d_out"]
-    ],
-    has_instance_dim: bool = False,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the sum of the absolute values of inner products of different subnets.
-
-    NOTE: We could and maybe should try L2 instead of absolute. Note that it is important that we
-    use the dot product rather than the cosine sim normalized by layer (though we may normalize
-    at the end).
-
-    Args:
-        subnetwork_params: The parameters of the SPD Model.
-        has_instance_dim: Whether the model has an n_instances dimension.
-    Returns:
-        The orthogonality loss of shape [n_instances] if the model has an n_instances dimension,
-        otherwise of shape [].
-    """
-    first_param = subnet_param_vals[0]
-    if has_instance_dim:
-        # params: [n_instances, k, d_out] or [n_instances, k, d_in, d_out]
-        assert all(param.ndim in (3, 4) for param in subnet_param_vals), "Invalid number of dims"
-        k = first_param.shape[1]
-        dot_prods = torch.zeros((first_param.shape[0], k, k), device=first_param.device)
-        ein_str = "n_instances k1 ... d_out, n_instances k2 ... d_out -> n_instances k1 k2"
-    else:
-        # params: [k, d_out] or [k, d_in, d_out]
-        assert all(param.ndim in (2, 3) for param in subnet_param_vals), "Invalid number of dims"
-        k = first_param.shape[0]
-        dot_prods = torch.zeros((k, k), device=first_param.device)
-        ein_str = "k1 ... d_out, k2 ... d_out -> k1 k2"
-
-    for subnet in subnet_param_vals:
-        dot_prods += einops.einsum(subnet, subnet, ein_str)
-
-    # Multiply the k l diagonal by 0
-    dot_prods.diagonal(dim1=-2, dim2=-1).zero_()
-    orthog_loss = (dot_prods.abs()).mean(dim=(-2, -1))
-    return orthog_loss
-
-
 def calc_lp_sparsity_loss(
     out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
     attributions: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
@@ -533,97 +326,6 @@ def calc_lp_sparsity_loss(
     # step_pnorm * 0.5 is because we have the squares of sparsity_inner terms above
     lp_sparsity_loss_per_k = (attributions.abs() + 1e-16) ** (step_pnorm * 0.5)
     return lp_sparsity_loss_per_k
-
-
-def calc_topk_param_attrib_loss(
-    target_out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    target_params: dict[str, Tensor],
-    subnetwork_params: dict[str, Tensor],
-    topk_mask: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
-    target_pre_acts: dict[str, Tensor],
-    target_post_acts: dict[str, Tensor],
-    has_instance_dim: bool,
-    n_params: int,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Attribution patch loss of original params to sum of active subnetwork params.
-
-    This function is (an efficient implementation of) dout/dW_target * (W_spd - W_target) where
-    W_spd is the sum of currently-active (topk) subnetworks. The actual implementation is based on
-    activations to simplify (and maybe speed up) calculations. This is because activations
-    (i) have a batch dimension which makes autograd simpler and (ii) only have one not two embedding
-    dimensions dimensions.
-
-    Formula:
-        d(f(x, W)) / d(a(x, W)) * (W - spd_W) * p(x, W)
-    where
-    - a(x, W) are the activations after the parameter matrix is applied in the target model,
-    - p(x, W) are the activations before the parameter matrix is applied in the SPD model (
-        this is set to 1 if W is a bias parameter)
-    - f(x, W) is the output of the target model.
-
-    Args:
-        target_out: The output of the target model for the batch.
-        target_params: The parameters of the target model which are decomposable.
-        subnetwork_params: The parameters of the SPD model.
-        topk_mask: The topk mask for the SPD model on the batch.
-        target_pre_acts: The activations before the parameter matrix is applied in the target
-            model.
-        target_post_acts: The activations after the parameter matrix is applied in the target
-            model.
-        has_instance_dim: Whether the model has an n_instances dimension.
-        n_params: The number of decomposable parameters in the model.
-
-    Returns:
-        The topk parameter attribution loss. Will have an n_instances dimension if the model has an
-            n_instances dimension.
-    """
-    assert target_params.keys() == target_pre_acts.keys() == target_post_acts.keys()
-    # Every parameter that we are decomposing must have an entry in target_params
-    assert set(target_params.keys()) <= set(subnetwork_params.keys())
-
-    device = next(iter(subnetwork_params.values())).device
-    loss = torch.tensor(0.0, device=device)
-    for out_idx in range(target_out.shape[-1]):
-        # Get the derivative of the output w.r.t. the target_post_acts
-        dout_d_post_acts = torch.autograd.grad(
-            target_out[..., out_idx].sum(), list(target_post_acts.values()), retain_graph=True
-        )
-        loss_out_idx = torch.tensor(0.0, device=device)
-        for i, param_name in enumerate(subnetwork_params):
-            # Sum over the subnetwork dim
-            ein_str = "k i ..., b i k -> b i ..." if has_instance_dim else "k ..., b k -> b ..."
-            topk_subnet_sum = einops.einsum(
-                subnetwork_params[param_name],
-                topk_mask.to(dtype=subnetwork_params[param_name].dtype),
-                ein_str,
-            )
-            param_diff = target_params[param_name] - topk_subnet_sum
-
-            if "bias" in param_name:
-                # Derivative @ param_diff
-                ein_str = (
-                    "b i d_out, b i d_out -> b i" if has_instance_dim else "b d_out, b d_out -> b"
-                )
-                param_loss = einops.einsum(dout_d_post_acts[i].detach(), param_diff, ein_str)
-            else:
-                # Derivative @ param_diff @ pre_acts
-                ein_str = (
-                    "b i d_out, b i d_in d_out, b i d_in -> b i"
-                    if has_instance_dim
-                    else "b d_out, b d_in d_out, b d_in -> b"
-                )
-                param_loss = einops.einsum(
-                    dout_d_post_acts[i].detach(),
-                    param_diff,
-                    target_pre_acts[param_name],
-                    ein_str,
-                )
-
-            loss_out_idx = loss_out_idx + param_loss
-
-        loss = loss + loss_out_idx**2
-    loss = (loss / target_out.shape[-1] + 1e-16).mean(dim=0)  # Mean over the batch dim
-    return loss / n_params
 
 
 def calc_act_recon(
@@ -661,7 +363,7 @@ def calc_act_recon(
 
 
 def optimize(
-    model: SPDFullRankModel | SPDRankPenaltyModel,
+    model: SPDModel,
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
@@ -691,16 +393,12 @@ def optimize(
         # All subnetwork param have an n_instances dimension
         n_params = n_params / model.n_instances
 
-    step_lp_sparsity_coeff = None
-    step_topk_recon_coeff = None
     epoch = 0
     total_samples = 0
     data_iter = iter(dataloader)
     for step in tqdm(range(config.steps + 1), ncols=0):
         if config.unit_norm_matrices:
-            assert isinstance(
-                model, SPDRankPenaltyModel
-            ), "Can only norm matrices in SPDRankPenaltyModel instances"
+            assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
             model.set_matrices_to_unit_norm()
 
         step_lr = get_lr_with_warmup(
@@ -712,8 +410,6 @@ def optimize(
         )
         for group in opt.param_groups:
             group["lr"] = step_lr
-
-        step_pnorm = None
 
         opt.zero_grad(set_to_none=True)
         try:
@@ -729,37 +425,11 @@ def optimize(
 
         total_samples += batch.shape[0]
 
-        if config.topk_recon_coeff is not None:
-            step_topk_recon_coeff = get_sparsity_coeff_linear_warmup(
-                step=step,
-                steps=config.steps,
-                max_sparsity_coeff=config.topk_recon_coeff,
-                sparsity_warmup_pct=config.sparsity_warmup_pct,
-            )
-        if config.lp_sparsity_coeff is not None:
-            step_lp_sparsity_coeff = get_sparsity_coeff_linear_warmup(
-                step=step,
-                steps=config.steps,
-                max_sparsity_coeff=config.lp_sparsity_coeff,
-                sparsity_warmup_pct=config.sparsity_warmup_pct,
-            )
-
         # Do a forward pass with all subnetworks
         out, layer_acts, inner_acts = model(batch)
 
         # Calculate losses
         out_recon_loss = calc_recon_mse(out, target_out, has_instance_dim)
-
-        orthog_loss = None
-        if config.orthog_coeff is not None:
-            subnet_param_vals = list(model.all_subnetwork_params().values())
-            if config.distil_from_target:
-                # Remove the final subnetwork index from all params
-                subnet_param_vals = [
-                    param[:, :-1] if has_instance_dim else param[:-1] for param in subnet_param_vals
-                ]
-
-            orthog_loss = calc_orthog_loss_full_rank(subnet_param_vals=subnet_param_vals)
 
         param_match_loss = None
         if config.param_match_coeff is not None:
@@ -785,51 +455,33 @@ def optimize(
 
         lp_sparsity_loss_per_k = None
         if config.lp_sparsity_coeff is not None:
-            step_pnorm = config.pnorm or get_step_pnorm(step, config.steps, config.pnorm_end)
+            assert config.pnorm is not None, "pnorm must be set if lp_sparsity_coeff is set"
             lp_sparsity_loss_per_k = calc_lp_sparsity_loss(
-                out=out, attributions=attributions, step_pnorm=step_pnorm
+                out=out, attributions=attributions, step_pnorm=config.pnorm
             )
 
         (
             out_topk,
-            topk_l2_loss,
             schatten_loss,
             topk_recon_loss,
             topk_mask,
-            topk_param_attrib_loss,
             layer_acts_topk,
-        ) = None, None, None, None, None, None, None
+        ) = None, None, None, None, None
         if config.topk is not None:
             # We always assume the final subnetwork is the one we want to distil
             topk_attrs: Float[Tensor, "batch ... k"] = (
                 attributions[..., :-1] if config.distil_from_target else attributions
             )
             if config.exact_topk:
-                # Only valid if n_instances = 1
-                assert has_instance_dim, "exact_topk only works if has_instance_dim is True"
-                assert model.n_instances == 1, "exact_topk only works if n_instances = 1"
+                # Currently only valid for batch_topk and n_instances = 1. Would need to change the
+                # topk argument in calc_topk_mask to allow for tensors if relaxing these constraints
+                assert config.batch_topk, "exact_topk only works if batch_topk is True"
+                assert (
+                    hasattr(model, "n_instances") and model.n_instances == 1
+                ), "exact_topk only works if n_instances = 1"
                 # Get the exact number of active features over the batch
                 exact_topk = ((batch != 0).sum() / batch.shape[0]).item()
-                topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=config.batch_topk)
-            elif (
-                config.hardcode_topk_mask_step is not None
-                and step <= config.hardcode_topk_mask_step
-            ):
-                batch: Float[Tensor, "batch ... d_in"]
-                assert batch.shape[-1] == topk_attrs.shape[-1], (
-                    "Hardcoded topk mask only works if the input dimension is features,"
-                    "i.e. corresponds to subnetworks"
-                )
-                topk_mask = (batch != 0).float().to(device=device)
-                # Note, the below won't actually work when there is an n_instance dimension because
-                # there needs to be a different topk for each instance, and torch.topk only takes
-                # in an int. Would need code that calculates the topk mask over a for loop and
-                # concatenates the results.
-                # elif config.exact_topk:
-                #     # Instead of config.topk, use the exact number of active features over the batch
-                #     n_active = (batch != 0).sum()
-                #     topk = n_active / batch.shape[0]
-                #     topk_mask = calc_topk_mask(topk_attrs, topk, batch_topk=config.batch_topk)
+                topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=True)
             else:
                 topk_mask = calc_topk_mask(topk_attrs, config.topk, batch_topk=config.batch_topk)
             if config.distil_from_target:
@@ -842,30 +494,9 @@ def optimize(
             # Do a forward pass with only the topk subnetworks
             out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
 
-            if config.topk_l2_coeff is not None:
-                topk_l2_loss = calc_topk_l2_full_rank(
-                    subnet_param_vals=list(model.all_subnetwork_params().values()),
-                    topk_mask=topk_mask,
-                    n_params=n_params,
-                    n_instances=getattr(model, "n_instances", None),
-                )
-
             if config.topk_recon_coeff is not None:
                 assert out_topk is not None
                 topk_recon_loss = calc_recon_mse(out_topk, target_out, has_instance_dim)
-
-            if config.topk_param_attrib_coeff is not None:
-                assert pre_acts is not None and post_acts is not None
-                topk_param_attrib_loss = calc_topk_param_attrib_loss(
-                    target_out=target_out,
-                    target_params=pretrained_model.all_decomposable_params(),
-                    subnetwork_params=model.all_subnetwork_params(),
-                    topk_mask=topk_mask,
-                    target_pre_acts=pre_acts,
-                    target_post_acts=post_acts,
-                    has_instance_dim=has_instance_dim,
-                    n_params=n_params,
-                )
 
         act_recon_loss = None
         if config.act_recon_coeff is not None:
@@ -892,9 +523,6 @@ def optimize(
                 )
 
         if config.schatten_coeff is not None:
-            assert isinstance(
-                model, SPDRankPenaltyModel
-            ), "Schatten only supported for SPDRankPenaltyModel"
             mask = topk_mask if topk_mask is not None else lp_sparsity_loss_per_k
             assert mask is not None
             schatten_pnorm = config.schatten_pnorm if config.schatten_pnorm is not None else 1.0
@@ -906,106 +534,54 @@ def optimize(
                 n_params=n_params,
             )
 
-        # Sum over the k dimension (-1) and mean over the batch dimension (0)
-        lp_sparsity_loss = (
-            lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
-            if lp_sparsity_loss_per_k is not None
-            else None
-        )
+        lp_sparsity_loss = None
+        if lp_sparsity_loss_per_k is not None:
+            # Sum over the k dimension (-1) and mean over the batch dimension (0)
+            lp_sparsity_loss = lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
 
+        loss_terms = {
+            "param_match_loss": (param_match_loss, config.param_match_coeff),
+            "out_recon_loss": (out_recon_loss, config.out_recon_coeff),
+            "lp_sparsity_loss": (lp_sparsity_loss, config.lp_sparsity_coeff),
+            "topk_recon_loss": (topk_recon_loss, config.topk_recon_coeff),
+            "act_recon_loss": (act_recon_loss, config.act_recon_coeff),
+            "schatten_loss": (schatten_loss, config.schatten_coeff),
+        }
         # Add up the loss terms
         loss = torch.tensor(0.0, device=device)
-        if orthog_loss is not None:
-            assert config.orthog_coeff is not None
-            loss = loss + config.orthog_coeff * orthog_loss.mean()
-        if param_match_loss is not None:
-            assert config.param_match_coeff is not None
-            loss = loss + config.param_match_coeff * param_match_loss.mean()
-        if config.out_recon_coeff is not None:
-            loss = loss + config.out_recon_coeff * out_recon_loss.mean()
-        if lp_sparsity_loss is not None:
-            assert step_lp_sparsity_coeff is not None
-            loss = loss + step_lp_sparsity_coeff * lp_sparsity_loss.mean()
-        if topk_recon_loss is not None:
-            assert step_topk_recon_coeff is not None
-            loss = loss + step_topk_recon_coeff * topk_recon_loss.mean()
-        if topk_l2_loss is not None:
-            assert config.topk_l2_coeff is not None
-            loss = loss + config.topk_l2_coeff * topk_l2_loss.mean()
-        if topk_param_attrib_loss is not None:
-            assert config.topk_param_attrib_coeff is not None
-            loss = loss + config.topk_param_attrib_coeff * topk_param_attrib_loss.mean()
-        if act_recon_loss is not None:
-            assert config.act_recon_coeff is not None
-            loss = loss + config.act_recon_coeff * act_recon_loss.mean()
-        if schatten_loss is not None:
-            assert config.schatten_coeff is not None
-            loss = loss + config.schatten_coeff * schatten_loss.mean()
+        for loss_name, (loss_term, coeff) in loss_terms.items():
+            if coeff is not None:
+                assert loss_term is not None, f"{loss_name} is None but coeff is not"
+                loss = loss + coeff * loss_term.mean()  # Mean over n_instances dimension
 
         # Logging
         if step % config.print_freq == 0:
-            # If using multiple instances, print the losses as tensors in new lines
-            nl = "\n" if has_instance_dim else " "
             tqdm.write(f"Step {step}")
             tqdm.write(f"Total loss: {loss.item()}")
-            if step_pnorm is not None:
-                tqdm.write(f"Current pnorm:{nl}{step_pnorm}")
-            if lp_sparsity_loss is not None:
-                tqdm.write(f"LP sparsity loss:{nl}{lp_sparsity_loss}")
-            if topk_recon_loss is not None:
-                tqdm.write(f"Topk recon loss:{nl}{topk_recon_loss}")
-            tqdm.write(f"Out recon loss:{nl}{out_recon_loss}")
-            if topk_l2_loss is not None:
-                tqdm.write(f"topk l2 loss:{nl}{topk_l2_loss}")
-            if param_match_loss is not None:
-                tqdm.write(f"Param match loss:{nl}{param_match_loss}")
-            if orthog_loss is not None:
-                tqdm.write(f"Orthog loss:{nl}{orthog_loss}")
-            if topk_param_attrib_loss is not None:
-                tqdm.write(f"Topk param attrib loss:{nl}{topk_param_attrib_loss}")
-            if act_recon_loss is not None:
-                tqdm.write(f"Act recon loss:{nl}{act_recon_loss}")
-            if schatten_loss is not None:
-                tqdm.write(f"Schatten loss:{nl}{schatten_loss}")
-            if config.wandb_project:
-                wandb.log(
-                    {
-                        "pnorm": step_pnorm,
-                        "lr": step_lr,
-                        "total_loss": loss.mean().item(),
-                        "lp_sparsity_loss": lp_sparsity_loss.mean().item()
-                        if lp_sparsity_loss is not None
-                        else None,
-                        "topk_recon_loss": topk_recon_loss.mean().item()
-                        if topk_recon_loss is not None
-                        else None,
-                        "recon_loss": out_recon_loss.mean().item(),
-                        "param_match_loss": param_match_loss.mean().item()
-                        if param_match_loss is not None
-                        else None,
-                        "topk_l2_loss": topk_l2_loss.mean().item()
-                        if topk_l2_loss is not None
-                        else None,
-                        "orthog_loss": orthog_loss.mean().item()
-                        if orthog_loss is not None
-                        else None,
-                        "topk_param_attrib_loss": topk_param_attrib_loss.mean().item()
-                        if topk_param_attrib_loss is not None
-                        else None,
-                        "act_recon_loss": act_recon_loss.mean().item()
-                        if act_recon_loss is not None
-                        else None,
-                        "schatten_loss": schatten_loss.mean().item()
-                        if schatten_loss is not None
-                        else None,
-                    },
-                    step=step,
-                )
+            tqdm.write(f"lr: {step_lr}")
+            for loss_name, (val, _) in loss_terms.items():
+                if val is not None:
+                    val_repr = f"\n{val.tolist()}" if val.numel() > 1 else f" {val.item()}"
+                    tqdm.write(f"{loss_name}:{val_repr}")
 
+            if config.wandb_project:
+                metrics = {
+                    "pnorm": config.pnorm,
+                    "lr": step_lr,
+                    "total_loss": loss.item(),
+                    **{
+                        name: val.mean().item() if val is not None else None
+                        for name, (val, _) in loss_terms.items()
+                    },
+                }
+                wandb.log(metrics, step=step)
+
+        # Make plots
         if (
             plot_results_fn is not None
             and config.image_freq is not None
             and step % config.image_freq == 0
+            and (step > 0 or config.image_on_first_step)
         ):
             fig_dict = plot_results_fn(
                 model=model,
@@ -1024,6 +600,7 @@ def optimize(
                     step=step,
                 )
 
+        # Save model
         if (
             (config.save_freq is not None and step % config.save_freq == 0 and step > 0)
             or step == config.steps
@@ -1046,9 +623,7 @@ def optimize(
                 wandb.log({"grad_norm": grad_norm}, step=step)
 
             if config.unit_norm_matrices:
-                assert isinstance(
-                    model, SPDRankPenaltyModel
-                ), "Can only norm matrices in SPDRankPenaltyModel instances"
+                assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
                 model.fix_normalized_adam_gradients()
 
             opt.step()

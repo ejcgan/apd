@@ -1,14 +1,7 @@
-import einops
 import torch
-import torch.nn as nn
 from jaxtyping import Float
 
-from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDFullRankTransformer,
-    PiecewiseFunctionSPDRankPenaltyTransformer,
-    PiecewiseFunctionSPDTransformer,
-    PiecewiseFunctionTransformer,
-)
+from spd.experiments.piecewise.models import PiecewiseFunctionSPDTransformer
 from spd.experiments.piecewise.piecewise_dataset import PiecewiseDataset
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.run_spd import (
@@ -20,9 +13,7 @@ from spd.utils import BatchedDataLoader, calc_neuron_indices, set_seed
 
 
 # Create a simple Piecewise config that we can use in multiple tests
-def get_piecewise_config(
-    handcoded_AB: bool = False, n_layers: int = 2, simple_bias: bool = True
-) -> PiecewiseConfig:
+def get_piecewise_config(n_layers: int = 2, simple_bias: bool = True) -> PiecewiseConfig:
     return PiecewiseConfig(
         n_functions=5,  # Only works when n_functions==k-1. TODO: Verify that we want this.
         neurons_per_function=10,
@@ -31,7 +22,6 @@ def get_piecewise_config(
         range_min=0.0,
         range_max=5.0,
         k=6,
-        handcoded_AB=handcoded_AB,
         simple_bias=simple_bias,
     )
 
@@ -59,10 +49,7 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
         param_map[f"mlp_{i}.input_layer.weight"] = f"mlp_{i}.input_layer.weight"
         param_map[f"mlp_{i}.output_layer.weight"] = f"mlp_{i}.output_layer.weight"
 
-    assert isinstance(
-        piecewise_model_spd,
-        PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer,
-    )
+    assert isinstance(piecewise_model_spd, PiecewiseFunctionSPDTransformer)
     optimize(
         model=piecewise_model_spd,
         config=config,
@@ -86,27 +73,8 @@ def piecewise_decomposition_optimize_test(config: Config, check_A_changed: bool 
     assert torch.allclose(piecewise_model_spd.W_U.weight, initial_W_U)
 
 
-# TODO: Debug why this breaks for full_rank even though piecewise_decomposition.py works
-# def test_piecewise_batch_topk_no_l2_handcoded_AB() -> None:
-#     config = Config(
-#         spd_type="full_rank",
-#         topk=4,
-#         batch_topk=True,
-#         batch_size=4,  # Needs to be enough to have at least 1 control bit on in two steps
-#         steps=2,
-#         print_freq=2,
-#         save_freq=None,
-#         lr=1e-3,
-#         topk_recon_coeff=1,
-#         topk_l2_coeff=None,
-#         task_config=get_piecewise_config(handcoded_AB=True, n_layers=1),
-#     )
-#     piecewise_decomposition_optimize_test(config, check_A_changed=False)
-
-
 def test_piecewise_batch_topk_no_l2() -> None:
     config = Config(
-        spd_type="rank_penalty",
         topk=4,
         batch_topk=True,
         batch_size=4,
@@ -115,7 +83,6 @@ def test_piecewise_batch_topk_no_l2() -> None:
         save_freq=None,
         lr=1e-3,
         topk_recon_coeff=1,
-        topk_l2_coeff=None,
         task_config=get_piecewise_config(),
     )
     piecewise_decomposition_optimize_test(config)
@@ -123,7 +90,6 @@ def test_piecewise_batch_topk_no_l2() -> None:
 
 def test_piecewise_batch_topk_and_l2() -> None:
     config = Config(
-        spd_type="rank_penalty",
         topk=4,
         batch_topk=True,
         batch_size=4,
@@ -132,7 +98,6 @@ def test_piecewise_batch_topk_and_l2() -> None:
         save_freq=None,
         lr=1e-3,
         topk_recon_coeff=1,
-        topk_l2_coeff=0.1,
         task_config=get_piecewise_config(),
     )
     piecewise_decomposition_optimize_test(config)
@@ -140,7 +105,6 @@ def test_piecewise_batch_topk_and_l2() -> None:
 
 def test_piecewise_topk_and_l2() -> None:
     config = Config(
-        spd_type="rank_penalty",
         topk=4,
         batch_topk=False,
         batch_size=4,
@@ -149,7 +113,6 @@ def test_piecewise_topk_and_l2() -> None:
         save_freq=None,
         lr=1e-3,
         topk_recon_coeff=1,
-        topk_l2_coeff=0.1,
         task_config=get_piecewise_config(),
     )
     piecewise_decomposition_optimize_test(config)
@@ -157,7 +120,6 @@ def test_piecewise_topk_and_l2() -> None:
 
 def test_piecewise_lp() -> None:
     config = Config(
-        spd_type="rank_penalty",
         topk=None,
         batch_topk=False,
         batch_size=4,
@@ -167,7 +129,6 @@ def test_piecewise_lp() -> None:
         lr=1e-3,
         lp_sparsity_coeff=0.01,
         pnorm=0.9,
-        topk_l2_coeff=None,
         task_config=get_piecewise_config(),
     )
     piecewise_decomposition_optimize_test(config)
@@ -175,7 +136,6 @@ def test_piecewise_lp() -> None:
 
 def test_piecewise_lp_simple_bias_false() -> None:
     config = Config(
-        spd_type="rank_penalty",
         topk=None,
         batch_topk=False,
         batch_size=4,
@@ -185,7 +145,6 @@ def test_piecewise_lp_simple_bias_false() -> None:
         lr=1e-3,
         lp_sparsity_coeff=0.01,
         pnorm=0.9,
-        topk_l2_coeff=None,
         task_config=get_piecewise_config(simple_bias=False),
     )
     piecewise_decomposition_optimize_test(config)
@@ -260,156 +219,3 @@ def test_calc_neuron_indices():
     for i in range(2):
         for j in range(4):
             torch.testing.assert_close(indices[i][j], expected_indices[i][j])
-
-
-def test_piecewise_spd_full_rank_equivalence() -> None:
-    device = "cpu"
-    set_seed(0)
-
-    batch_size = 4
-    n_inputs = 4  # 3 functions + 1 input
-    d_mlp = 6
-    n_layers = 2
-    k = 1  # Single subnetwork
-
-    # Create a target PiecewiseFunctionTransformer
-    target_model = PiecewiseFunctionTransformer(
-        n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers
-    ).to(device)
-
-    # Init all params to random values
-    for name, param in target_model.named_parameters():
-        # Except for the output_layer biases which should remain zero (that's the standard
-        # setup we're using for piecewise)
-        if "output_layer.bias" in name:
-            param.data = torch.zeros_like(param.data)
-        else:
-            param.data = torch.randn_like(param.data)
-
-    # Create the SPD model with k=1
-    spd_model = PiecewiseFunctionSPDFullRankTransformer(
-        n_inputs=n_inputs, d_mlp=d_mlp, n_layers=n_layers, k=k, init_scale=1.0
-    ).to(device)
-
-    # Copy parameters from target model to SPD model
-    spd_model.W_E.weight.data = target_model.W_E.weight.data
-    spd_model.W_U.weight.data = target_model.W_U.weight.data
-    spd_model.set_subnet_to_target(target_model, dim=0)
-
-    # Create a random input
-    input_data: Float[torch.Tensor, "batch n_inputs"] = torch.rand(
-        batch_size, n_inputs, device=device
-    )
-
-    # Forward pass through both models
-    target_output, _, target_post_acts = target_model(input_data)
-    # Note that the target_post_acts should be the same as the "layer_acts" from the SPD model
-    spd_output, spd_layer_acts, _ = spd_model(input_data)
-
-    # Assert outputs are the same
-    assert torch.allclose(target_output, spd_output, atol=1e-6), "Outputs do not match"
-
-    # Assert activations are the same for all the matching activations that we have stored
-    # We haven't stored the post/layer-activations for the biases in the SPD model, so we only
-    # compare the activations for values that we have stored
-    for layer_name, target_act in target_post_acts.items():
-        if layer_name in spd_layer_acts:
-            spd_act = spd_layer_acts[layer_name]
-            assert torch.allclose(
-                target_act, spd_act, atol=1e-6
-            ), f"Activations do not match for layer {layer_name}"
-
-
-def test_piecewise_spd_rank_penalty_rank_one_equivalence() -> None:
-    """Test that PiecewiseFunctionSPDTransformer output and internal acts match
-    PiecewiseFunctionSPDRankPenaltyTransformer when m=1.
-
-    We set the bias and embeddings as the same for both models.
-    We directly copy the A and B matrices from the SPD model to the rank penalty model
-    since m=1 makes them equivalent.
-    """
-    set_seed(0)
-
-    batch_size = 4
-    n_inputs = 3
-    d_mlp = 8
-    n_layers = 1
-    k = 4
-    m = 1
-    init_scale = 1.0
-
-    device = "cpu"
-
-    # Create the SPD model
-    spd_model = PiecewiseFunctionSPDTransformer(
-        n_inputs=n_inputs,
-        d_mlp=d_mlp,
-        n_layers=n_layers,
-        k=k,
-        init_scale=init_scale,
-    ).to(device)
-
-    # Randomly initialize params again to avoid zeros
-    for param in spd_model.parameters():
-        if param.dim() >= 2:
-            nn.init.xavier_normal_(param)
-        else:
-            # # For 1D parameters (biases), initialize with small random values
-            nn.init.uniform_(param, -0.1, 0.1)
-
-    # Create the rank penalty model with m=1
-    rank_penalty_model = PiecewiseFunctionSPDRankPenaltyTransformer(
-        n_inputs=n_inputs,
-        d_mlp=d_mlp,
-        n_layers=n_layers,
-        k=k,
-        init_scale=init_scale,
-        m=m,
-    ).to(device)
-
-    # Copy embedding matrices
-    rank_penalty_model.W_E.weight.data[:] = spd_model.W_E.weight.data.clone()
-    rank_penalty_model.W_U.weight.data[:] = spd_model.W_U.weight.data.clone()
-
-    # For each MLP layer, copy the A and B matrices and biases
-    for i in range(n_layers):
-        # Copy biases
-        rank_penalty_model.mlps[i].linear1.bias.data[:] = spd_model.mlps[i].bias1.data.clone()
-
-        # Copy A and B matrices for input layer
-        rank_penalty_model.mlps[i].linear1.A.data[:, :, :] = einops.rearrange(
-            spd_model.mlps[i].linear1.A.data, "d_embed k -> k d_embed 1"
-        )
-        rank_penalty_model.mlps[i].linear1.B.data[:, :, :] = einops.rearrange(
-            spd_model.mlps[i].linear1.B.data, "k d_mlp -> k 1 d_mlp"
-        )
-
-        # Copy A and B matrices for output layer
-        rank_penalty_model.mlps[i].linear2.A.data[:, :, :] = einops.rearrange(
-            spd_model.mlps[i].linear2.A.data, "d_mlp k -> k d_mlp 1"
-        )
-        rank_penalty_model.mlps[i].linear2.B.data[:, :, :] = einops.rearrange(
-            spd_model.mlps[i].linear2.B.data, "k d_embed -> k 1 d_embed"
-        )
-
-    # Create a random input
-    input_data: Float[torch.Tensor, "batch n_inputs"] = torch.rand(
-        batch_size, n_inputs, device=device
-    )
-
-    # Forward pass through both models
-    spd_output, spd_layer_acts, spd_inner_acts = spd_model(input_data)
-    rank_penalty_output, rank_penalty_layer_acts, rank_penalty_inner_acts = rank_penalty_model(
-        input_data
-    )
-
-    # Assert outputs are the same
-    assert torch.allclose(spd_output, rank_penalty_output, atol=1e-6), "Outputs do not match"
-
-    # Assert activations are the same for all layers
-    for layer_name in spd_layer_acts:
-        spd_act = spd_layer_acts[layer_name]
-        rank_penalty_act = rank_penalty_layer_acts[layer_name]
-        assert torch.allclose(
-            spd_act, rank_penalty_act, atol=1e-6
-        ), f"Layer activations do not match for layer {layer_name}"

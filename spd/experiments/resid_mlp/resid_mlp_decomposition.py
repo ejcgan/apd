@@ -20,8 +20,8 @@ from tqdm import tqdm
 
 from spd.experiments.resid_mlp.models import (
     ResidualMLPModel,
-    ResidualMLPSPDRankPenaltyConfig,
-    ResidualMLPSPDRankPenaltyModel,
+    ResidualMLPSPDConfig,
+    ResidualMLPSPDModel,
 )
 from spd.experiments.resid_mlp.plotting import (
     analyze_per_feature_performance,
@@ -83,7 +83,7 @@ def get_run_name(
 
 
 def calc_n_active_features_per_subnet(
-    model: ResidualMLPSPDRankPenaltyModel, cutoff: float, device: str
+    model: ResidualMLPSPDModel, cutoff: float, device: str
 ) -> tuple[Float[Tensor, "n_instances k"], Float[Tensor, "n_instances n_features"]]:
     """Calculate the number of active features per subnet (and per instance if n_instances > 1)."""
     n_active_features_per_subnet: Float[Tensor, "n_instances k"] = torch.zeros(
@@ -151,7 +151,7 @@ def plot_subnetwork_attributions(
 
 
 def plot_multiple_subnetwork_params(
-    model: ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPSPDModel,
     out_dir: Path | None,
     step: int | None = None,
 ) -> plt.Figure:
@@ -226,7 +226,7 @@ def plot_multiple_subnetwork_params(
 
 
 def plot_subnet_categories(
-    model: ResidualMLPSPDRankPenaltyModel, device: str, cutoff: float = 4e-2
+    model: ResidualMLPSPDModel, device: str, cutoff: float = 4e-2
 ) -> plt.Figure:
     n_active_features_per_subnet, active_feature_counts_per_subnet = (
         calc_n_active_features_per_subnet(model, cutoff=cutoff, device=device)
@@ -276,7 +276,7 @@ def plot_subnet_categories(
 
 
 def resid_mlp_plot_results_fn(
-    model: ResidualMLPSPDRankPenaltyModel,
+    model: ResidualMLPSPDModel,
     target_model: ResidualMLPModel,
     step: int | None,
     out_dir: Path | None,
@@ -456,7 +456,6 @@ def resid_mlp_plot_results_fn(
     ############################################################################################
     # Subnetwork attributions
     ############################################################################################
-    assert config.spd_type in ("full_rank", "rank_penalty")
     attribution_scores = collect_subnetwork_attributions(
         spd_model=model,
         target_model=target_model,
@@ -576,24 +575,21 @@ def main(
     )
 
     # Create the SPD model
-    if config.spd_type == "rank_penalty":
-        model_config = ResidualMLPSPDRankPenaltyConfig(
-            n_instances=target_model.config.n_instances,
-            n_features=target_model.config.n_features,
-            d_embed=target_model.config.d_embed,
-            d_mlp=target_model.config.d_mlp,
-            n_layers=target_model.config.n_layers,
-            act_fn_name=target_model.config.act_fn_name,
-            apply_output_act_fn=target_model.config.apply_output_act_fn,
-            in_bias=target_model.config.in_bias,
-            out_bias=target_model.config.out_bias,
-            init_scale=config.task_config.init_scale,
-            k=config.task_config.k,
-            m=config.m,
-        )
-        model = ResidualMLPSPDRankPenaltyModel(config=model_config).to(device)
-    else:
-        raise ValueError(f"Unknown/unsupported spd_type: {config.spd_type}")
+    model_config = ResidualMLPSPDConfig(
+        n_instances=target_model.config.n_instances,
+        n_features=target_model.config.n_features,
+        d_embed=target_model.config.d_embed,
+        d_mlp=target_model.config.d_mlp,
+        n_layers=target_model.config.n_layers,
+        act_fn_name=target_model.config.act_fn_name,
+        apply_output_act_fn=target_model.config.apply_output_act_fn,
+        in_bias=target_model.config.in_bias,
+        out_bias=target_model.config.out_bias,
+        init_scale=config.task_config.init_scale,
+        k=config.task_config.k,
+        m=config.m,
+    )
+    model = ResidualMLPSPDModel(config=model_config).to(device)
 
     # Use the target_model's embedding matrix and don't train it further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()

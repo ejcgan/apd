@@ -11,4 +11,4 @@ command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/piecewise/piecewise_lp_config.yaml
+- spd/experiments/piecewise/piecewise_config.yaml

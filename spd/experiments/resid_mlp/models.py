@@ -14,11 +14,15 @@ from torch import Tensor, nn
 from wandb.apis.public import Run
 
 from spd.log import logger
-from spd.models.base import Model, SPDRankPenaltyModel
-from spd.models.components import InstancesParamComponentsRankPenalty
+from spd.models.base import Model, SPDModel
+from spd.models.components import InstancesParamComponents
 from spd.run_spd import Config, ResidualMLPTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
-from spd.utils import init_param_, remove_grad_parallel_to_subnetwork_vecs
+from spd.utils import (
+    handle_deprecated_config_keys,
+    init_param_,
+    remove_grad_parallel_to_subnetwork_vecs,
+)
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
@@ -88,8 +92,8 @@ class InstancesMLP(nn.Module):
         return out2, pre_acts, post_acts
 
 
-class InstancesMLPComponentsRankPenalty(nn.Module):
-    """A module that contains two linear layers with an activation in between for rank penalty SPD.
+class InstancesMLPComponents(nn.Module):
+    """A module that contains two linear layers with an activation in between for SPD.
 
     Each linear layer is decomposed into A and B matrices, where the weight matrix W = A @ B.
     The biases are (optionally) part of the "linear" layers, and have a subnetwork dimension.
@@ -110,7 +114,7 @@ class InstancesMLPComponentsRankPenalty(nn.Module):
     ):
         super().__init__()
         self.act_fn = act_fn
-        self.linear1 = InstancesParamComponentsRankPenalty(
+        self.linear1 = InstancesParamComponents(
             n_instances=n_instances,
             in_dim=d_embed,
             out_dim=d_mlp,
@@ -120,7 +124,7 @@ class InstancesMLPComponentsRankPenalty(nn.Module):
             init_scale=init_scale,
             m=m,
         )
-        self.linear2 = InstancesParamComponentsRankPenalty(
+        self.linear2 = InstancesParamComponents(
             n_instances=n_instances,
             in_dim=d_mlp,
             out_dim=d_embed,
@@ -350,8 +354,8 @@ class ResidualMLPModel(Model):
         return params
 
 
-class ResidualMLPSPDRankPenaltyPaths(BaseModel):
-    """Paths to output files from a ResidualMLPSPDRankPenaltyModel training run."""
+class ResidualMLPSPDPaths(BaseModel):
+    """Paths to output files from a ResidualMLPSPDModel training run."""
 
     final_config: Path
     resid_mlp_train_config: Path
@@ -359,7 +363,7 @@ class ResidualMLPSPDRankPenaltyPaths(BaseModel):
     checkpoint: Path
 
 
-class ResidualMLPSPDRankPenaltyConfig(BaseModel):
+class ResidualMLPSPDConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     n_instances: PositiveInt
     n_features: PositiveInt
@@ -376,10 +380,10 @@ class ResidualMLPSPDRankPenaltyConfig(BaseModel):
     init_type: Literal["kaiming_uniform", "xavier_normal"] = "xavier_normal"
 
 
-class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
+class ResidualMLPSPDModel(SPDModel):
     def __init__(
         self,
-        config: ResidualMLPSPDRankPenaltyConfig,
+        config: ResidualMLPSPDConfig,
     ):
         super().__init__()
         self.config = config
@@ -399,7 +403,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         self.layers = nn.ModuleList(
             [
-                InstancesMLPComponentsRankPenalty(
+                InstancesMLPComponents(
                     n_instances=config.n_instances,
                     d_embed=config.d_embed,
                     d_mlp=config.d_mlp,
@@ -531,7 +535,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
             remove_grad_parallel_to_subnetwork_vecs(mlp.linear2.A.data, mlp.linear2.A.grad)
 
     @staticmethod
-    def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPSPDRankPenaltyPaths:
+    def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPSPDPaths:
         """Download the relevant files from a wandb run."""
         api = wandb.Api()
         run: Run = api.run(wandb_project_run_id)
@@ -547,7 +551,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
         label_coeffs_path = download_wandb_file(run, run_dir, "label_coeffs.json")
         checkpoint_path = download_wandb_file(run, run_dir, checkpoint.name)
         logger.info(f"Downloaded checkpoint from {checkpoint_path}")
-        return ResidualMLPSPDRankPenaltyPaths(
+        return ResidualMLPSPDPaths(
             final_config=final_config_path,
             resid_mlp_train_config=resid_mlp_train_config_path,
             label_coeffs=label_coeffs_path,
@@ -557,7 +561,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
     @classmethod
     def from_pretrained(
         cls, path: str | Path
-    ) -> tuple["ResidualMLPSPDRankPenaltyModel", Config, Float[Tensor, "n_instances n_features"]]:
+    ) -> tuple["ResidualMLPSPDModel", Config, Float[Tensor, "n_instances n_features"]]:
         """Fetch a pretrained model from wandb or a local path to a checkpoint.
 
         Args:
@@ -572,7 +576,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
             wandb_path = path.removeprefix(WANDB_PATH_PREFIX)
             paths = cls._download_wandb_files(wandb_path)
         else:
-            paths = ResidualMLPSPDRankPenaltyPaths(
+            paths = ResidualMLPSPDPaths(
                 final_config=Path(path).parent / "final_config.yaml",
                 resid_mlp_train_config=Path(path).parent / "resid_mlp_train_config.yaml",
                 label_coeffs=Path(path).parent / "label_coeffs.json",
@@ -581,6 +585,7 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
 
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
+        final_config_dict = handle_deprecated_config_keys(final_config_dict)
         config = Config(**final_config_dict)
 
         with open(paths.resid_mlp_train_config) as f:
@@ -590,10 +595,10 @@ class ResidualMLPSPDRankPenaltyModel(SPDRankPenaltyModel):
             label_coeffs = torch.tensor(json.load(f))
 
         assert isinstance(config.task_config, ResidualMLPTaskConfig)
-        resid_mlp_spd_rank_penalty_config = ResidualMLPSPDRankPenaltyConfig(
+        resid_mlp_spd_config = ResidualMLPSPDConfig(
             **resid_mlp_train_config_dict["resid_mlp_config"], k=config.task_config.k, m=config.m
         )
-        model = cls(config=resid_mlp_spd_rank_penalty_config)
+        model = cls(config=resid_mlp_spd_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
         model.load_state_dict(params)
         return model, config, label_coeffs

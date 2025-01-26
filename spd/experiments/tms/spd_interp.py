@@ -8,7 +8,7 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from spd.experiments.tms.models import TMSModel, TMSSPDRankPenaltyModel
+from spd.experiments.tms.models import TMSModel, TMSSPDModel
 from spd.plotting import collect_sparse_dataset_mse_losses, plot_sparse_feature_mse_line_plot
 from spd.run_spd import TMSTaskConfig
 from spd.settings import REPO_ROOT
@@ -235,7 +235,7 @@ instance_idx = 2
 run_id = path.split("/")[-1]
 
 # Plot showing polygons for each subnet
-model, config = TMSSPDRankPenaltyModel.from_pretrained(path)
+model, config = TMSSPDModel.from_pretrained(path)
 subnets = model.all_subnetwork_params()["W"].detach().cpu()
 
 assert isinstance(config.task_config, TMSTaskConfig)
@@ -243,7 +243,8 @@ target_model, target_model_train_config_dict = TMSModel.from_pretrained(
     config.task_config.pretrained_model_path
 )
 
-out_dir = REPO_ROOT / "spd/experiments/tms/out"
+out_dir = REPO_ROOT / "spd/experiments/tms/out/"
+out_dir.mkdir(parents=True, exist_ok=True)
 
 
 # %%

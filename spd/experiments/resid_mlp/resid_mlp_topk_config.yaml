@@ -2,13 +2,11 @@
 wandb_project: spd-resid-mlp
 wandb_run_name: null
 wandb_run_name_prefix: ""
-spd_type: rank_penalty
 unit_norm_matrices: true
 seed: 0
 # topk: 1
 topk: 1.28
 m: null
-hardcode_topk_mask_step: null
 pnorm: 1
 batch_topk: true
 param_match_coeff: 1.0
@@ -24,6 +22,7 @@ image_freq: 5_000
 save_freq: 10_000
 lr_warmup_pct: 0.01
 lr_schedule: cosine
+image_on_first_step: false
 task_config:
   task_name: residual_mlp
   init_scale: 2.0
@@ -31,19 +30,16 @@ task_config:
   feature_probability: 0.01
   data_generation_type: "at_least_zero_active"
   pretrained_model_path: wandb:spd-train-resid-mlp/runs/zas5yjdl # 1 layer
-  # pretrained_model_path: wandb:spd-train-resid-mlp/runs/zszf82yg # 1 layer synced inputs
 
 
 ########## 2 layer ##########
 # wandb_project: spd-resid-mlp
 # wandb_run_name: null
 # wandb_run_name_prefix: ""
-# spd_type: rank_penalty
 # unit_norm_matrices: false
 # seed: 0
 # topk: 1.28 # bs=256
 # m: null
-# hardcode_topk_mask_step: null
 # pnorm: 1
 # batch_topk: true
 # param_match_coeff: 1.0
@@ -59,6 +55,7 @@ task_config:
 # save_freq: 10_000
 # lr_warmup_pct: 0.01
 # lr_schedule: cosine
+# image_on_first_step: false
 # task_config:
 #   task_name: residual_mlp
 #   init_scale: 2.0

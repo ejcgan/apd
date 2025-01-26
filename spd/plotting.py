@@ -9,9 +9,9 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDRankPenaltyModel
-from spd.experiments.tms.models import TMSModel, TMSSPDRankPenaltyModel
-from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
+from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDModel
+from spd.experiments.tms.models import TMSModel, TMSSPDModel
+from spd.models.base import Model, SPDModel
 from spd.run_spd import Config
 from spd.utils import (
     DataGenerationType,
@@ -75,7 +75,7 @@ def plot_subnetwork_correlations(
         tuple[Float[Tensor, "batch n_inputs"] | Float[Tensor, "batch n_instances? n_inputs"], Any]
     ],
     target_model: Model,
-    spd_model: SPDFullRankModel | SPDRankPenaltyModel,
+    spd_model: SPDModel,
     config: Config,
     device: str,
     n_forward_passes: int = 100,
@@ -158,7 +158,7 @@ def plot_subnetwork_correlations(
 def collect_sparse_dataset_mse_losses(
     dataset: SparseFeatureDataset,
     target_model: ResidualMLPModel | TMSModel,
-    spd_model: TMSSPDRankPenaltyModel | ResidualMLPSPDRankPenaltyModel,
+    spd_model: TMSSPDModel | ResidualMLPSPDModel,
     batch_size: int,
     device: str,
     topk: float,

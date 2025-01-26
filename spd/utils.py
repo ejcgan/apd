@@ -1,5 +1,5 @@
 import random
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
@@ -8,12 +8,13 @@ import numpy as np
 import torch
 import yaml
 from jaxtyping import Float, Int
-from pydantic import BaseModel
+from pydantic import BaseModel, PositiveFloat
 from pydantic.v1.utils import deep_update
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
-from spd.models.base import Model, SPDFullRankModel, SPDModel, SPDRankPenaltyModel
+from spd.log import logger
+from spd.models.base import Model, SPDModel
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
@@ -33,6 +34,17 @@ COLOR_PALETTE = [
     "#56B4E9",
 ]
 
+DEPRECATED_CONFIG_KEYS = [
+    "topk_param_attrib_coeff",
+    "orthog_coeff",
+    "hardcode_topk_mask_step",
+    "pnorm_end",
+    "topk_l2_coeff",
+    "spd_type",
+    "sparsity_warmup_pct",
+]
+RENAMED_CONFIG_KEYS = {"topk_act_recon_coeff": "act_recon_coeff"}
+
 
 def to_root_path(path: str | Path) -> Path:
     """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
@@ -47,58 +59,6 @@ def from_root_path(path: str | Path) -> Path:
     except ValueError:
         # If the path is not relative to REPO_ROOT, return the original path
         return path
-
-
-def permute_to_identity(x: torch.Tensor, normalize_rows: bool = False) -> torch.Tensor:
-    """Permute the rows of a matrix such that the maximum value in each column is on the leading
-    diagonal.
-
-    Args:
-        x: The input matrix.
-        normalize_rows: Whether to normalize the rows of the output matrix.
-    """
-
-    # Assert that arr only has two dimensions and that it is square
-    assert x.dim() == 2
-    assert x.shape[0] == x.shape[1], "Must have the same number of subnetworks (k) as features"
-
-    # Get the number of rows and columns
-    n_rows, n_cols = x.shape
-
-    # Find the row index of the maximum value in each column
-    max_row_indices_raw = torch.argmax(x, dim=0).tolist()
-
-    # Get the indices of the non unique max_row_indices
-    unique_indices = set()
-    duplicate_indices = []
-    for i in range(n_rows):
-        if max_row_indices_raw[i] in unique_indices:
-            duplicate_indices.append(i)
-        else:
-            unique_indices.add(max_row_indices_raw[i])
-
-    remaining_indices = [i for i in range(n_rows) if i not in unique_indices]
-    # Now we want to swap out the duplicate indices with any remaining indices
-    for i in range(len(duplicate_indices)):
-        max_row_indices_raw[duplicate_indices[i]] = remaining_indices[i]
-
-    # Ensure that we output a permuted version and have no duplicate rows
-    assert set(max_row_indices_raw) == set(range(n_rows))
-
-    out_rows = x[max_row_indices_raw]
-
-    if normalize_rows:
-        out_rows = out_rows / out_rows.norm(dim=1, p=2, keepdim=True)
-    return out_rows
-
-
-def calculate_closeness_to_identity(x: Float[Tensor, "... a b"]) -> float:
-    """Frobenius norm of the difference between the input matrix and the identity matrix.
-
-    If x has more than two dimensions, the result is meaned over all but the final two dimensions.
-    """
-    eye = torch.eye(n=x.shape[-2], m=x.shape[-1], device=x.device)
-    return torch.norm(x - eye, p="fro", dim=(-2, -1)).mean().item()
 
 
 def set_seed(seed: int | None) -> None:
@@ -132,6 +92,7 @@ def load_config(config_path_or_obj: Path | str | T, config_model: type[T]) -> T:
     assert Path(config_path_or_obj).exists(), f"Config file {config_path_or_obj} does not exist."
     with open(config_path_or_obj) as f:
         config_dict = yaml.safe_load(f)
+    config_dict = handle_deprecated_config_keys(config_dict)
     return config_model(**config_dict)
 
 
@@ -238,8 +199,8 @@ def calc_grad_attributions(
     pre_acts by the subnet parameters.
 
     NOTE: Multplying the pre_acts by the subnet parameters would be less efficient than multiplying
-    the pre_acts by A and then B in the case where subnet_params is rank one or rank penalty. In
-    the future, we can implement this more efficient version. For now, this simpler version is fine.
+    the pre_acts by A and then B. In the future, we can implement this more efficient version. For
+    now, this simpler version is fine.
 
     Note: This code may be run in between the training forward pass, and the loss.backward() and
     opt.step() calls; it must not mess with the training. The reason the current implementation is
@@ -290,60 +251,8 @@ def calc_grad_attributions(
     return attribution_scores
 
 
-def calc_grad_attributions_full_rank_per_layer(
-    target_out: Float[Tensor, "batch out_dim"] | Float[Tensor, "batch n_instances out_dim"],
-    pre_acts: dict[str, Float[Tensor, "batch d_in"] | Float[Tensor, "batch n_instances d_in"]],
-    post_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]],
-    subnet_params: dict[
-        str, Float[Tensor, "k d_in d_out"] | Float[Tensor, "n_instances k d_in d_out"]
-    ],
-    k: int,
-) -> list[Float[Tensor, "... k"]]:
-    """Calculate the attributions for each layer.
-
-    This differs from calc_attributions_full_rank in that it returns a list of attribution scores
-    for each layer that are the sum of squares of output features, rather than taking the sum of
-    squared attributions across layers.
-
-    i.e. we do sum_{n_features}(activation * grad)^2 for each layer, rather than
-    sum_{n_features}(sum_{layers}(activation * grad))^2.
-
-    Note that we don't have an ablation version of this for computational reasons.
-
-    Args:
-        out: The output of the model.
-        pre_acts: The activations at the output of each subnetwork before being summed.
-        subnet_params: The subnet parameter matrix at each layer.
-        layer_acts: The activations at the output of each layer after being summed.
-        k: The number of subnetwork parameters.
-
-    Returns:
-        The list of attribution scores for each layer.
-    """
-    assert post_acts.keys() == pre_acts.keys() == subnet_params.keys()
-    attr_shape = target_out.shape[:-1] + (k,)  # (batch, k) or (batch, n_instances, k)
-    layer_attribution_scores: list[Float[Tensor, "... k"]] = [
-        torch.zeros(attr_shape, device=target_out.device) for _ in range(len(pre_acts))
-    ]
-    for feature_idx in range(target_out.shape[-1]):
-        grad_post_acts: tuple[Float[Tensor, "... k"], ...] = torch.autograd.grad(
-            target_out[..., feature_idx].sum(), list(post_acts.values()), retain_graph=True
-        )
-        for i, param_matrix_name in enumerate(post_acts.keys()):
-            inner_acts = einops.einsum(
-                pre_acts[param_matrix_name].detach().clone(),
-                subnet_params[param_matrix_name],
-                "... d_in, ... k d_in d_out -> ... k d_out",
-            )
-            layer_attribution_scores[i] += einops.einsum(
-                grad_post_acts[i].detach(), inner_acts, "... d_out ,... k d_out -> ... k"
-            ).pow(2)
-
-    return layer_attribution_scores
-
-
 def collect_subnetwork_attributions(
-    spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    spd_model: SPDModel,
     target_model: Model,
     device: str,
     n_instances: int | None = None,
@@ -383,7 +292,7 @@ def collect_subnetwork_attributions(
 
 @torch.inference_mode()
 def calc_ablation_attributions(
-    model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    model: SPDModel,
     batch: Float[Tensor, "batch ... n_features"],
     out: Float[Tensor, "batch ... d_model_out"],
 ) -> Float[Tensor, "batch ... k"]:
@@ -424,7 +333,7 @@ def calc_activation_attributions(
 
 
 def calculate_attributions(
-    model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    model: SPDModel,
     batch: Float[Tensor, "... n_features"],
     out: Float[Tensor, "... n_features"],
     target_out: Float[Tensor, "... n_features"],
@@ -525,7 +434,7 @@ def calc_neuron_indices(
 
 @torch.inference_mode()
 def remove_grad_parallel_to_subnetwork_vecs(
-    A: Float[Tensor, "... d_in _"], A_grad: Float[Tensor, "... d_in _"]
+    A: Float[Tensor, "... d_in m"], A_grad: Float[Tensor, "... d_in m"]
 ) -> None:
     """Modify the gradient by subtracting it's component parallel to the activation.
 
@@ -534,11 +443,9 @@ def remove_grad_parallel_to_subnetwork_vecs(
     This is to stop Adam from changing the norm of A. Note that this will not completely prevent
     Adam from changing the norm due to Adam's (m/(sqrt(v) + eps)) term not preserving the norm
     direction.
-
-    The final dimension is k in the case of rank one and m in the case of full rank.
     """
-    parallel_component = einops.einsum(A_grad, A, "... d_in _, ... d_in _ -> ... _")
-    A_grad -= einops.einsum(parallel_component, A, "... _, ... d_in _ -> ... d_in _")
+    parallel_component = einops.einsum(A_grad, A, "... d_in m, ... d_in m -> ... m")
+    A_grad -= einops.einsum(parallel_component, A, "... m, ... d_in m -> ... d_in m")
 
 
 class SPDOutputs(NamedTuple):
@@ -553,18 +460,14 @@ class SPDOutputs(NamedTuple):
     )
     layer_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]]
     inner_acts: dict[
-        str,
-        Float[Tensor, "batch k d_out"]  # full rank
-        | Float[Tensor, "batch n_instances k d_out"]  # full rank
-        | Float[Tensor, "batch k"]  # rank one
-        | Float[Tensor, "batch n_instances k"],  # rank one
+        str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
     ]
     attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
     topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
 
 
 def run_spd_forward_pass(
-    spd_model: SPDModel | SPDFullRankModel | SPDRankPenaltyModel,
+    spd_model: SPDModel,
     target_model: Model,
     input_array: Float[Tensor, "batch n_inputs"],
     attribution_type: Literal["gradient", "ablation", "activation"],
@@ -847,3 +750,48 @@ def calc_recon_mse(
     else:
         raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
     return recon_loss
+
+
+def handle_deprecated_config_keys(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Remove deprecated config keys and change names of any keys that have been renamed."""
+    for key, value in config_dict.items():
+        if key in DEPRECATED_CONFIG_KEYS:
+            if value is not None:
+                raise ValueError(f"{key} is deprecated, but has a value: {value}")
+            del config_dict[key]
+        elif key in RENAMED_CONFIG_KEYS:
+            config_dict[RENAMED_CONFIG_KEYS[key]] = value
+    return config_dict
+
+
+def get_lr_schedule_fn(
+    lr_schedule: Literal["linear", "constant", "cosine", "exponential"],
+    lr_exponential_halflife: PositiveFloat | None = None,
+) -> Callable[[int, int], float]:
+    if lr_schedule == "linear":
+        return lambda step, steps: 1 - (step / steps)
+    elif lr_schedule == "constant":
+        return lambda *_: 1.0
+    elif lr_schedule == "cosine":
+        return lambda step, steps: 1.0 if steps == 1 else np.cos(0.5 * np.pi * step / (steps - 1))
+    elif lr_schedule == "exponential":
+        assert lr_exponential_halflife is not None  # Should have been caught by model validator
+        halflife = lr_exponential_halflife
+        gamma = 0.5 ** (1 / halflife)
+        logger.info(f"Using exponential LR schedule with halflife {halflife} steps (gamma {gamma})")
+        return lambda step, steps: gamma**step
+    else:
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
+
+
+def get_lr_with_warmup(
+    step: int,
+    steps: int,
+    lr: float,
+    lr_schedule_fn: Callable[[int, int], float],
+    lr_warmup_pct: float,
+) -> float:
+    warmup_steps = int(steps * lr_warmup_pct)
+    if step < warmup_steps:
+        return lr * (step / warmup_steps)
+    return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)

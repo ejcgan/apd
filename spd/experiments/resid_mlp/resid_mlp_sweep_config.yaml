@@ -10,11 +10,9 @@ parameters:
     values: [1e-2]
   topk_recon_coeff:
     values: [1e-1, 1e-2]
-  topk_l2_coeff:
-    values: [1e-2, 1e-3]
 
 command:
 - ${env}
 - ${interpreter}
 - ${program}
-- spd/experiments/resid_mlp/resid_mlp_topk_rank_penalty_config.yaml
+- spd/experiments/resid_mlp/resid_mlp_topk_config.yaml
