@@ -456,7 +456,6 @@ def resid_mlp_plot_results_fn(
     ############################################################################################
     # Subnetwork attributions
     ############################################################################################
-    assert config.spd_type in ("full_rank", "rank_penalty")
     attribution_scores = collect_subnetwork_attributions(
         spd_model=model,
         target_model=target_model,
@@ -576,24 +575,21 @@ def main(
     )
 
     # Create the SPD model
-    if config.spd_type == "rank_penalty":
-        model_config = ResidualMLPSPDRankPenaltyConfig(
-            n_instances=target_model.config.n_instances,
-            n_features=target_model.config.n_features,
-            d_embed=target_model.config.d_embed,
-            d_mlp=target_model.config.d_mlp,
-            n_layers=target_model.config.n_layers,
-            act_fn_name=target_model.config.act_fn_name,
-            apply_output_act_fn=target_model.config.apply_output_act_fn,
-            in_bias=target_model.config.in_bias,
-            out_bias=target_model.config.out_bias,
-            init_scale=config.task_config.init_scale,
-            k=config.task_config.k,
-            m=config.m,
-        )
-        model = ResidualMLPSPDRankPenaltyModel(config=model_config).to(device)
-    else:
-        raise ValueError(f"Unknown/unsupported spd_type: {config.spd_type}")
+    model_config = ResidualMLPSPDRankPenaltyConfig(
+        n_instances=target_model.config.n_instances,
+        n_features=target_model.config.n_features,
+        d_embed=target_model.config.d_embed,
+        d_mlp=target_model.config.d_mlp,
+        n_layers=target_model.config.n_layers,
+        act_fn_name=target_model.config.act_fn_name,
+        apply_output_act_fn=target_model.config.apply_output_act_fn,
+        in_bias=target_model.config.in_bias,
+        out_bias=target_model.config.out_bias,
+        init_scale=config.task_config.init_scale,
+        k=config.task_config.k,
+        m=config.m,
+    )
+    model = ResidualMLPSPDRankPenaltyModel(config=model_config).to(device)
 
     # Use the target_model's embedding matrix and don't train it further
     model.W_E.data[:, :] = target_model.W_E.data.detach().clone()

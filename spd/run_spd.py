@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from spd.log import logger
-from spd.models.base import Model, SPDFullRankModel, SPDRankPenaltyModel
+from spd.models.base import Model, SPDRankPenaltyModel
 from spd.types import ModelPath, Probability
 from spd.utils import (
     calc_recon_mse,
@@ -61,7 +61,6 @@ class PiecewiseConfig(BaseModel):
     target_seed: int | None = None
     dataset_seed: int | None = None
     simple_bias: bool = False
-    handcoded_AB: bool = False
 
 
 class ResidualMLPTaskConfig(BaseModel):
@@ -81,7 +80,6 @@ class Config(BaseModel):
     wandb_project: str | None = None
     wandb_run_name: str | None = None
     wandb_run_name_prefix: str = ""
-    spd_type: Literal["full_rank", "rank_penalty"] = "rank_penalty"
     seed: int = 0
     topk: PositiveFloat | None = None
     batch_topk: bool = True
@@ -98,7 +96,6 @@ class Config(BaseModel):
     act_recon_coeff: NonNegativeFloat | None = None
     param_match_coeff: NonNegativeFloat | None = 1.0
     topk_recon_coeff: NonNegativeFloat | None = None
-    topk_l2_coeff: NonNegativeFloat | None = None
     schatten_coeff: NonNegativeFloat | None = None
     schatten_pnorm: NonNegativeFloat | None = None
     lp_sparsity_coeff: NonNegativeFloat | None = None
@@ -142,9 +139,8 @@ class Config(BaseModel):
         if self.lp_sparsity_coeff is not None:
             assert self.pnorm is not None, "pnorm must be set if lp_sparsity_coeff is set"
 
-        # Check that topk_l2_coeff and topk_recon_coeff are None if topk is None
+        # Check that topk_recon_coeff is None if topk is None
         if self.topk is None:
-            assert self.topk_l2_coeff is None, "topk_l2_coeff is not None but topk is"
             assert self.topk_recon_coeff is None, "topk_recon_coeff is not None but topk is"
 
         # Give a warning if both out_recon_coeff and param_match_coeff are > 0
@@ -160,8 +156,6 @@ class Config(BaseModel):
 
         # If any of the coeffs are 0, raise a warning
         msg = "is 0, you may wish to instead set it to null to avoid calculating the loss"
-        if self.topk_l2_coeff == 0:
-            logger.warning(f"topk_l2_coeff {msg}")
         if self.topk_recon_coeff == 0:
             logger.warning(f"topk_recon_coeff {msg}")
         if self.lp_sparsity_coeff == 0:
@@ -175,13 +169,7 @@ class Config(BaseModel):
                 self.lr_exponential_halflife is not None
             ), "lr_exponential_halflife must be set if lr_schedule is exponential"
 
-        if self.spd_type in ["full_rank"]:
-            assert not self.unit_norm_matrices, "Can't unit norm matrices if using full rank"
-
         if self.schatten_coeff is not None:
-            assert (
-                self.spd_type == "rank_penalty"
-            ), "schatten_coeff is not None but spd_type is not rank_penalty"
             assert (
                 self.schatten_pnorm is not None
             ), "schatten_pnorm must be set if schatten_coeff is set"
@@ -189,16 +177,8 @@ class Config(BaseModel):
         if self.distil_from_target and not isinstance(self.task_config, PiecewiseConfig):
             raise ValueError("distil_from_target is currently only supported for piecewise")
 
-        if self.m is not None:
-            assert self.spd_type == "rank_penalty", "Cannot set m for non-rank penalty SPD"
-
-        if isinstance(self.task_config, PiecewiseConfig) and self.task_config.handcoded_AB:
-            assert (
-                self.task_config.n_layers == 1
-            ), "Handcoded AB not supported for >1 layer models due to a bug in the W_out matrices"
-
-        if isinstance(self.task_config, ResidualMLPTaskConfig):
-            assert self.spd_type == "rank_penalty", "Only rank penalty supported for residual mlp"
+        if isinstance(self.task_config, PiecewiseConfig):
+            assert not self.distil_from_target, "distil_from_target not supported for piecewise"
 
         return self
 
@@ -214,8 +194,6 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"topk{config.topk:.2e}_"
     if config.topk_recon_coeff is not None:
         run_suffix += f"topkrecon{config.topk_recon_coeff:.2e}_"
-    if config.topk_l2_coeff is not None:
-        run_suffix += f"topkl2_{config.topk_l2_coeff:.2e}_"
     if config.schatten_pnorm is not None:
         run_suffix += f"schatp{config.schatten_pnorm:.2e}_"
     if config.schatten_coeff is not None:
@@ -227,60 +205,6 @@ def get_common_run_name_suffix(config: Config) -> str:
     run_suffix += f"lr{config.lr:.2e}_"
     run_suffix += f"bs{config.batch_size}_"
     return run_suffix
-
-
-def calc_topk_l2_full_rank(
-    subnet_param_vals: list[
-        Float[Tensor, "k d_out"]
-        | Float[Tensor, "k d_in d_out"]
-        | Float[Tensor, "n_instances k d_out"]
-        | Float[Tensor, "n_instances k d_in d_out"]
-    ],
-    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
-    n_params: int,
-    n_instances: int | None = None,
-) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the L2 of the sum of the topk subnetworks.
-
-    Note that we explicitly write the batch dimension to aid understanding. The einsums
-    produce the same operation without it. The ... indicates an optional n_instances dimension.
-
-    Args:
-        subnetwork_params: The parameters of the subnetwork.
-        topk_mask: The topk mask to use for the L2 penalty.
-        n_params: The number of decomposable parameters in the model.
-        n_instances: The number of instances in the model.
-
-    Returns:
-        The L2 penalty for the topk subnetworks. One value for each n_instance.
-    """
-    assert len(subnet_param_vals) > 0, "No subnetwork parameters provided"
-
-    accumulate_shape = (n_instances,) if n_instances is not None else ()
-
-    topk_mask = topk_mask.to(subnet_param_vals[0].dtype)
-    topk_l2_penalty = torch.zeros(accumulate_shape, device=subnet_param_vals[0].device)
-    batch_size = topk_mask.shape[0]
-    for subnetwork_param_val in subnet_param_vals:
-        if n_instances is None:
-            # subnetwork_param_val: [k, d_in, d_out] or [k, d_out] (if bias param)
-            # topk_mask: [batch, k]
-            ein_str = "k ... d_out, batch k -> batch ... d_out"
-            # mean over all dims
-            assert subnetwork_param_val.ndim in (3, 2), "Invalid number of dimensions"
-            mean_dims = tuple(range(subnetwork_param_val.ndim))
-        else:
-            # subnetwork_param_val: [n_instances, k, d_in, d_out] or [n_instances, k, d_out]
-            # topk_mask: [batch, n_instances, k]
-            ein_str = "n_instances k ... d_out, batch n_instances k -> batch n_instances ... d_out"
-            # mean over all dims except the n_instances dim
-            assert subnetwork_param_val.ndim in (4, 3), "Invalid number of dimensions"
-            mean_dims = (0, -2, -1) if subnetwork_param_val.ndim == 4 else (0, -1)
-
-        topk_params = einops.einsum(subnetwork_param_val, topk_mask, ein_str)
-        topk_l2_penalty = topk_l2_penalty + ((topk_params) ** 2).sum(dim=mean_dims)
-
-    return topk_l2_penalty / n_params / batch_size
 
 
 def calc_schatten_loss(
@@ -439,7 +363,7 @@ def calc_act_recon(
 
 
 def optimize(
-    model: SPDFullRankModel | SPDRankPenaltyModel,
+    model: SPDRankPenaltyModel,
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
@@ -540,12 +464,11 @@ def optimize(
 
         (
             out_topk,
-            topk_l2_loss,
             schatten_loss,
             topk_recon_loss,
             topk_mask,
             layer_acts_topk,
-        ) = None, None, None, None, None, None
+        ) = None, None, None, None, None
         if config.topk is not None:
             # We always assume the final subnetwork is the one we want to distil
             topk_attrs: Float[Tensor, "batch ... k"] = (
@@ -572,14 +495,6 @@ def optimize(
 
             # Do a forward pass with only the topk subnetworks
             out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
-
-            if config.topk_l2_coeff is not None:
-                topk_l2_loss = calc_topk_l2_full_rank(
-                    subnet_param_vals=list(model.all_subnetwork_params().values()),
-                    topk_mask=topk_mask,
-                    n_params=n_params,
-                    n_instances=getattr(model, "n_instances", None),
-                )
 
             if config.topk_recon_coeff is not None:
                 assert out_topk is not None
@@ -610,9 +525,6 @@ def optimize(
                 )
 
         if config.schatten_coeff is not None:
-            assert isinstance(
-                model, SPDRankPenaltyModel
-            ), "Schatten only supported for SPDRankPenaltyModel"
             mask = topk_mask if topk_mask is not None else lp_sparsity_loss_per_k
             assert mask is not None
             schatten_pnorm = config.schatten_pnorm if config.schatten_pnorm is not None else 1.0
@@ -634,7 +546,6 @@ def optimize(
             "out_recon_loss": (out_recon_loss, config.out_recon_coeff),
             "lp_sparsity_loss": (lp_sparsity_loss, config.lp_sparsity_coeff),
             "topk_recon_loss": (topk_recon_loss, config.topk_recon_coeff),
-            "topk_l2_loss": (topk_l2_loss, config.topk_l2_coeff),
             "act_recon_loss": (act_recon_loss, config.act_recon_coeff),
             "schatten_loss": (schatten_loss, config.schatten_coeff),
         }

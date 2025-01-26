@@ -43,12 +43,12 @@ def test_resid_mlp_rank_penalty_decomposition_happy_path() -> None:
     device = "cpu"
     config = Config(
         seed=0,
-        spd_type="rank_penalty",
         topk=1,
         batch_topk=True,
         param_match_coeff=1.0,
         topk_recon_coeff=1,
-        topk_l2_coeff=1e-2,
+        schatten_pnorm=1,
+        schatten_coeff=1,
         attribution_type="gradient",
         lr=1e-3,
         batch_size=32,

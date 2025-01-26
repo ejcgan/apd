@@ -2,7 +2,6 @@
 # wandb_project: spd-tms
 # wandb_run_name: null
 # wandb_run_name_prefix: ""
-# spd_type: rank_penalty
 # unit_norm_matrices: false
 # seed: 0
 # topk: 0.211
@@ -34,7 +33,6 @@
 wandb_project: spd-tms
 wandb_run_name: null
 wandb_run_name_prefix: ""
-spd_type: rank_penalty
 unit_norm_matrices: false
 seed: 0
 topk: 2.0

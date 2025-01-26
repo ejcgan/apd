@@ -2,7 +2,6 @@
 wandb_project: spd-resid-mlp
 wandb_run_name: null
 wandb_run_name_prefix: ""
-spd_type: rank_penalty
 unit_norm_matrices: true
 seed: 0
 # topk: 1
@@ -37,7 +36,6 @@ task_config:
 # wandb_project: spd-resid-mlp
 # wandb_run_name: null
 # wandb_run_name_prefix: ""
-# spd_type: rank_penalty
 # unit_norm_matrices: false
 # seed: 0
 # topk: 1.28 # bs=256

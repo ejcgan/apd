@@ -21,7 +21,6 @@ from tqdm import tqdm
 from spd.experiments.tms.models import (
     TMSModel,
     TMSModelConfig,
-    TMSSPDFullRankModel,
     TMSSPDRankPenaltyModel,
     TMSSPDRankPenaltyModelConfig,
 )
@@ -189,7 +188,7 @@ def plot_subnetwork_attributions_statistics_multiple_instances(
 
 
 def plot_subnetwork_params(
-    model: TMSSPDFullRankModel | TMSSPDRankPenaltyModel, step: int, out_dir: Path, **_
+    model: TMSSPDRankPenaltyModel, step: int, out_dir: Path, **_
 ) -> plt.Figure:
     """Plot the subnetwork parameter matrix."""
     all_params = model.all_subnetwork_params()
@@ -337,7 +336,7 @@ def plot_batch_statistics(
 
 
 def make_plots(
-    model: TMSSPDFullRankModel | TMSSPDRankPenaltyModel,
+    model: TMSSPDRankPenaltyModel,
     target_model: TMSModel,
     step: int,
     out_dir: Path,
@@ -435,27 +434,13 @@ def main(
         tms_model_train_config_dict=target_model_train_config_dict,
     )
 
-    if config.spd_type == "full_rank":
-        # Note that we don't currently support n_hidden_layers for full rank
-        model = TMSSPDFullRankModel(
-            n_instances=target_model.config.n_instances,
-            n_features=target_model.config.n_features,
-            n_hidden=target_model.config.n_hidden,
-            n_hidden_layers=target_model.config.n_hidden_layers,
-            k=task_config.k,
-            bias_val=task_config.bias_val,
-            device=device,
-        )
-    elif config.spd_type == "rank_penalty":
-        tms_spd_rank_penalty_model_config = TMSSPDRankPenaltyModelConfig(
-            **target_model.config.model_dump(mode="json"),
-            k=task_config.k,
-            m=config.m,
-            bias_val=task_config.bias_val,
-        )
-        model = TMSSPDRankPenaltyModel(config=tms_spd_rank_penalty_model_config)
-    else:
-        raise ValueError(f"Unknown spd_type: {config.spd_type}")
+    tms_spd_rank_penalty_model_config = TMSSPDRankPenaltyModelConfig(
+        **target_model.config.model_dump(mode="json"),
+        k=task_config.k,
+        m=config.m,
+        bias_val=task_config.bias_val,
+    )
+    model = TMSSPDRankPenaltyModel(config=tms_spd_rank_penalty_model_config)
 
     # Manually set the bias for the SPD model from the bias in the pretrained model
     model.b_final.data[:] = target_model.b_final.data.clone()

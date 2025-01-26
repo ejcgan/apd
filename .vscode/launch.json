@@ -26,11 +26,11 @@
             }
         },
         {
-            "name": "tms_topk_rank_penalty",
+            "name": "tms_topk",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/tms/tms_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_rank_penalty_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/tms/tms_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -38,23 +38,11 @@
             }
         },
         {
-            "name": "piecewise_lp_spd",
+            "name": "piecewise_topk_spd",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_lp_config.yaml",
-           "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "piecewise_topk_full_rank_spd",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_topk_full_rank_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -62,35 +50,11 @@
             }
         },
         {
-            "name": "piecewise_rank_penalty_spd",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_rank_penalty_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "piecewise_handcoded_topk_spd",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/spd/experiments/piecewise/piecewise_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/piecewise/piecewise_handcoded_topk_config.yaml",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-            }
-        },
-        {
-            "name": "resid_mlp_rank_penalty_spd",
+            "name": "resid_mlp_topk",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/spd/experiments/resid_mlp/resid_mlp_decomposition.py",
-            "args": "${workspaceFolder}/spd/experiments/resid_mlp/resid_mlp_topk_rank_penalty_config.yaml",
+            "args": "${workspaceFolder}/spd/experiments/resid_mlp/resid_mlp_topk_config.yaml",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

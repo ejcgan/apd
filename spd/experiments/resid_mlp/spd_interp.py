@@ -39,7 +39,7 @@ color_map = {
     "baseline_monosemantic": "grey",
 }
 
-out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/figures/"
+out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/figures2/"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # %% Loading

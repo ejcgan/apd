@@ -6,13 +6,11 @@ import torch
 import yaml
 
 from spd.experiments.piecewise.models import (
-    PiecewiseFunctionSPDFullRankTransformer,
-    PiecewiseFunctionSPDRankPenaltyTransformer,
     PiecewiseFunctionTransformer,
 )
 from spd.experiments.piecewise.piecewise_decomposition import get_model_and_dataloader
 from spd.experiments.piecewise.plotting import (
-    plot_components_fullrank,
+    plot_components_rank_penalty,
     plot_model_functions,
     plot_piecewise_network,
 )
@@ -22,11 +20,16 @@ from spd.run_spd import (
     Config,
     PiecewiseConfig,
 )
-from spd.utils import REPO_ROOT
+from spd.utils import handle_deprecated_config_keys
 
-pretrained_path = REPO_ROOT / "spd/experiments/piecewise/demo_spd_model/model_50000.pth"
+# pretrained_path = REPO_ROOT / "spd/experiments/piecewise/demo_spd_model/model_50000.pth"
+pretrained_path = Path(
+    "/data/apollo/spd/4f_2l_rp_p1.00e+00_topk2.22e-01_topkrecon5.00e+00_schatten5.00e+00_sd0_attr-gra_lr3.00e-03_bs10000_lay2/spd_model_200000.pth"
+)
 with open(pretrained_path.parent / "final_config.yaml") as f:
-    config = Config(**yaml.safe_load(f))
+    config_dict = yaml.safe_load(f)
+    config_dict = handle_deprecated_config_keys(config_dict)
+    config = Config(**config_dict)
 
 with open(pretrained_path.parent / "function_params.json") as f:
     function_params = json.load(f)
@@ -42,13 +45,7 @@ hardcoded_model, spd_model, dataloader, test_dataloader = get_model_and_dataload
 assert isinstance(hardcoded_model, PiecewiseFunctionTransformer)
 spd_model.load_state_dict(torch.load(pretrained_path, weights_only=True, map_location="cpu"))
 
-# To test handcoded AB, uncomment the following line
-# spd_model.set_handcoded_spd_params(hardcoded_model)
-
-assert isinstance(
-    spd_model, PiecewiseFunctionSPDFullRankTransformer | PiecewiseFunctionSPDRankPenaltyTransformer
-)
-fig_dict = plot_components_fullrank(model=spd_model, step=-1, out_dir=None, slow_images=True)
+fig_dict = plot_components_rank_penalty(model=spd_model, step=-1, out_dir=None, slow_images=True)
 
 
 if config.topk is not None:

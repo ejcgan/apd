@@ -1,68 +1,16 @@
-from pathlib import Path
 from typing import Literal
 
 import pytest
 import torch
 from jaxtyping import Float
-from torch import Tensor, nn
+from torch import Tensor
 
-from spd.models.base import SPDFullRankModel
 from spd.utils import (
     SparseFeatureDataset,
-    calc_ablation_attributions,
     calc_activation_attributions,
     calc_topk_mask,
-    calculate_closeness_to_identity,
     compute_feature_importances,
-    permute_to_identity,
 )
-
-
-@pytest.mark.parametrize(
-    "A, expected",
-    [
-        (torch.tensor([[1.0, 0, 0], [0, 1, 0], [0, 0, 1]]), torch.eye(3)),
-        (torch.tensor([[0.0, 1, 0], [1, 0, 0], [0, 0, 1]]), torch.eye(3)),
-        (
-            torch.tensor([[0, 0.9, 0.0], [0.9, 1, 0], [0.0, 0.0, 1.0]]),
-            torch.tensor([[0.9, 1, 0.0], [0, 0.9, 0.0], [0.0, 0.0, 1.0]]),
-        ),
-        (
-            torch.tensor(
-                [
-                    [0.1, 0.2, 0.9, 0.1],
-                    [0.8, 0.1, 0.1, 0.1],
-                    [0.1, 0.1, 0.1, 0.9],
-                    [0.1, 0.9, 0.1, 0.1],
-                ]
-            ),
-            torch.tensor(
-                [
-                    [0.8, 0.1, 0.1, 0.1],
-                    [0.1, 0.9, 0.1, 0.1],
-                    [0.1, 0.2, 0.9, 0.1],
-                    [0.1, 0.1, 0.1, 0.9],
-                ]
-            ),
-        ),
-    ],
-)
-def test_permute_to_identity(A: torch.Tensor, expected: torch.Tensor):
-    A_permuted = permute_to_identity(A)
-    torch.testing.assert_close(A_permuted, expected)
-
-
-@pytest.mark.parametrize(
-    "A, expected_closeness_max",
-    [
-        (torch.eye(3), 0.0),
-        (torch.tensor([[0.95, 0.01, 0.0], [-0.02, 1.02, 0.01], [0.0, 0.0, 1.0]]), 0.1),
-        (torch.tensor([[1.0, 0.0], [1.0, 0.0]]), 2 ** (1 / 2)),
-    ],
-)
-def test_closeness_to_identity(A: torch.Tensor, expected_closeness_max: float):
-    closeness = calculate_closeness_to_identity(A)
-    assert closeness <= expected_closeness_max
 
 
 def test_calc_topk_mask_without_batch_topk():
@@ -118,59 +66,6 @@ def test_calc_topk_mask_with_batch_topk_n_instances():
 
     result = calc_topk_mask(attribution_scores, topk, batch_topk=True)
     torch.testing.assert_close(result, expected_mask)
-
-
-def test_ablation_attributions():
-    class TestModel(SPDFullRankModel):
-        def __init__(self):
-            super().__init__()
-            self.subnetwork_params: Float[Tensor, "n_subnets dim"] = nn.Parameter(
-                torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-            )
-            self.k = 2
-
-        def forward(self, x, topk_mask=None):  # type: ignore
-            out = torch.einsum("i,ki->", x, self.subnetwork_params)
-            return out, None, None
-
-        @classmethod
-        def from_pretrained(cls, path: str | Path) -> "SPDFullRankModel":
-            raise NotImplementedError
-
-        def all_subnetwork_params(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
-            raise NotImplementedError
-
-        def all_subnetwork_params_summed(
-            self,
-        ) -> dict[
-            str,
-            Float[Tensor, "d_layer_in d_layer_out"]
-            | Float[Tensor, "n_instances d_layer_in d_layer_out"],
-        ]:
-            raise NotImplementedError
-
-        def set_subnet_to_zero(self, subnet_idx: int) -> dict[str, Tensor]:
-            stored_vals = {"subnetwork_params": self.subnetwork_params[subnet_idx].detach().clone()}
-            self.subnetwork_params[subnet_idx] = 0.0
-            return stored_vals
-
-        def restore_subnet(self, subnet_idx: int, stored_vals: dict[str, Tensor]) -> None:
-            self.subnetwork_params[subnet_idx] = stored_vals["subnetwork_params"]
-
-    model = TestModel()
-    batch = torch.tensor([1.0, 1.0])
-    out, _, _ = model(batch)
-    attributions = calc_ablation_attributions(model, batch, out)
-
-    # output with all subnets:
-    # [1.0, 1.0] @ [1.0, 2.0] + [1.0, 1.0] @ [3.0, 4.0] = [10]
-    # output without subnet0: [1.0, 1.0] @ [3.0, 4.0] = [7.0]
-    # output without subnet1: [1.0, 1.0] @ [1.0, 2.0] = [3.0]
-    # attributions:
-    # 0. (10 - 7) ** 2 = 9
-    # 1. (10 - 3) ** 2 = 49
-    expected_attributions = torch.tensor([9.0, 49.0])
-    torch.testing.assert_close(attributions, expected_attributions)
 
 
 def test_calc_activation_attributions_obvious():

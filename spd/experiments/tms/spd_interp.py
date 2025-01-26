@@ -243,7 +243,8 @@ target_model, target_model_train_config_dict = TMSModel.from_pretrained(
     config.task_config.pretrained_model_path
 )
 
-out_dir = REPO_ROOT / "spd/experiments/tms/out"
+out_dir = REPO_ROOT / "spd/experiments/tms/out/"
+out_dir.mkdir(parents=True, exist_ok=True)
 
 
 # %%
