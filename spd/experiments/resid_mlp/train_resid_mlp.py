@@ -166,7 +166,7 @@ def train(
         loss.backward()
         optimizer.step()
         if step % config.print_freq == 0:
-            pbar.set_description(f"loss={current_losses.mean():.2e}, lr={current_lr:.2e}")
+            tqdm.write(f"step {step}: loss={current_losses.mean():.2e}, lr={current_lr:.2e}")
             if config.wandb_project:
                 wandb.log({"loss": current_losses.mean(), "lr": current_lr}, step=step)
 
@@ -296,7 +296,7 @@ if __name__ == "__main__":
         data_generation_type="at_least_zero_active",
         batch_size=2048,
         steps=10000,
-        print_freq=100,
+        print_freq=500,
         lr=3e-3,
         lr_schedule="cosine",
         fixed_random_embedding=True,
