@@ -67,7 +67,7 @@ def piecewise_plot_results_fn(
             distil_from_target=config.distil_from_target,
         )
         fig_dict.update(fig_dict_functions)
-        fig_dict_network = plot_piecewise_network(model)
+        fig_dict_network = plot_piecewise_network(model, hardcoded_model=target_model)
         fig_dict.update(fig_dict_network)
 
     if config.topk is not None:
@@ -89,9 +89,7 @@ def piecewise_plot_results_fn(
 
     # Plot components
     if config.task_config.n_layers == 1:
-        fig_dict_components = plot_components(
-            model=model, step=step, out_dir=out_dir, slow_images=slow_images
-        )
+        fig_dict_components = plot_components(model=model, out_dir=out_dir, slow_images=slow_images)
         fig_dict.update(fig_dict_components)
     else:
         tqdm.write("Skipping component plots for >1 layer models")
