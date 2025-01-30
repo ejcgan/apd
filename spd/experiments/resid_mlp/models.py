@@ -13,166 +13,104 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from torch import Tensor, nn
 from wandb.apis.public import Run
 
+from spd.hooks import HookedRootModule
 from spd.log import logger
-from spd.models.base import Model, SPDModel
-from spd.models.components import InstancesParamComponents
+from spd.models.base import SPDModel
+from spd.models.components import Linear, LinearComponent
 from spd.run_spd import Config, ResidualMLPTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
 from spd.utils import (
     handle_deprecated_config_keys,
     init_param_,
     remove_grad_parallel_to_subnetwork_vecs,
+    replace_deprecated_param_names,
 )
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
-class InstancesMLP(nn.Module):
+class MLP(nn.Module):
+    """An MLP with an optional n_instances dimension."""
+
     def __init__(
         self,
-        n_instances: int,
         d_model: int,
         d_mlp: int,
         act_fn: Callable[[Tensor], Tensor],
         in_bias: bool,
         out_bias: bool,
         init_scale: float,
+        init_type: Literal["kaiming_uniform", "xavier_normal"] = "kaiming_uniform",
+        n_instances: int | None = None,
+        spd_kwargs: dict[str, Any] | None = None,
     ):
         super().__init__()
         self.n_instances = n_instances
         self.d_model = d_model
         self.d_mlp = d_mlp
         self.act_fn = act_fn
-        self.linear1 = nn.Parameter(torch.empty(n_instances, d_model, d_mlp))
-        self.linear2 = nn.Parameter(torch.empty(n_instances, d_mlp, d_model))
-        init_param_(self.linear1, scale=init_scale)
-        init_param_(self.linear2, scale=init_scale)
+
+        if spd_kwargs:
+            self.mlp_in = LinearComponent(
+                d_in=d_model,
+                d_out=d_mlp,
+                n_instances=n_instances,
+                init_type=init_type,
+                init_scale=init_scale,
+                k=spd_kwargs["k"],
+                m=spd_kwargs["m"],
+            )
+            self.mlp_out = LinearComponent(
+                d_in=d_mlp,
+                d_out=d_model,
+                n_instances=n_instances,
+                init_type=init_type,
+                init_scale=init_scale,
+                k=spd_kwargs["k"],
+                m=spd_kwargs["m"],
+            )
+        else:
+            self.mlp_in = Linear(
+                d_in=d_model,
+                d_out=d_mlp,
+                n_instances=n_instances,
+                init_type=init_type,
+                init_scale=init_scale,
+            )
+            self.mlp_out = Linear(
+                d_in=d_mlp,
+                d_out=d_model,
+                n_instances=n_instances,
+                init_type=init_type,
+                init_scale=init_scale,
+            )
+
         self.bias1 = None
         self.bias2 = None
         if in_bias:
-            self.bias1 = nn.Parameter(torch.zeros(n_instances, d_mlp))
+            shape = (n_instances, d_mlp) if n_instances is not None else d_mlp
+            self.bias1 = nn.Parameter(torch.zeros(shape))
         if out_bias:
-            self.bias2 = nn.Parameter(torch.zeros(n_instances, d_model))
+            shape = (n_instances, d_model) if n_instances is not None else d_model
+            self.bias2 = nn.Parameter(torch.zeros(shape))
 
     def forward(
-        self, x: Float[Tensor, "batch n_instances d_model"]
-    ) -> tuple[
-        Float[Tensor, "batch n_instances d_model"],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances d_model"] | Float[Tensor, "batch n_instances d_mlp"],
-        ],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances d_model"] | Float[Tensor, "batch n_instances d_mlp"],
-        ],
-    ]:
+        self,
+        x: Float[Tensor, "batch ... d_model"],
+        topk_mask: Bool[Tensor, "batch ... k"] | None = None,
+    ) -> tuple[Float[Tensor, "batch ... d_model"],]:
         """Run a forward pass and cache pre and post activations for each parameter.
 
         Note that we don't need to cache pre activations for the biases. We also don't care about
         the output bias which is always zero.
         """
-        out1_pre_act_fn = einops.einsum(
-            x,
-            self.linear1,
-            "batch n_instances d_model, n_instances d_model d_mlp -> batch n_instances d_mlp",
-        )
+        mid_pre_act_fn = self.mlp_in(x, topk_mask=topk_mask)
         if self.bias1 is not None:
-            out1_pre_act_fn = out1_pre_act_fn + self.bias1
-        out1 = self.act_fn(out1_pre_act_fn)
-        out2 = einops.einsum(
-            out1,
-            self.linear2,
-            "batch n_instances d_mlp, n_instances d_mlp d_model -> batch n_instances d_model",
-        )
+            mid_pre_act_fn = mid_pre_act_fn + self.bias1
+        mid = self.act_fn(mid_pre_act_fn)
+        out = self.mlp_out(mid, topk_mask=topk_mask)
         if self.bias2 is not None:
-            out2 = out2 + self.bias2
-
-        pre_acts = {"linear1": x, "linear2": out1}
-        post_acts = {"linear1": out1_pre_act_fn, "linear2": out2}
-        return out2, pre_acts, post_acts
-
-
-class InstancesMLPComponents(nn.Module):
-    """A module that contains two linear layers with an activation in between for SPD.
-
-    Each linear layer is decomposed into A and B matrices, where the weight matrix W = A @ B.
-    The biases are (optionally) part of the "linear" layers, and have a subnetwork dimension.
-    """
-
-    def __init__(
-        self,
-        n_instances: int,
-        d_embed: int,
-        d_mlp: int,
-        k: int,
-        init_type: Literal["kaiming_uniform", "xavier_normal"],
-        init_scale: float,
-        act_fn: Callable[[Tensor], Tensor],
-        in_bias: bool,
-        out_bias: bool,
-        m: int | None,
-    ):
-        super().__init__()
-        self.act_fn = act_fn
-        self.linear1 = InstancesParamComponents(
-            n_instances=n_instances,
-            in_dim=d_embed,
-            out_dim=d_mlp,
-            k=k,
-            bias=in_bias,
-            init_type=init_type,
-            init_scale=init_scale,
-            m=m,
-        )
-        self.linear2 = InstancesParamComponents(
-            n_instances=n_instances,
-            in_dim=d_mlp,
-            out_dim=d_embed,
-            k=k,
-            bias=out_bias,
-            init_type=init_type,
-            init_scale=init_scale,
-            m=m,
-        )
-
-    def forward(
-        self,
-        x: Float[Tensor, "batch n_instances d_embed"],
-        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
-    ) -> tuple[
-        Float[Tensor, "batch n_instances d_embed"],
-        list[Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_mlp"]],
-        list[
-            Float[Tensor, "batch n_instances k d_embed"]
-            | Float[Tensor, "batch n_instances k d_mlp"]
-        ],
-    ]:
-        """Forward pass through the MLP.
-
-        Args:
-            x: Input tensor
-            topk_mask: Boolean tensor indicating which subnetworks to keep
-        Returns:
-            x: The output of the MLP
-            layer_acts: The activations at the output of each layer after summing over the
-                subnetwork dimension
-            inner_acts: The activations at the output of each subnetwork before summing
-        """
-        layer_acts = []
-        inner_acts = []
-
-        # First layer
-        x, inner_act = self.linear1(x, topk_mask)
-        inner_acts.append(inner_act)
-        layer_acts.append(x)
-        x = self.act_fn(x)
-
-        # Second layer
-        x, inner_act = self.linear2(x, topk_mask)
-        inner_acts.append(inner_act)
-        layer_acts.append(x)
-
-        return x, layer_acts, inner_acts
+            out = out + self.bias2
+        return out
 
 
 class ResidualMLPPaths(BaseModel):
@@ -200,7 +138,7 @@ class ResidualMLPConfig(BaseModel):
     init_scale: float = 1.0
 
 
-class ResidualMLPModel(Model):
+class ResidualMLPModel(HookedRootModule):
     def __init__(self, config: ResidualMLPConfig):
         super().__init__()
         self.config = config
@@ -213,7 +151,7 @@ class ResidualMLPModel(Model):
         self.act_fn = F.gelu if config.act_fn_name == "gelu" else F.relu
         self.layers = nn.ModuleList(
             [
-                InstancesMLP(
+                MLP(
                     n_instances=config.n_instances,
                     d_model=config.d_embed,
                     d_mlp=config.d_mlp,
@@ -225,38 +163,23 @@ class ResidualMLPModel(Model):
                 for _ in range(config.n_layers)
             ]
         )
+        self.setup()
 
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
         return_residual: bool = False,
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"] | Float[Tensor, "batch n_instances d_embed"],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_mlp"],
-        ],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_mlp"],
-        ],
-    ]:
+    ) -> Float[Tensor, "batch n_instances n_features"] | Float[Tensor, "batch n_instances d_embed"]:
         # Make sure that n_instances are correct to avoid unintended broadcasting
         assert x.shape[1] == self.config.n_instances, "n_instances mismatch"
         assert x.shape[2] == self.config.n_features, "n_features mismatch"
-        layer_pre_acts = {}
-        layer_post_acts = {}
         residual = einops.einsum(
             x,
             self.W_E,
             "batch n_instances n_features, n_instances n_features d_embed -> batch n_instances d_embed",
         )
-        for i, layer in enumerate(self.layers):
-            out, pre_acts_i, post_acts_i = layer(residual)
-            for k, v in pre_acts_i.items():
-                layer_pre_acts[f"layers.{i}.{k}"] = v
-            for k, v in post_acts_i.items():
-                layer_post_acts[f"layers.{i}.{k}"] = v
+        for layer in self.layers:
+            out = layer(residual)
             residual = residual + out
         out = einops.einsum(
             residual,
@@ -265,10 +188,7 @@ class ResidualMLPModel(Model):
         )
         if self.config.apply_output_act_fn:
             out = self.act_fn(out)
-        if return_residual:
-            return residual, layer_pre_acts, layer_post_acts
-        else:
-            return out, layer_pre_acts, layer_post_acts
+        return residual if return_residual else out
 
     @staticmethod
     def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPPaths:
@@ -332,26 +252,14 @@ class ResidualMLPModel(Model):
         resid_mlp_config = ResidualMLPConfig(**resid_mlp_train_config_dict["resid_mlp_config"])
         resid_mlp = cls(resid_mlp_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
+
+        params = replace_deprecated_param_names(
+            params,
+            name_map={"linear1": "mlp_in.weight", "linear2": "mlp_out.weight"},
+        )
         resid_mlp.load_state_dict(params)
 
         return resid_mlp, resid_mlp_train_config_dict, label_coeffs
-
-    def all_decomposable_params(
-        self,
-    ) -> dict[
-        str, Float[Tensor, "n_instances d_out d_in"] | Float[Tensor, "n_instances d_in d_out"]
-    ]:
-        """Dictionary of all parameters which will be decomposed with SPD.
-
-        Note that we exclude biases which we never decompose.
-
-        TODO: Decompose embedding matrices if desired.
-        """
-        params = {}
-        for i, mlp in enumerate(self.layers):
-            params[f"layers.{i}.linear1"] = mlp.linear1
-            params[f"layers.{i}.linear2"] = mlp.linear2
-        return params
 
 
 class ResidualMLPSPDPaths(BaseModel):
@@ -403,75 +311,48 @@ class ResidualMLPSPDModel(SPDModel):
 
         self.layers = nn.ModuleList(
             [
-                InstancesMLPComponents(
+                MLP(
                     n_instances=config.n_instances,
-                    d_embed=config.d_embed,
+                    d_model=config.d_embed,
                     d_mlp=config.d_mlp,
-                    k=config.k,
                     init_type=config.init_type,
                     init_scale=config.init_scale,
                     in_bias=config.in_bias,
                     out_bias=config.out_bias,
                     act_fn=self.act_fn,
-                    m=self.m,
+                    spd_kwargs={"k": config.k, "m": self.m},
                 )
                 for _ in range(config.n_layers)
             ]
         )
+        self.setup()
 
-    def all_subnetwork_params(
+    def all_component_weights(
         self,
     ) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
-        AB_ein_str = "n_instances k d_in m, n_instances k m d_out -> n_instances k d_in d_out"
         params = {}
         for i, mlp in enumerate(self.layers):
-            params[f"layers.{i}.linear1"] = einops.einsum(mlp.linear1.A, mlp.linear1.B, AB_ein_str)
-            params[f"layers.{i}.linear2"] = einops.einsum(mlp.linear2.A, mlp.linear2.B, AB_ein_str)
+            assert isinstance(mlp, MLP)
+            params[f"layers.{i}.mlp_in"] = mlp.mlp_in.component_weights
+            params[f"layers.{i}.mlp_out"] = mlp.mlp_out.component_weights
         return params
-
-    def all_subnetwork_params_summed(
-        self,
-    ) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
-        return {p_name: p.sum(dim=1) for p_name, p in self.all_subnetwork_params().items()}
 
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
         topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
-    ) -> tuple[
-        Float[Tensor, "batch n_instances d_embed"],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances d_embed"] | Float[Tensor, "batch n_instances d_mlp"],
-        ],
-        dict[
-            str,
-            Float[Tensor, "batch n_instances k d_embed"]
-            | Float[Tensor, "batch n_instances k d_mlp"],
-        ],
-    ]:
+    ) -> Float[Tensor, "batch n_instances d_embed"]:
         """
         Returns:
             x: The output of the model
-            layer_acts: A dictionary of activations for each layer in each MLP.
-            inner_acts: A dictionary of component activations (just after the A matrix) for each
-                layer in each MLP.
         """
-        layer_acts = {}
-        inner_acts = {}
         residual = einops.einsum(
             x,
             self.W_E,
             "batch n_instances n_features, n_instances n_features d_embed -> batch n_instances d_embed",
         )
-        for i, layer in enumerate(self.layers):
-            layer_out, layer_acts_i, inner_acts_i = layer(residual, topk_mask)
-            assert len(layer_acts_i) == len(inner_acts_i) == 2
-            residual = residual + layer_out
-            layer_acts[f"layers.{i}.linear1"] = layer_acts_i[0]
-            layer_acts[f"layers.{i}.linear2"] = layer_acts_i[1]
-            inner_acts[f"layers.{i}.linear1"] = inner_acts_i[0]
-            inner_acts[f"layers.{i}.linear2"] = inner_acts_i[1]
+        for layer in self.layers:
+            residual = residual + layer(residual, topk_mask)
         out = einops.einsum(
             residual,
             self.W_U,
@@ -479,22 +360,22 @@ class ResidualMLPSPDModel(SPDModel):
         )
         if self.config.apply_output_act_fn:
             out = self.act_fn(out)
-        return out, layer_acts, inner_acts
+        return out
 
     def set_subnet_to_zero(
         self, subnet_idx: int
     ) -> dict[str, Float[Tensor, "n_instances k d_in m"] | Float[Tensor, "n_instances k m d_out"]]:
         stored_vals = {}
         for i, mlp in enumerate(self.layers):
-            stored_vals[f"layers.{i}.linear1.A"] = mlp.linear1.A[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.linear1.B"] = mlp.linear1.B[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.linear2.A"] = mlp.linear2.A[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.linear2.B"] = mlp.linear2.B[subnet_idx].detach().clone()
+            stored_vals[f"layers.{i}.mlp_in.A"] = mlp.mlp_in.A[subnet_idx].detach().clone()
+            stored_vals[f"layers.{i}.mlp_in.B"] = mlp.mlp_in.B[subnet_idx].detach().clone()
+            stored_vals[f"layers.{i}.mlp_out.A"] = mlp.mlp_out.A[subnet_idx].detach().clone()
+            stored_vals[f"layers.{i}.mlp_out.B"] = mlp.mlp_out.B[subnet_idx].detach().clone()
 
-            mlp.linear1.A.data[subnet_idx] = 0.0
-            mlp.linear1.B.data[subnet_idx] = 0.0
-            mlp.linear2.A.data[subnet_idx] = 0.0
-            mlp.linear2.B.data[subnet_idx] = 0.0
+            mlp.mlp_in.A.data[subnet_idx] = 0.0
+            mlp.mlp_in.B.data[subnet_idx] = 0.0
+            mlp.mlp_out.A.data[subnet_idx] = 0.0
+            mlp.mlp_out.B.data[subnet_idx] = 0.0
         return stored_vals
 
     def restore_subnet(
@@ -505,10 +386,10 @@ class ResidualMLPSPDModel(SPDModel):
         ],
     ) -> None:
         for i, mlp in enumerate(self.layers):
-            mlp.linear1.A[subnet_idx].data = stored_vals[f"layers.{i}.linear1.A"]
-            mlp.linear1.B[subnet_idx].data = stored_vals[f"layers.{i}.linear1.B"]
-            mlp.linear2.A[subnet_idx].data = stored_vals[f"layers.{i}.linear2.A"]
-            mlp.linear2.B[subnet_idx].data = stored_vals[f"layers.{i}.linear2.B"]
+            mlp.mlp_in.A[subnet_idx].data = stored_vals[f"layers.{i}.mlp_in.A"]
+            mlp.mlp_in.B[subnet_idx].data = stored_vals[f"layers.{i}.mlp_in.B"]
+            mlp.mlp_out.A[subnet_idx].data = stored_vals[f"layers.{i}.mlp_out.A"]
+            mlp.mlp_out.B[subnet_idx].data = stored_vals[f"layers.{i}.mlp_out.B"]
 
     def all_As_and_Bs(
         self,
@@ -518,21 +399,21 @@ class ResidualMLPSPDModel(SPDModel):
         """Get all A and B matrices for each layer."""
         params = {}
         for i, mlp in enumerate(self.layers):
-            params[f"layers.{i}.linear1"] = (mlp.linear1.A, mlp.linear1.B)
-            params[f"layers.{i}.linear2"] = (mlp.linear2.A, mlp.linear2.B)
+            params[f"layers.{i}.mlp_in"] = (mlp.mlp_in.A, mlp.mlp_in.B)
+            params[f"layers.{i}.mlp_out"] = (mlp.mlp_out.A, mlp.mlp_out.B)
         return params
 
     def set_matrices_to_unit_norm(self):
         for mlp in self.layers:
-            mlp.linear1.A.data /= mlp.linear1.A.data.norm(p=2, dim=-2, keepdim=True)
-            mlp.linear2.A.data /= mlp.linear2.A.data.norm(p=2, dim=-2, keepdim=True)
+            mlp.mlp_in.A.data /= mlp.mlp_in.A.data.norm(p=2, dim=-2, keepdim=True)
+            mlp.mlp_out.A.data /= mlp.mlp_out.A.data.norm(p=2, dim=-2, keepdim=True)
 
     def fix_normalized_adam_gradients(self):
         for mlp in self.layers:
-            assert mlp.linear1.A.grad is not None
-            remove_grad_parallel_to_subnetwork_vecs(mlp.linear1.A.data, mlp.linear1.A.grad)
-            assert mlp.linear2.A.grad is not None
-            remove_grad_parallel_to_subnetwork_vecs(mlp.linear2.A.data, mlp.linear2.A.grad)
+            assert mlp.mlp_in.A.grad is not None
+            remove_grad_parallel_to_subnetwork_vecs(mlp.mlp_in.A.data, mlp.mlp_in.A.grad)
+            assert mlp.mlp_out.A.grad is not None
+            remove_grad_parallel_to_subnetwork_vecs(mlp.mlp_out.A.data, mlp.mlp_out.A.grad)
 
     @staticmethod
     def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPSPDPaths:
@@ -600,5 +481,10 @@ class ResidualMLPSPDModel(SPDModel):
         )
         model = cls(config=resid_mlp_spd_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
+
+        params = replace_deprecated_param_names(
+            params, name_map={"linear1": "mlp_in", "linear2": "mlp_out"}
+        )
+
         model.load_state_dict(params)
         return model, config, label_coeffs

@@ -1,18 +1,16 @@
 from abc import ABC, abstractmethod
 
 from jaxtyping import Bool, Float
-from torch import Tensor, nn
+from torch import Tensor
+
+from spd.hooks import HookedRootModule
 
 
-class SPDModel(ABC, nn.Module):
+class SPDModel(ABC, HookedRootModule):
     @abstractmethod
     def forward(
         self, x: Float[Tensor, "... d_model_in"], topk_mask: Bool[Tensor, "... k"] | None = None
-    ) -> tuple[
-        Float[Tensor, "... d_model_out"],  # output
-        dict[str, Float[Tensor, "... d_layer_out"]],  # layer activations
-        dict[str, Float[Tensor, "... k d_layer_out"]],  # inner activations
-    ]:
+    ) -> Float[Tensor, "... d_model_out"]:
         pass
 
     @abstractmethod
@@ -22,17 +20,7 @@ class SPDModel(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def all_subnetwork_params(self) -> dict[str, Tensor]:
-        pass
-
-    @abstractmethod
-    def all_subnetwork_params_summed(
-        self,
-    ) -> dict[
-        str,
-        Float[Tensor, "d_layer_in d_layer_out"]
-        | Float[Tensor, "n_instances d_layer_in d_layer_out"],
-    ]:
+    def all_component_weights(self) -> dict[str, Float[Tensor, "... k d_layer_in d_layer_out"]]:
         pass
 
     @abstractmethod
@@ -51,10 +39,4 @@ class SPDModel(ABC, nn.Module):
     @abstractmethod
     def fix_normalized_adam_gradients(self) -> None:
         """Modify the gradient by subtracting it's component parallel to the activation."""
-        pass
-
-
-class Model(ABC, nn.Module):
-    @abstractmethod
-    def all_decomposable_params(self) -> dict[str, Tensor]:
         pass

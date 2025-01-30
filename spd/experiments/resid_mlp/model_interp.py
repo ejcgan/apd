@@ -4,7 +4,6 @@ import einops
 import matplotlib.pyplot as plt
 import torch
 
-from spd.experiments.piecewise.plotting import plot_matrix
 from spd.experiments.resid_mlp.models import (
     ResidualMLPModel,
 )
@@ -20,13 +19,14 @@ from spd.experiments.resid_mlp.plotting import (
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
 from spd.experiments.resid_mlp.train_resid_mlp import ResidMLPTrainConfig
+from spd.plotting import plot_matrix
 from spd.settings import REPO_ROOT
 from spd.types import ModelPath
 from spd.utils import set_seed
 
 # %% Load model and config
 
-out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/"
+out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/figures/"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 set_seed(0)
@@ -63,14 +63,14 @@ else:
 n_layers = train_config.resid_mlp_config.n_layers
 # %% Plot feature response with one active feature
 fig = plot_individual_feature_response(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     device=device,
     sweep=False,
     plot_type="line",
 )
 fig = plot_individual_feature_response(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     device=device,
     sweep=True,
@@ -83,7 +83,7 @@ plt.show()
 fig, axes = plt.subplots(ncols=2, figsize=(10, 5), constrained_layout=True, sharey=True)
 ax1, ax2 = axes  # type: ignore
 plot_single_feature_response(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     device=device,
     subtract_inputs=False,
@@ -91,7 +91,7 @@ plot_single_feature_response(
     ax=ax1,
 )
 plot_single_relu_curve(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     device=device,
     subtract_inputs=False,
@@ -108,7 +108,7 @@ print(f"Saved figure to {out_dir / f'resid_mlp_feature_response_single_{n_layers
 fig, axes = plt.subplots(ncols=2, figsize=(10, 5), constrained_layout=True, sharey=True)
 ax1, ax2 = axes  # type: ignore
 plot_individual_feature_response(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     device=device,
     sweep=False,
@@ -118,7 +118,7 @@ plot_individual_feature_response(
 )
 ax1.set_title("Outputs one-hot inputs (coloured by input index)")
 plot_all_relu_curves(
-    lambda batch: model(batch)[0],
+    lambda batch: model(batch),
     model_config=train_config.resid_mlp_config,
     ax=ax2,
     device=device,
@@ -157,7 +157,7 @@ plt.show()
 
 
 # %% Show connection strength between ReLUs and features
-virtual_weights = calculate_virtual_weights(model=model, device=device)
+virtual_weights = calculate_virtual_weights(target_model=model, device=device)
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5), constrained_layout=True)  # type: ignore
 
 relu_contribution_plot(
@@ -181,7 +181,7 @@ gs = fig.add_gridspec(ncols=2, nrows=3)
 ax1 = fig.add_subplot(gs[0, 0])
 ax2 = fig.add_subplot(gs[0, 1])
 ax3 = fig.add_subplot(gs[1:, :])
-virtual_weights = calculate_virtual_weights(model=model, device=device)
+virtual_weights = calculate_virtual_weights(target_model=model, device=device)
 instance_idx = 0
 in_conns = virtual_weights["in_conns"][instance_idx].cpu().detach()
 out_conns = virtual_weights["out_conns"][instance_idx].cpu().detach()

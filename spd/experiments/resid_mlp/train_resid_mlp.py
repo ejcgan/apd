@@ -155,7 +155,7 @@ def train(
         optimizer.zero_grad()
         batch: Float[Tensor, "batch n_instances n_features"] = batch.to(device)
         labels: Float[Tensor, "batch n_instances n_features"] = labels.to(device)
-        out = model(batch, return_residual=config.loss_type == "resid")[0]
+        out = model(batch, return_residual=config.loss_type == "resid")
         loss: (
             Float[Tensor, "batch n_instances n_features"]
             | Float[Tensor, "batch n_instances d_embed"]
@@ -182,7 +182,7 @@ def train(
         batch, labels = next(iter(dataloader))
         batch = batch.to(device)
         labels = labels.to(device)
-        out = model(batch, return_residual=config.loss_type == "resid")[0]
+        out = model(batch, return_residual=config.loss_type == "resid")
         loss = loss_function(out, labels, feature_importances, model, config)
         loss = loss.mean(dim=(0, 2))
         final_losses.append(loss)

@@ -22,8 +22,9 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from spd.hooks import HookedRootModule
 from spd.log import logger
-from spd.models.base import Model, SPDModel
+from spd.models.base import SPDModel
 from spd.types import ModelPath, Probability
 from spd.utils import (
     calc_recon_mse,
@@ -31,6 +32,7 @@ from spd.utils import (
     calculate_attributions,
     get_lr_schedule_fn,
     get_lr_with_warmup,
+    get_nested_module_attr,
 )
 
 
@@ -45,22 +47,6 @@ class TMSTaskConfig(BaseModel):
         "at_least_zero_active"
     )
     pretrained_model_path: ModelPath  # e.g. wandb:spd-tms/runs/si0zbfxf
-
-
-class PiecewiseConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    task_name: Literal["piecewise"] = "piecewise"
-    n_functions: PositiveInt
-    neurons_per_function: PositiveInt
-    n_layers: PositiveInt
-    feature_probability: Probability
-    range_min: float
-    range_max: float
-    k: PositiveInt
-    init_scale: float = 1.0
-    target_seed: int | None = None
-    dataset_seed: int | None = None
-    simple_bias: bool = False
 
 
 class ResidualMLPTaskConfig(BaseModel):
@@ -108,9 +94,7 @@ class Config(BaseModel):
     sparsity_loss_type: Literal["jacobian"] = "jacobian"
     unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
-    task_config: PiecewiseConfig | TMSTaskConfig | ResidualMLPTaskConfig = Field(
-        ..., discriminator="task_name"
-    )
+    task_config: TMSTaskConfig | ResidualMLPTaskConfig = Field(..., discriminator="task_name")
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -173,12 +157,6 @@ class Config(BaseModel):
             assert (
                 self.schatten_pnorm is not None
             ), "schatten_pnorm must be set if schatten_coeff is set"
-
-        if self.distil_from_target and not isinstance(self.task_config, PiecewiseConfig):
-            raise ValueError("distil_from_target is currently only supported for piecewise")
-
-        if isinstance(self.task_config, PiecewiseConfig):
-            assert not self.distil_from_target, "distil_from_target not supported for piecewise"
 
         return self
 
@@ -257,50 +235,57 @@ def calc_schatten_loss(
     return schatten_penalty / n_params / batch_size
 
 
-def calc_param_match_loss(
-    pretrained_weights: dict[str, Float[Tensor, "n_instances d_out"] | Float[Tensor, " d_out"]],
-    subnetwork_params_summed: dict[
-        str, Float[Tensor, "n_instances d_out"] | Float[Tensor, " d_out"]
-    ],
-    param_map: dict[str, str],
+def _calc_param_mse(
+    params1: dict[str, Float[Tensor, "d_in d_out"] | Float[Tensor, "n_instances d_in d_out"]],
+    params2: dict[str, Float[Tensor, "d_in d_out"] | Float[Tensor, "n_instances d_in d_out"]],
     n_params: int,
-    has_instance_dim: bool = False,
+    device: str,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
-    """Calculate the parameter match loss.
+    """Calculate the MSE between params1 and params2, summing over the d_in and d_out dimensions.
 
-    This is the L2 difference between the combined parameter matrices of the SPD Model and the
-    target params.
+    Normalizes by the number of parameters in the model.
 
     Args:
-        pretrained_weights: The pretrained weights to be matched. May have an n_instances and/or
-            d_in dimension.
-        subnetwork_params_summed: The parameters of the SPD Model (that have already been summed
-            over the subnetwork dimension). May have an n_instances and/or d_in dimension.
-        param_map: A map from keys in pretrained_weights to keys in subnetwork_params_summed.
-        has_instance_dim: Whether the model has an n_instances dimension.
-        n_params: The number of parameters in the model.
-
-    Returns:
-        The parameter match loss of shape [n_instances] if the model has an n_instances dimension,
-        otherwise of shape [].
+        params1: The first set of parameters
+        params2: The second set of parameters
+        n_params: The number of parameters in the model
+        device: The device to use for calculations
     """
-    device = next(iter(subnetwork_params_summed.values())).device
     param_match_loss = torch.tensor(0.0, device=device)
-    for target_param_name, subnetwork_param_name in param_map.items():
-        pretrained_weight = pretrained_weights[target_param_name]
-        subnetwork_param = subnetwork_params_summed[subnetwork_param_name]
-        if has_instance_dim:
-            # params: [n_instances, d_out] or [n_instances, d_in, d_out]
-            assert pretrained_weight.ndim in (3, 2)
-            mean_dims = (-2, -1) if pretrained_weight.ndim == 3 else (-1,)
-        else:
-            # params: [d_out] or [d_in, d_out]
-            assert pretrained_weight.ndim in (2, 1)
-            mean_dims = (-2, -1) if pretrained_weight.ndim == 2 else (-1,)
-        param_match_loss = param_match_loss + ((subnetwork_param - pretrained_weight) ** 2).sum(
-            dim=mean_dims
+    for name in params1:
+        param_match_loss = param_match_loss + ((params2[name] - params1[name]) ** 2).sum(
+            dim=(-2, -1)
         )
     return param_match_loss / n_params
+
+
+def calc_param_match_loss(
+    param_names: list[str],
+    target_model: HookedRootModule,
+    spd_model: SPDModel,
+    n_params: int,
+    device: str,
+) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
+    """Calculate the MSE between the target model weights and the SPD model weights.
+
+    Args:
+        param_names: The names of the parameters to be matched.
+        target_model: The target model to match.
+        spd_model: The SPD model to match.
+        n_params: The number of parameters in the model. Used for normalization.
+        device: The device to use for calculations.
+    """
+    target_params = {}
+    spd_params = {}
+    for param_name in param_names:
+        target_params[param_name] = get_nested_module_attr(target_model, param_name + ".weight")
+        spd_params[param_name] = get_nested_module_attr(spd_model, param_name + ".weight")
+    return _calc_param_mse(
+        params1=target_params,
+        params2=spd_params,
+        n_params=n_params,
+        device=device,
+    )
 
 
 def calc_lp_sparsity_loss(
@@ -367,12 +352,14 @@ def optimize(
     config: Config,
     device: str,
     dataloader: DataLoader[tuple[Float[Tensor, "... n_features"], Float[Tensor, "... n_features"]]],
-    pretrained_model: Model,
-    param_map: dict[str, str] | None = None,
+    target_model: HookedRootModule,
+    param_names: list[str],
     plot_results_fn: Callable[..., dict[str, plt.Figure]] | None = None,
     out_dir: Path | None = None,
 ) -> None:
     model.to(device=device)
+    target_model.to(device=device)
+
     has_instance_dim = hasattr(model, "n_instances")
 
     # Note that we expect weight decay to be problematic for spd
@@ -380,15 +367,10 @@ def optimize(
 
     lr_schedule_fn = get_lr_schedule_fn(config.lr_schedule, config.lr_exponential_halflife)
 
-    if config.param_match_coeff is not None:
-        assert param_map is not None, "Need a param_map for param_match loss"
-        # Check that our param_map contains all the decomposable param names
-        assert set(param_map.keys()) == set(pretrained_model.all_decomposable_params().keys())
-        assert set(param_map.values()) == set(model.all_subnetwork_params_summed().keys())
+    n_params = 0
+    for param_name in param_names:
+        n_params += get_nested_module_attr(target_model, param_name + ".weight").numel()
 
-    pretrained_model.to(device=device)
-
-    n_params = sum(p.numel() for p in list(model.all_subnetwork_params_summed().values()))
     if has_instance_dim:
         # All subnetwork param have an n_instances dimension
         n_params = n_params / model.n_instances
@@ -413,7 +395,7 @@ def optimize(
 
         opt.zero_grad(set_to_none=True)
         try:
-            batch = next(data_iter)[0]  # Ignore labels here, we use the output of pretrained_model
+            batch = next(data_iter)[0]  # Ignore labels here, we use the output of target_model
         except StopIteration:
             tqdm.write(f"Epoch {epoch} finished, starting new epoch")
             epoch += 1
@@ -421,35 +403,39 @@ def optimize(
             batch = next(data_iter)[0]
 
         batch = batch.to(device=device)
-        target_out, pre_acts, post_acts = pretrained_model(batch)
-
         total_samples += batch.shape[0]
 
+        target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
+        target_out, target_cache = target_model.run_with_cache(
+            batch, names_filter=target_cache_filter
+        )
+
         # Do a forward pass with all subnetworks
-        out, layer_acts, inner_acts = model(batch)
+        spd_cache_filter = lambda k: k.endswith((".hook_post", ".hook_component_acts"))
+        out, spd_cache = model.run_with_cache(batch, names_filter=spd_cache_filter)
 
         # Calculate losses
         out_recon_loss = calc_recon_mse(out, target_out, has_instance_dim)
 
         param_match_loss = None
         if config.param_match_coeff is not None:
-            assert param_map is not None, "Need a param_map for param_match loss"
             param_match_loss = calc_param_match_loss(
-                pretrained_weights=pretrained_model.all_decomposable_params(),
-                subnetwork_params_summed=model.all_subnetwork_params_summed(),
-                param_map=param_map,
+                param_names=param_names,
+                target_model=target_model,
+                spd_model=model,
                 n_params=n_params,
-                has_instance_dim=has_instance_dim,
+                device=device,
             )
 
+        post_acts = {k: v for k, v in target_cache.items() if k.endswith("hook_post")}
         attributions = calculate_attributions(
             model=model,
             batch=batch,
             out=out,
             target_out=target_out,
-            pre_acts=pre_acts,
+            pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
             post_acts=post_acts,
-            inner_acts=inner_acts,
+            inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
             attribution_type=config.attribution_type,
         )
 
@@ -492,7 +478,10 @@ def optimize(
                 topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
 
             # Do a forward pass with only the topk subnetworks
-            out_topk, layer_acts_topk, inner_acts_topk = model(batch, topk_mask=topk_mask)
+            out_topk, topk_spd_cache = model.run_with_cache(
+                batch, names_filter=spd_cache_filter, topk_mask=topk_mask
+            )
+            layer_acts_topk = {k: v for k, v in topk_spd_cache.items() if k.endswith("hook_post")}
 
             if config.topk_recon_coeff is not None:
                 assert out_topk is not None
@@ -502,24 +491,30 @@ def optimize(
         if config.act_recon_coeff is not None:
             if isinstance(config.task_config, ResidualMLPTaskConfig):
                 # For now, we treat resid-mlp special in that we take the post-relu activations
+                # We ignore the mlp_out layers
                 assert layer_acts_topk is not None
                 post_acts_after_relu = {}
                 layer_acts_topk_after_relu = {}
-                for i in range(len(model.layers)):
-                    post_acts_after_relu[f"layers.{i}.linear1"] = torch.nn.functional.relu(
-                        post_acts[f"layers.{i}.linear1"]
+                for i in range(len(target_model.layers)):
+                    post_acts_after_relu[f"layers.{i}.mlp_in.hook_post"] = torch.nn.functional.relu(
+                        post_acts[f"layers.{i}.mlp_in.hook_post"]
                     )
-                    layer_acts_topk_after_relu[f"layers.{i}.linear1"] = torch.nn.functional.relu(
-                        layer_acts_topk[f"layers.{i}.linear1"]
+                    layer_acts_topk_after_relu[f"layers.{i}.mlp_in.hook_post"] = (
+                        torch.nn.functional.relu(layer_acts_topk[f"layers.{i}.mlp_in.hook_post"])
                     )
 
                 act_recon_loss = calc_act_recon(
                     target_post_acts=post_acts_after_relu, layer_acts=layer_acts_topk_after_relu
                 )
             else:
+                act_recon_layer_acts = (
+                    layer_acts_topk
+                    if layer_acts_topk is not None
+                    else {k: v for k, v in spd_cache.items() if k.endswith("hook_post")}
+                )
                 act_recon_loss = calc_act_recon(
                     target_post_acts=post_acts,
-                    layer_acts=layer_acts if layer_acts_topk is None else layer_acts_topk,
+                    layer_acts=act_recon_layer_acts,
                 )
 
         if config.schatten_coeff is not None:
@@ -585,13 +580,12 @@ def optimize(
         ):
             fig_dict = plot_results_fn(
                 model=model,
-                target_model=pretrained_model,
+                target_model=target_model,
                 step=step,
                 out_dir=out_dir,
                 device=device,
                 config=config,
                 topk_mask=topk_mask,
-                pre_acts=pre_acts,
                 batch=batch,
             )
             if config.wandb_project:

@@ -14,7 +14,6 @@ from pydantic import PositiveFloat
 from torch import Tensor
 from tqdm import tqdm
 
-from spd.experiments.piecewise.plotting import plot_matrix
 from spd.experiments.resid_mlp.models import (
     ResidualMLPConfig,
     ResidualMLPModel,
@@ -22,6 +21,7 @@ from spd.experiments.resid_mlp.models import (
     ResidualMLPSPDModel,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
+from spd.plotting import plot_matrix
 from spd.run_spd import Config
 from spd.utils import SPDOutputs, calc_topk_mask, calculate_attributions
 
@@ -307,7 +307,7 @@ def _calculate_snr(
             idx = f1 * n_features + f2
             batch[idx, instance_idx, f1] = input_values[0]
             batch[idx, instance_idx, f2] = input_values[1]
-    out, _, _ = model(batch)
+    out = model(batch)
     out: Float[Tensor, "batch n_features"] = out[:, instance_idx, :]
     for f1 in range(n_features):
         for f2 in range(n_features):
@@ -360,32 +360,32 @@ def plot_2d_snr(model: ResidualMLPModel, device: str):
     return fig
 
 
-def calculate_virtual_weights(model: ResidualMLPModel, device: str) -> dict[str, Tensor]:
+def calculate_virtual_weights(target_model: ResidualMLPModel, device: str) -> dict[str, Tensor]:
     """Currently ignoring interactions between layers. Just flattening (n_layers, d_mlp)"""
-    n_instances = model.config.n_instances
-    n_features = model.config.n_features
-    d_embed = model.config.d_embed
-    d_mlp = model.config.d_mlp
-    has_bias1 = model.layers[0].bias1 is not None
-    has_bias2 = model.layers[0].bias2 is not None
-    n_layers = model.config.n_layers
+    n_instances = target_model.config.n_instances
+    n_features = target_model.config.n_features
+    d_embed = target_model.config.d_embed
+    d_mlp = target_model.config.d_mlp
+    has_bias1 = target_model.layers[0].bias1 is not None
+    has_bias2 = target_model.layers[0].bias2 is not None
+    n_layers = target_model.config.n_layers
     # Get weights
-    W_E: Float[Tensor, "n_instances n_features d_embed"] = model.W_E
-    W_U: Float[Tensor, "n_instances d_embed n_features"] = model.W_U
+    W_E: Float[Tensor, "n_instances n_features d_embed"] = target_model.W_E
+    W_U: Float[Tensor, "n_instances d_embed n_features"] = target_model.W_U
     W_in: Float[Tensor, "n_instances d_embed d_mlp_eff"] = torch.cat(
-        [model.layers[i].linear1.data for i in range(n_layers)], dim=-1
+        [target_model.layers[i].mlp_in.weight.data for i in range(n_layers)], dim=-1
     )
     W_out: Float[Tensor, "n_instances d_mlp_eff d_embed"] = torch.cat(
-        [model.layers[i].linear2.data for i in range(n_layers)],
+        [target_model.layers[i].mlp_out.weight.data for i in range(n_layers)],
         dim=-2,
     )
     b_in: Float[Tensor, "n_instances d_mlp_eff"] | None = (
-        torch.cat([model.layers[i].bias1.data for i in range(n_layers)], dim=-1)
+        torch.cat([target_model.layers[i].bias1.data for i in range(n_layers)], dim=-1)
         if has_bias1
         else None
     )
     b_out: Float[Tensor, "n_instances d_embed"] | None = (
-        torch.stack([model.layers[i].bias2.data for i in range(n_layers)]).sum(dim=0)
+        torch.stack([target_model.layers[i].bias2.data for i in range(n_layers)]).sum(dim=0)
         if has_bias2
         else None
     )
@@ -558,26 +558,24 @@ def spd_calculate_virtual_weights(model: ResidualMLPSPDModel, device: str) -> di
     d_embed = model.config.d_embed
     d_mlp = model.config.d_mlp
     k_max = model.config.k
-    has_bias1 = model.layers[0].linear1.bias is not None
-    has_bias2 = model.layers[0].linear2.bias is not None
+    has_bias1 = model.layers[0].bias1 is not None
+    has_bias2 = model.layers[0].bias2 is not None
     n_layers = model.config.n_layers
     # Get weights
     W_E: Float[Tensor, "n_instances n_features d_embed"] = model.W_E
     W_U: Float[Tensor, "n_instances d_embed n_features"] = model.W_U
     W_in: Float[Tensor, "n_instances k d_embed d_mlp_eff"] = torch.cat(
-        [model.layers[i].linear1.subnetwork_params for i in range(n_layers)], dim=-1
+        [model.layers[i].mlp_in.component_weights for i in range(n_layers)], dim=-1
     )
     W_out: Float[Tensor, "n_instances k d_mlp_eff d_embed"] = torch.cat(
-        [model.layers[i].linear2.subnetwork_params for i in range(n_layers)],
+        [model.layers[i].mlp_out.component_weights for i in range(n_layers)],
         dim=-2,
     )
     b_in: Float[Tensor, "n_instances k d_mlp_eff"] | None = (
-        torch.cat([model.layers[i].linear1.bias for i in range(n_layers)], dim=-1)
-        if has_bias1
-        else None
+        torch.cat([model.layers[i].bias1 for i in range(n_layers)], dim=-1) if has_bias1 else None
     )
     b_out: Float[Tensor, "n_instances k d_embed"] | None = (
-        torch.stack([model.layers[i].linear2.bias for i in range(n_layers)]).sum(dim=0)
+        torch.stack([model.layers[i].bias2 for i in range(n_layers)]).sum(dim=0)
         if has_bias2
         else None
     )
@@ -1254,7 +1252,7 @@ def plot_resid_vs_mlp_out(
     batch = torch.zeros(batch_size, n_instances, n_features, device=device)
     batch[:, instance_idx, feature_idx] = 1
     # Target model full output
-    out = target_model(batch)[0][batch_idx, instance_idx, :].cpu().detach()
+    out = target_model(batch)[batch_idx, instance_idx, :].cpu().detach()
     # Target model residual stream contribution
     W_E = target_model.W_E[instance_idx].cpu().detach()
     W_U = target_model.W_U[instance_idx].cpu().detach()
@@ -1506,7 +1504,7 @@ def get_scrubbed_losses(
         out_random = top1_model_fn(batch, random_topk_mask).spd_topk_model_output
         out_scrubbed = top1_model_fn(batch, scrubbed_topk_mask).spd_topk_model_output
         out_antiscrubbed = top1_model_fn(batch, antiscrubbed_topk_mask).spd_topk_model_output
-        out_target = target_model(batch)[0]
+        out_target = target_model(batch)
         # Monosemantic baseline
         out_monosemantic = batch.clone()
         d_mlp = target_model.config.d_mlp * target_model.config.n_layers  # type: ignore

@@ -1,20 +1,23 @@
 import random
 from collections.abc import Callable, Iterator
+from functools import reduce
 from pathlib import Path
 from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 import einops
 import numpy as np
 import torch
+import torch.nn as nn
 import yaml
-from jaxtyping import Float, Int
+from jaxtyping import Float
 from pydantic import BaseModel, PositiveFloat
 from pydantic.v1.utils import deep_update
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
+from spd.hooks import HookedRootModule
 from spd.log import logger
-from spd.models.base import Model, SPDModel
+from spd.models.base import SPDModel
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
@@ -183,7 +186,7 @@ def calc_grad_attributions(
     target_out: Float[Tensor, "batch out_dim"] | Float[Tensor, "batch n_instances out_dim"],
     pre_acts: dict[str, Float[Tensor, "batch d_in"] | Float[Tensor, "batch n_instances d_in"]],
     post_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]],
-    subnet_params: dict[
+    component_weights: dict[
         str, Float[Tensor, "k d_in d_out"] | Float[Tensor, "n_instances k d_in d_out"]
     ],
     k: int,
@@ -212,12 +215,17 @@ def calc_grad_attributions(
         target_out: The output of the target model.
         pre_acts: The activations at the output of each subnetwork before being summed.
         post_acts: The activations at the output of each layer after being summed.
-        subnet_params: The subnet parameter matrix at each layer.
-        k: The number of subnetwork parameters.
+        component_weights: The component weight matrix at each layer.
+        k: The number of components.
     Returns:
         The sum of the (squared) attributions from each output dimension.
     """
-    assert post_acts.keys() == pre_acts.keys() == subnet_params.keys()
+    # Ensure that all keys are the same after removing the hook suffixes
+    post_act_param_names = [k.removesuffix(".hook_post") for k in post_acts]
+    pre_act_param_names = [k.removesuffix(".hook_pre") for k in pre_acts]
+    component_weight_names = list(component_weights.keys())
+    assert post_act_param_names == pre_act_param_names == component_weight_names
+
     attr_shape = target_out.shape[:-1] + (k,)  # (batch, k) or (batch, n_instances, k)
     attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
         torch.zeros(attr_shape, device=target_out.device, dtype=target_out.dtype)
@@ -233,13 +241,13 @@ def calc_grad_attributions(
         ] = torch.autograd.grad(
             target_out[..., feature_idx].sum(), list(post_acts.values()), retain_graph=True
         )
-        for i, param_matrix_name in enumerate(post_acts.keys()):
+        for i, param_name in enumerate(post_act_param_names):
             # Note that this operation would be equivalent to:
             # einsum(grad_inner_acts, inner_acts, "... k d_out ,... k d_out -> ... k")
             # since the gradient distributes over the sum.
             inner_acts = einops.einsum(
-                pre_acts[param_matrix_name].detach().clone(),
-                subnet_params[param_matrix_name],
+                pre_acts[param_name + ".hook_pre"].detach().clone(),
+                component_weights[param_name],
                 "... d_in, ... k d_in d_out -> ... k d_out",
             )
             feature_attributions += einops.einsum(
@@ -253,7 +261,7 @@ def calc_grad_attributions(
 
 def collect_subnetwork_attributions(
     spd_model: SPDModel,
-    target_model: Model,
+    target_model: HookedRootModule,
     device: str,
     n_instances: int | None = None,
 ) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
@@ -278,13 +286,15 @@ def collect_subnetwork_attributions(
         test_batch = einops.repeat(
             test_batch, "batch n_features -> batch n_instances n_features", n_instances=n_instances
         )
-
-    target_out, pre_acts, post_acts = target_model(test_batch)
+    target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
+    target_out, target_cache = target_model.run_with_cache(
+        test_batch, names_filter=target_cache_filter
+    )
     attribution_scores = calc_grad_attributions(
         target_out=target_out,
-        subnet_params=spd_model.all_subnetwork_params(),
-        pre_acts=pre_acts,
-        post_acts=post_acts,
+        component_weights=spd_model.all_component_weights(),
+        pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+        post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
         k=spd_model.k,
     )
     return attribution_scores
@@ -349,7 +359,7 @@ def calculate_attributions(
         attributions = calc_grad_attributions(
             target_out=target_out,
             pre_acts=pre_acts,
-            subnet_params=model.all_subnetwork_params(),
+            component_weights=model.all_component_weights(),
             post_acts=post_acts,
             k=model.k,
         )
@@ -393,45 +403,6 @@ def calc_topk_mask(
     return topk_mask
 
 
-def find_key_for_value(dictionary: dict[Any, Any], target_value: Any):
-    for key, value_list in dictionary.items():
-        if target_value in value_list:
-            return key
-    return None  # Return None if the value is not found in any list
-
-
-def calc_neuron_indices(
-    neuron_permutations: tuple[Int[Tensor, "..."], ...],
-    num_neurons: int,
-    num_functions: int,
-):
-    """Create a list of length n_layers, where each element is a list of length num_functions.
-    The ith element of this list is a list of the indices of the neurons in the corresponding
-    layer of the controlled piecewise linear that connect to the ith function."""
-    all_neurons = torch.concatenate(neuron_permutations)
-    assert torch.all(all_neurons.sort().values == torch.arange(len(all_neurons)))
-
-    n_layers = len(neuron_permutations)
-    ordered_neurons_dict = {
-        i: torch.arange(i * num_neurons, (i + 1) * num_neurons) for i in range(num_functions)
-    }
-    neuron_indices = [
-        [
-            torch.tensor(
-                [
-                    index
-                    for index, neuron in enumerate(neuron_permutations[layer].numpy())
-                    if find_key_for_value(ordered_neurons_dict, neuron) == function
-                ],
-                dtype=torch.int64,
-            )
-            for function in range(num_functions)
-        ]
-        for layer in range(n_layers)
-    ]
-    return neuron_indices
-
-
 @torch.inference_mode()
 def remove_grad_parallel_to_subnetwork_vecs(
     A: Float[Tensor, "... d_in m"], A_grad: Float[Tensor, "... d_in m"]
@@ -468,7 +439,7 @@ class SPDOutputs(NamedTuple):
 
 def run_spd_forward_pass(
     spd_model: SPDModel,
-    target_model: Model,
+    target_model: HookedRootModule,
     input_array: Float[Tensor, "batch n_inputs"],
     attribution_type: Literal["gradient", "ablation", "activation"],
     batch_topk: bool,
@@ -476,18 +447,24 @@ def run_spd_forward_pass(
     distil_from_target: bool,
     topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] | None = None,
 ) -> SPDOutputs:
-    # non-SPD model, and SPD-model non-topk forward pass
-    target_model_output, pre_acts, post_acts = target_model(input_array)
+    # Forward pass on target model
+    target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
+    target_out, target_cache = target_model.run_with_cache(
+        input_array, names_filter=target_cache_filter
+    )
 
-    model_output_spd, layer_acts, inner_acts = spd_model(input_array)
+    # Do a forward pass with all subnetworks
+    spd_cache_filter = lambda k: k.endswith((".hook_post", ".hook_component_acts"))
+    out, spd_cache = spd_model.run_with_cache(input_array, names_filter=spd_cache_filter)
+
     attribution_scores = calculate_attributions(
         model=spd_model,
         batch=input_array,
-        out=model_output_spd,
-        target_out=target_model_output,
-        pre_acts=pre_acts,
-        post_acts=post_acts,
-        inner_acts=inner_acts,
+        out=out,
+        target_out=target_out,
+        pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+        post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+        inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
         attribution_type=attribution_type,
     )
 
@@ -503,14 +480,14 @@ def run_spd_forward_pass(
             )
             topk_mask = torch.cat((topk_mask, last_subnet_mask), dim=-1)
 
-    model_output_spd_topk, _, _ = spd_model(input_array, topk_mask=topk_mask)
+    topk_spd_out = spd_model(input_array, topk_mask=topk_mask)
     attribution_scores = attribution_scores.cpu().detach()
     return SPDOutputs(
-        target_model_output=target_model_output,
-        spd_model_output=model_output_spd,
-        spd_topk_model_output=model_output_spd_topk,
-        layer_acts=layer_acts,
-        inner_acts=inner_acts,
+        target_model_output=target_out,
+        spd_model_output=out,
+        spd_topk_model_output=topk_spd_out,
+        layer_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_post")},
+        inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
         attribution_scores=attribution_scores,
         topk_mask=topk_mask,
     )
@@ -797,3 +774,36 @@ def get_lr_with_warmup(
     if step < warmup_steps:
         return lr * (step / warmup_steps)
     return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
+
+
+def get_nested_module_attr(module: nn.Module, access_string: str) -> Any:
+    """Get a module by its name, which may contain periods.
+    Taken from https://discuss.pytorch.org/t/how-to-access-to-a-layer-by-module-name/83797/8
+
+    Args:
+        module: The module to search through.
+        access_string: The name of the module to access, which may contain periods.
+    """
+    names = access_string.split(".")
+    try:
+        mod = reduce(getattr, names, module)
+    except AttributeError as err:
+        raise AttributeError(f"Module {module} does not have attribute {access_string}") from err
+    return mod
+
+
+def replace_deprecated_param_names(
+    params: dict[str, Float[Tensor, "..."]], name_map: dict[str, str]
+) -> dict[str, Float[Tensor, "..."]]:
+    """Replace old parameter names with new parameter names in a dictionary.
+
+    Args:
+        params: The dictionary of parameters to fix
+        name_map: A dictionary mapping old parameter names to new parameter names
+    """
+    for k in list(params.keys()):
+        for old_name, new_name in name_map.items():
+            if old_name in k:
+                params[k.replace(old_name, new_name)] = params[k]
+                del params[k]
+    return params

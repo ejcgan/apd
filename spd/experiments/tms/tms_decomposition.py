@@ -187,17 +187,12 @@ def plot_subnetwork_attributions_statistics_multiple_instances(
     return fig
 
 
-def plot_subnetwork_params(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
-    """Plot the subnetwork parameter matrix."""
-    all_params = model.all_subnetwork_params()
-    if len(all_params) > 1:
-        logger.warning(
-            "Plotting multiple subnetwork params is currently not supported. Plotting the first."
-        )
-    subnet_params = all_params["W"]
+def plot_component_weights(model: TMSSPDModel, step: int, out_dir: Path, **_) -> plt.Figure:
+    """Plot the component weight matrices."""
+    component_weights = model.linear1.component_weights
 
-    # subnet_params: [n_instances, k, n_features, n_hidden]
-    n_instances, k, dim1, dim2 = subnet_params.shape
+    # component_weights: [n_instances, k, n_features, n_hidden]
+    n_instances, k, dim1, dim2 = component_weights.shape
 
     fig, axs = plt.subplots(
         k,
@@ -207,10 +202,10 @@ def plot_subnetwork_params(model: TMSSPDModel, step: int, out_dir: Path, **_) ->
     )
 
     for i in range(n_instances):
-        instance_max = np.abs(subnet_params[i].detach().cpu().numpy()).max()
+        instance_max = np.abs(component_weights[i].detach().cpu().numpy()).max()
         for j in range(k):
             ax = axs[j, i]  # type: ignore
-            param = subnet_params[i, j].detach().cpu().numpy()
+            param = component_weights[i, j].detach().cpu().numpy()
             ax.matshow(param, cmap="RdBu", vmin=-instance_max, vmax=instance_max)
             ax.set_xticks([])
 
@@ -219,10 +214,10 @@ def plot_subnetwork_params(model: TMSSPDModel, step: int, out_dir: Path, **_) ->
             if j == k - 1:
                 ax.set_xlabel(f"Inst {i}", rotation=45, ha="right")
 
-    fig.suptitle(f"Subnetwork Parameters (Step {step})")
-    fig.savefig(out_dir / f"subnetwork_params_{step}.png", dpi=300, bbox_inches="tight")
+    fig.suptitle(f"Component Weights (Step {step})")
+    fig.savefig(out_dir / f"component_weights_{step}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
-    tqdm.write(f"Saved subnetwork params to {out_dir / f'subnetwork_params_{step}.png'}")
+    tqdm.write(f"Saved component weights to {out_dir / f'component_weights_{step}.png'}")
     return fig
 
 
@@ -347,7 +342,7 @@ def make_plots(
     plots = {}
     if model.hidden_layers is not None:
         logger.warning("Only plotting the W matrix params and not the hidden layers.")
-    plots["subnetwork_params"] = plot_subnetwork_params(model, step, out_dir)
+    plots["component_weights"] = plot_component_weights(model, step, out_dir)
 
     if config.topk is not None:
         assert topk_mask is not None
@@ -446,12 +441,10 @@ def main(
     if not task_config.train_bias:
         model.b_final.requires_grad = False
 
-    # Map from pretrained model's `all_decomposable_params` to the SPD models'
-    # `all_subnetwork_params_summed`.
-    param_map = {"W": "W", "W_T": "W_T"}
+    param_names = ["linear1", "linear2"]
     if model.hidden_layers is not None:
         for i in range(len(model.hidden_layers)):
-            param_map[f"hidden_{i}"] = f"hidden_{i}"
+            param_names.append(f"hidden_layers.{i}")
 
     synced_inputs = target_model_train_config_dict.get("synced_inputs", None)
     dataset = SparseFeatureDataset(
@@ -468,11 +461,11 @@ def main(
     optimize(
         model=model,
         config=config,
-        out_dir=out_dir,
         device=device,
         dataloader=dataloader,
-        pretrained_model=target_model,
-        param_map=param_map,
+        target_model=target_model,
+        param_names=param_names,
+        out_dir=out_dir,
         plot_results_fn=make_plots,
     )
 

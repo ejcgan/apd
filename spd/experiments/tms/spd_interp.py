@@ -236,14 +236,14 @@ run_id = path.split("/")[-1]
 
 # Plot showing polygons for each subnet
 model, config = TMSSPDModel.from_pretrained(path)
-subnets = model.all_subnetwork_params()["W"].detach().cpu()
+subnets = model.linear1.component_weights.detach().cpu()
 
 assert isinstance(config.task_config, TMSTaskConfig)
 target_model, target_model_train_config_dict = TMSModel.from_pretrained(
     config.task_config.pretrained_model_path
 )
 
-out_dir = REPO_ROOT / "spd/experiments/tms/out/"
+out_dir = REPO_ROOT / "spd/experiments/tms/out/figures/"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -266,7 +266,8 @@ def plot_max_cosine_sim(max_cosine_sim: Float[Tensor, " n_features"]) -> plt.Fig
 cosine_sims = torch.einsum(
     "k f h, f h -> k f",
     subnets[instance_idx] / torch.norm(subnets[instance_idx], dim=-1, keepdim=True),
-    target_model.W[instance_idx] / torch.norm(target_model.W[instance_idx], dim=-1, keepdim=True),
+    target_model.linear1.weight[instance_idx]
+    / torch.norm(target_model.linear1.weight[instance_idx], dim=-1, keepdim=True),
 )
 max_cosine_sim = cosine_sims.max(dim=0).values
 print(f"Max cosine similarity:\n{max_cosine_sim}")
@@ -279,7 +280,9 @@ subnet_weights_at_max_cosine_sim: Float[Tensor, "n_features n_hidden"] = subnets
     instance_idx, cosine_sims.max(dim=0).indices, torch.arange(target_model.config.n_features)
 ]
 # Get the norm of the target model weights
-target_model_weights_norm = torch.norm(target_model.W[instance_idx], dim=-1, keepdim=True)
+target_model_weights_norm = torch.norm(
+    target_model.linear1.weight[instance_idx], dim=-1, keepdim=True
+)
 # Get the norm of subnet_weights_at_max_cosine_sim
 subnet_weights_at_max_cosine_sim_norm = torch.norm(
     subnet_weights_at_max_cosine_sim, dim=-1, keepdim=True
@@ -301,7 +304,7 @@ print(f"Mean bias: {target_model.b_final[instance_idx].mean()}")
 # Only plot if the hidden dimension is 2
 if target_model.config.n_hidden == 2:
     # We only look at the first instance
-    fig = plot_combined(subnets, target_model.W.detach().cpu(), n_instances=1)
+    fig = plot_combined(subnets, target_model.linear1.weight.detach().cpu(), n_instances=1)
     fig.savefig(out_dir / f"tms_combined_diagram_{run_id}.png", bbox_inches="tight", dpi=400)
     print(f"Saved figure to {out_dir / f'tms_combined_diagram_{run_id}.png'}")
 

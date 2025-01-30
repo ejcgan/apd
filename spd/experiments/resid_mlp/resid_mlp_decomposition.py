@@ -150,19 +150,18 @@ def plot_subnetwork_attributions(
     return fig
 
 
-def plot_multiple_subnetwork_params(
+def plot_multiple_component_weights(
     model: ResidualMLPSPDModel,
     out_dir: Path | None,
     step: int | None = None,
 ) -> plt.Figure:
-    """Plot each subnetwork parameter matrix."""
-    all_params = model.all_subnetwork_params()
+    """Plot each component weight matrix."""
+    all_params = model.all_component_weights()
     # Each param (of which there are n_layers): [k, n_features, n_features]
     n_params = len(all_params)
     param_names = list(all_params.keys())
-
-    weight_param = [param for param_name, param in all_params.items() if "linear" in param_name][0]
-    n_instances, k, dim1, dim2 = weight_param.shape
+    n_instances = model.config.n_instances
+    k = model.k
 
     # Find global min and max for normalization
     all_values = []
@@ -221,7 +220,7 @@ def plot_multiple_subnetwork_params(
         title_text += f" (Step {step})"
     fig.suptitle(title_text)
     if out_dir:
-        fig.savefig(out_dir / f"subnetwork_params_s{step}.png", dpi=200)
+        fig.savefig(out_dir / f"component_weights_s{step}.png", dpi=200)
     return fig
 
 
@@ -282,7 +281,7 @@ def resid_mlp_plot_results_fn(
     out_dir: Path | None,
     device: str,
     config: Config,
-    topk_mask: Float[Tensor, " batch_size k"] | None,
+    topk_mask: Float[Tensor, "batch_size k"] | None,
     dataloader: DatasetGeneratedDataLoader[
         tuple[Float[Tensor, "batch n_features"], Float[Tensor, "batch d_embed"]]
     ]
@@ -332,7 +331,7 @@ def resid_mlp_plot_results_fn(
         ).spd_topk_model_output
 
     def target_model_fn(batch: Float[Tensor, "batch n_instances"]):
-        return target_model(batch)[0]
+        return target_model(batch)
 
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(15, 15), constrained_layout=True)
     axes = np.atleast_2d(axes)  # type: ignore
@@ -488,7 +487,7 @@ def resid_mlp_plot_results_fn(
     # This can be too big to plot
     n_matrix_params = target_model.config.d_mlp * target_model.config.d_embed
     if n_matrix_params < 1000:
-        fig_dict["subnetwork_params"] = plot_multiple_subnetwork_params(
+        fig_dict["component_weights"] = plot_multiple_component_weights(
             model=model, out_dir=out_dir, step=step
         )
 
@@ -600,22 +599,16 @@ def main(
     # Copy the biases from the target model to the SPD model and set requires_grad to False
     for i in range(target_model.config.n_layers):
         if target_model.config.in_bias:
-            model.layers[i].linear1.bias.data[:, :] = (
-                target_model.layers[i].bias1.data.detach().clone()
-            )
-            model.layers[i].linear1.bias.requires_grad = False
+            model.layers[i].bias1.data[:, :] = target_model.layers[i].bias1.data.detach().clone()
+            model.layers[i].bias1.requires_grad = False
         if target_model.config.out_bias:
-            model.layers[i].linear2.bias.data[:, :] = (
-                target_model.layers[i].bias2.data.detach().clone()
-            )
-            model.layers[i].linear2.bias.requires_grad = False
+            model.layers[i].bias2.data[:, :] = target_model.layers[i].bias2.data.detach().clone()
+            model.layers[i].bias2.requires_grad = False
 
-    param_map = {}
+    param_names = []
     for i in range(target_model.config.n_layers):
-        # Map from pretrained model's `all_decomposable_params` to the SPD models'
-        # `all_subnetwork_params_summed`.
-        param_map[f"layers.{i}.linear1"] = f"layers.{i}.linear1"
-        param_map[f"layers.{i}.linear2"] = f"layers.{i}.linear2"
+        param_names.append(f"layers.{i}.mlp_in")
+        param_names.append(f"layers.{i}.mlp_out")
 
     synced_inputs = target_model_train_config_dict.get("synced_inputs", None)
     dataset = ResidualMLPDataset(
@@ -640,8 +633,8 @@ def main(
         config=config,
         device=device,
         dataloader=dataloader,
-        pretrained_model=target_model,
-        param_map=param_map,
+        target_model=target_model,
+        param_names=param_names,
         out_dir=out_dir,
         plot_results_fn=plot_results_fn,
     )

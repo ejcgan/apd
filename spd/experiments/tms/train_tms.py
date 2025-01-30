@@ -86,7 +86,7 @@ def train(
                 group["lr"] = step_lr
             opt.zero_grad(set_to_none=True)
             batch, labels = next(data_iter)
-            out, _, _ = model(batch)
+            out = model(batch)
             error = importance * (labels.abs() - out) ** 2
             loss = einops.reduce(error, "b i f -> i", "mean").sum()
             loss.backward()
@@ -116,7 +116,7 @@ def plot_intro_diagram(model: TMSModel, filepath: Path) -> None:
     Adapted from
     https://colab.research.google.com/github/anthropics/toy-models-of-superposition/blob/main/toy_models.ipynb.
     """
-    WA = model.W.detach()
+    WA = model.linear1.weight.detach()
     sel = range(model.config.n_instances)  # can be used to highlight specific sparsity levels
     color = plt.cm.viridis(np.array([0.0]))  # type: ignore
     plt.rcParams["figure.dpi"] = 200
@@ -153,7 +153,7 @@ def plot_cosine_similarity_distribution(
         filepath: Where to save the plot
     """
     # Calculate cosine similarities
-    rows = model.W.detach()
+    rows = model.linear1.weight.detach()
     rows /= rows.norm(dim=-1, keepdim=True)
     cosine_sims = einops.einsum(rows, rows, "i f1 h, i f2 h -> i f1 f2")
     mask = ~torch.eye(rows.shape[1], device=rows.device, dtype=torch.bool)
@@ -181,17 +181,20 @@ def get_model_and_dataloader(
     config: TMSTrainConfig, device: str
 ) -> tuple[TMSModel, DatasetGeneratedDataLoader[tuple[torch.Tensor, torch.Tensor]]]:
     model = TMSModel(config=config.tms_model_config)
+    model.to(device)
     if (
         config.fixed_identity_hidden_layers or config.fixed_random_hidden_layers
     ) and model.hidden_layers is not None:
         for i in range(model.config.n_hidden_layers):
             if config.fixed_identity_hidden_layers:
-                model.hidden_layers[i].data[:, :, :] = torch.eye(
+                model.hidden_layers[i].weight.data[:, :, :] = torch.eye(
                     model.config.n_hidden, device=device
                 )
             elif config.fixed_random_hidden_layers:
-                model.hidden_layers[i].data[:, :, :] = torch.randn_like(model.hidden_layers[i])
-            model.hidden_layers[i].requires_grad = False
+                model.hidden_layers[i].weight.data[:, :, :] = torch.randn_like(
+                    model.hidden_layers[i].weight
+                )
+            model.hidden_layers[i].weight.requires_grad = False
 
     dataset = SparseFeatureDataset(
         n_instances=config.tms_model_config.n_instances,

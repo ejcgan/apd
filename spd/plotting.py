@@ -2,16 +2,19 @@ from typing import Any, Literal
 
 import einops
 import matplotlib.pyplot as plt
+import matplotlib.ticker as tkr
 import numpy as np
 import torch
 from jaxtyping import Float
+from matplotlib.colors import CenteredNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from spd.experiments.resid_mlp.models import ResidualMLPModel, ResidualMLPSPDModel
 from spd.experiments.tms.models import TMSModel, TMSSPDModel
-from spd.models.base import Model, SPDModel
+from spd.hooks import HookedRootModule
+from spd.models.base import SPDModel
 from spd.run_spd import Config
 from spd.utils import (
     DataGenerationType,
@@ -74,7 +77,7 @@ def plot_subnetwork_correlations(
     dataloader: DataLoader[
         tuple[Float[Tensor, "batch n_inputs"] | Float[Tensor, "batch n_instances? n_inputs"], Any]
     ],
-    target_model: Model,
+    target_model: HookedRootModule,
     spd_model: SPDModel,
     config: Config,
     device: str,
@@ -85,17 +88,23 @@ def plot_subnetwork_correlations(
         batch = batch.to(device=device)
         assert config.topk is not None
 
-        target_out, pre_acts, post_acts = target_model(batch)
-        # Get the topk mask
-        model_output_spd, layer_acts, inner_acts = spd_model(batch)
+        # Forward pass on target model
+        target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
+        target_out, target_cache = target_model.run_with_cache(
+            batch, names_filter=target_cache_filter
+        )
+
+        # Do a forward pass with all subnetworks
+        spd_cache_filter = lambda k: k.endswith((".hook_post", ".hook_component_acts"))
+        out, spd_cache = spd_model.run_with_cache(batch, names_filter=spd_cache_filter)
         attribution_scores = calculate_attributions(
             model=spd_model,
             batch=batch,
-            out=model_output_spd,
+            out=out,
             target_out=target_out,
-            pre_acts=pre_acts,
-            post_acts=post_acts,
-            inner_acts=inner_acts,
+            pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+            post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+            inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
             attribution_type=config.attribution_type,
         )
 
@@ -192,7 +201,7 @@ def collect_sparse_dataset_mse_losses(
         batch = batch.to(device)
         labels = labels.to(device)
 
-        target_model_output, _, _ = target_model(batch)
+        target_model_output = target_model(batch)
 
         if gen_type == "at_least_zero_active":
             run_batch_topk = batch_topk
@@ -299,3 +308,37 @@ def plot_sparse_feature_mse_line_plot(
 
     plt.tight_layout()
     return fig
+
+
+def plot_matrix(
+    ax: plt.Axes,
+    matrix: torch.Tensor,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    colorbar_format: str = "%.1f",
+    norm: plt.Normalize | None = None,
+) -> None:
+    # Useful to have bigger text for small matrices
+    fontsize = 8 if matrix.numel() < 50 else 4
+    norm = norm if norm is not None else CenteredNorm()
+    im = ax.matshow(matrix.detach().cpu().numpy(), cmap="coolwarm", norm=norm)
+    # If less than 500 elements, show the values
+    if matrix.numel() < 500:
+        for (j, i), label in np.ndenumerate(matrix.detach().cpu().numpy()):
+            ax.text(i, j, f"{label:.2f}", ha="center", va="center", fontsize=fontsize)
+    ax.set_xlabel(xlabel)
+    if ylabel != "":
+        ax.set_ylabel(ylabel)
+    else:
+        ax.set_yticklabels([])
+    ax.set_title(title)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size=0.1, pad=0.05)
+    fig = ax.get_figure()
+    assert fig is not None
+    fig.colorbar(im, cax=cax, format=tkr.FormatStrFormatter(colorbar_format))
+    if ylabel == "Function index":
+        n_functions = matrix.shape[0]
+        ax.set_yticks(range(n_functions))
+        ax.set_yticklabels([f"{L:.0f}" for L in range(1, n_functions + 1)])

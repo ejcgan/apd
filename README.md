@@ -24,12 +24,14 @@ models and run APD.
 - `spd/experiments/tms` - Toy model of superposition
 - `spd/experiments/resid_mlp` - Toy model of compressed computation and toy model of distributed
   representations
-- `spd/experiments/piecewise` - Handcoded gated function model
+
+Deprecated:
+- `spd/experiments/piecewise` - Handcoded gated function model. Use [this](117284172497ca420f22c29cef3ddcd5e4bcceb8) commit if you need to use
+  this experiment.
 
 ### Train a target model
-All experiments apart from `spd/experiments/piecewise` require training a target model. Look for the
-`train_*.py` script in the experiment directory. Your trained model will be saved locally and
-uploaded to wandb.
+All experiments require training a target model. Look for the `train_*.py` script in the experiment
+directory. Your trained model will be saved locally and uploaded to wandb.
 
 ### Run APD
 APD can be run by executing any of the `*_decomposition.py` scripts defined in the experiment

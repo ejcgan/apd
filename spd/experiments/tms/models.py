@@ -5,19 +5,91 @@ import einops
 import torch
 import wandb
 import yaml
-from einops import rearrange
 from jaxtyping import Bool, Float
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveInt
 from torch import Tensor, nn
 from torch.nn import functional as F
 from wandb.apis.public import Run
 
-from spd.models.base import Model, SPDModel
-from spd.models.components import InstancesParamComponents
+from spd.hooks import HookedRootModule, HookPoint
+from spd.models.base import SPDModel
+from spd.models.components import Linear, LinearComponent
 from spd.run_spd import Config, TMSTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
-from spd.utils import handle_deprecated_config_keys, remove_grad_parallel_to_subnetwork_vecs
+from spd.utils import (
+    handle_deprecated_config_keys,
+    remove_grad_parallel_to_subnetwork_vecs,
+    replace_deprecated_param_names,
+)
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
+
+
+class TransposedLinear(Linear):
+    """Linear layer that uses a transposed weight from another Linear layer.
+
+    We use 'd_in' and 'd_out' to refer to the dimensions of the original Linear layer.
+    """
+
+    def __init__(self, original_weight: nn.Parameter):
+        # Copy the relevant parts from Linear.__init__. Don't copy operations that will call
+        # TransposedLinear.weight.
+        nn.Module.__init__(self)
+        self.hook_pre = HookPoint()  # (batch ... d_out)
+        self.hook_post = HookPoint()  # (batch ... d_in)
+
+        self.register_buffer("original_weight", original_weight, persistent=False)
+
+    @property
+    def weight(self) -> Float[Tensor, "n_instances d_out d_in"]:
+        return einops.rearrange(
+            self.original_weight, "n_instances d_in d_out -> n_instances d_out d_in"
+        )
+
+
+class TransposedLinearComponent(LinearComponent):
+    """LinearComponent that uses a transposed weight from another LinearComponent.
+
+    We use 'd_in' and 'd_out' to refer to the dimensions of the original LinearComponent.
+    """
+
+    def __init__(self, original_A: nn.Parameter, original_B: nn.Parameter):
+        # Copy the relevant parts from LinearComponent.__init__. Don't copy operations that will
+        # call TransposedLinear.A or TransposedLinear.B.
+        nn.Module.__init__(self)
+        self.n_instances, self.k, _, self.m = original_A.shape
+
+        self.hook_pre = HookPoint()  # (batch ... d_out)
+        self.hook_component_acts = HookPoint()  # (batch ... k d_in)
+        self.hook_post = HookPoint()  # (batch ... d_in)
+
+        self.register_buffer("original_A", original_A, persistent=False)
+        self.register_buffer("original_B", original_B, persistent=False)
+
+    @property
+    def A(self) -> Float[Tensor, "n_instances k d_out m"]:
+        # New A is the transpose of the original B
+        return einops.rearrange(
+            self.original_B,
+            "n_instances k m d_out -> n_instances k d_out m",
+        )
+
+    @property
+    def B(self) -> Float[Tensor, "n_instances k d_in m"]:
+        # New B is the transpose of the original A
+        return einops.rearrange(
+            self.original_A,
+            "n_instances k d_in m -> n_instances k m d_in",
+        )
+
+    @property
+    def component_weights(self) -> Float[Tensor, "... k d_out d_in"]:
+        """A @ B before summing over the subnetwork dimension."""
+        return einops.einsum(self.A, self.B, "... k d_out m, ... k m d_in -> ... k d_out d_in")
+
+    @property
+    def weight(self) -> Float[Tensor, "... d_out d_in"]:
+        """A @ B after summing over the subnetwork dimension."""
+        return einops.einsum(self.A, self.B, "... k d_out m, ... k m d_in -> ... d_out d_in")
 
 
 class TMSModelPaths(BaseModel):
@@ -36,73 +108,66 @@ class TMSModelConfig(BaseModel):
     device: str
 
 
-class TMSModel(Model):
+def _tms_forward(
+    x: Float[Tensor, "batch n_instances n_features"],
+    linear1: Linear | LinearComponent,
+    linear2: TransposedLinear | TransposedLinearComponent,
+    b_final: Float[Tensor, "n_instances n_features"],
+    topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+    hidden_layers: nn.ModuleList | None = None,
+) -> Float[Tensor, "batch n_instances n_features"]:
+    """Forward pass used for TMSModel and TMSSPDModel.
+
+    Note that topk_mask is only used for TMSSPDModel.
+    """
+    hidden = linear1(x, topk_mask=topk_mask)
+    if hidden_layers is not None:
+        for layer in hidden_layers:
+            hidden = layer(hidden, topk_mask=topk_mask)
+    out_pre_relu = linear2(hidden, topk_mask=topk_mask) + b_final
+    out = F.relu(out_pre_relu)
+    return out
+
+
+class TMSModel(HookedRootModule):
     def __init__(self, config: TMSModelConfig):
         super().__init__()
         self.config = config
 
-        self.W = nn.Parameter(
-            torch.empty(
-                (config.n_instances, config.n_features, config.n_hidden), device=config.device
-            )
+        self.linear1 = Linear(
+            d_in=config.n_features,
+            d_out=config.n_hidden,
+            n_instances=config.n_instances,
+            init_type="xavier_normal",
         )
-        nn.init.xavier_normal_(self.W)
-        self.b_final = nn.Parameter(
-            torch.zeros((config.n_instances, config.n_features), device=config.device)
-        )
+        # Use tied weights for the second linear layer
+        self.linear2 = TransposedLinear(self.linear1.weight)
+
+        self.b_final = nn.Parameter(torch.zeros((config.n_instances, config.n_features)))
 
         self.hidden_layers = None
         if config.n_hidden_layers > 0:
-            self.hidden_layers = nn.ParameterList()
+            self.hidden_layers = nn.ModuleList()
             for _ in range(config.n_hidden_layers):
-                layer = nn.Parameter(
-                    torch.empty(
-                        (config.n_instances, config.n_hidden, config.n_hidden),
-                        device=config.device,
-                    )
+                layer = Linear(
+                    d_in=config.n_hidden,
+                    d_out=config.n_hidden,
+                    n_instances=config.n_instances,
+                    init_type="xavier_normal",
                 )
-                nn.init.xavier_normal_(layer)
                 self.hidden_layers.append(layer)
+        self.setup()
 
     def forward(
-        self, features: Float[Tensor, "... n_instances n_features"]
-    ) -> tuple[
-        Float[Tensor, "... n_instances n_features"],
-        dict[
-            str,
-            Float[Tensor, "... n_instances n_features"] | Float[Tensor, "... n_instances n_hidden"],
-        ],
-        dict[
-            str,
-            Float[Tensor, "... n_instances n_features"] | Float[Tensor, "... n_instances n_hidden"],
-        ],
-    ]:
-        # features: [..., instance, n_features]
-        # W: [instance, n_features, n_hidden]
-        hidden = torch.einsum("...if,ifh->...ih", features, self.W)
-
-        pre_acts = {"W": features}
-        post_acts = {"W": hidden}
-        if self.hidden_layers is not None:
-            for i, layer in enumerate(self.hidden_layers):
-                pre_acts[f"hidden_{i}"] = hidden
-                hidden = torch.einsum("...ik,ikj->...ij", hidden, layer)
-                post_acts[f"hidden_{i}"] = hidden
-
-        out_pre_relu = torch.einsum("...ih,ifh->...if", hidden, self.W) + self.b_final
-        out = F.relu(out_pre_relu)
-
-        pre_acts["W_T"] = hidden
-        post_acts["W_T"] = out_pre_relu
-        return out, pre_acts, post_acts
-
-    def all_decomposable_params(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
-        """Dictionary of all parameters which will be decomposed with SPD."""
-        params: dict[str, torch.Tensor] = {"W": self.W, "W_T": rearrange(self.W, "i f h -> i h f")}
-        if self.hidden_layers is not None:
-            for i, layer in enumerate(self.hidden_layers):
-                params[f"hidden_{i}"] = layer
-        return params
+        self, x: Float[Tensor, "... n_instances n_features"], **_: Any
+    ) -> Float[Tensor, "... n_instances n_features"]:
+        return _tms_forward(
+            x=x,
+            linear1=self.linear1,
+            linear2=self.linear2,
+            b_final=self.b_final,
+            hidden_layers=self.hidden_layers,
+        )
 
     @staticmethod
     def _download_wandb_files(wandb_project_run_id: str) -> TMSModelPaths:
@@ -150,6 +215,7 @@ class TMSModel(Model):
         tms_config = TMSModelConfig(**tms_train_config_dict["tms_model_config"])
         tms = cls(config=tms_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
+        params = replace_deprecated_param_names(params, {"W": "linear1.weight"})
         tms.load_state_dict(params)
 
         return tms, tms_train_config_dict
@@ -186,14 +252,16 @@ class TMSSPDModel(SPDModel):
 
         self.m = min(config.n_features, config.n_hidden) + 1 if config.m is None else config.m
 
-        self.A = nn.Parameter(
-            torch.empty(
-                (config.n_instances, self.k, config.n_features, self.m), device=config.device
-            )
+        self.linear1 = LinearComponent(
+            d_in=config.n_features,
+            d_out=config.n_hidden,
+            n_instances=config.n_instances,
+            init_type="xavier_normal",
+            init_scale=1.0,
+            k=self.k,
+            m=self.m,
         )
-        self.B = nn.Parameter(
-            torch.empty((config.n_instances, self.k, self.m, config.n_hidden), device=config.device)
-        )
+        self.linear2 = TransposedLinearComponent(self.linear1.A, self.linear1.B)
 
         bias_data = (
             torch.zeros((config.n_instances, config.n_features), device=config.device)
@@ -201,108 +269,69 @@ class TMSSPDModel(SPDModel):
         )
         self.b_final = nn.Parameter(bias_data)
 
-        nn.init.xavier_normal_(self.A)
-        nn.init.xavier_normal_(self.B)
-
         self.hidden_layers = None
         if config.n_hidden_layers > 0:
             self.hidden_layers = nn.ModuleList(
                 [
-                    InstancesParamComponents(
+                    LinearComponent(
+                        d_in=config.n_hidden,
+                        d_out=config.n_hidden,
                         n_instances=config.n_instances,
-                        in_dim=config.n_hidden,
-                        out_dim=config.n_hidden,
-                        k=self.k,
-                        bias=False,
+                        init_type="xavier_normal",
                         init_scale=1.0,
+                        k=self.k,
                         m=self.m,
                     )
                     for _ in range(config.n_hidden_layers)
                 ]
             )
 
-    def all_subnetwork_params(self) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
-        """Get all subnetwork parameters."""
-        W = einops.einsum(
-            self.A,
-            self.B,
-            "n_instances k n_features m, n_instances k m n_hidden -> n_instances k n_features n_hidden",
-        )
-        W_T = einops.rearrange(
-            W, "n_instances k n_features n_hidden -> n_instances k n_hidden n_features"
-        )
-        params: dict[str, Float[Tensor, "n_instances k d_in d_out"]] = {"W": W, "W_T": W_T}
+        self.setup()
+
+    def all_component_weights(self) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
+        """Get all component weights (i.e. A @ B in every layer)."""
+        params: dict[str, Float[Tensor, "n_instances k d_in d_out"]] = {}
+        params["linear1"] = self.linear1.component_weights
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponents)
-                params[f"hidden_{i}"] = einops.einsum(
-                    layer.A,
-                    layer.B,
-                    "n_instances k d_in m, n_instances k m d_out -> n_instances k d_in d_out",
-                )
+                assert isinstance(layer, LinearComponent)
+                params[f"hidden_layers.{i}"] = layer.component_weights
+        params["linear2"] = self.linear2.component_weights
         return params
-
-    def all_subnetwork_params_summed(self) -> dict[str, Float[Tensor, "n_instances d_in d_out"]]:
-        """All subnetwork params summed over the subnetwork dimension."""
-        summed_params: dict[str, Float[Tensor, "n_instances d_in d_out"]] = {
-            p_name: p.sum(dim=1) for p_name, p in self.all_subnetwork_params().items()
-        }
-        return summed_params
 
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
         topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
-    ) -> tuple[
-        Float[Tensor, "batch n_instances n_features"],
-        dict[str, Float[Tensor, "batch n_instances n_features"]],
-        dict[str, Float[Tensor, "batch n_instances k n_features"]],
-    ]:
-        layer_acts = {}
-        inner_acts = {}
-
-        # First layer/embedding: x -> A -> m dimension -> B -> hidden
-        pre_inner_act_0 = torch.einsum("bif,ikfm->bikm", x, self.A)
-        if topk_mask is not None:
-            assert topk_mask.shape == pre_inner_act_0.shape[:-1]
-            pre_inner_act_0 = torch.einsum("bikm,bik->bikm", pre_inner_act_0, topk_mask)
-        inner_acts["W"] = torch.einsum("bikm,ikmh->bikh", pre_inner_act_0, self.B)
-        layer_acts["W"] = torch.einsum("bikh->bih", inner_acts["W"])
-        x = layer_acts["W"]
-
-        # Hidden layers
-        if self.hidden_layers is not None:
-            for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponents)
-                x, hidden_inner_act_i = layer(x, topk_mask)
-                layer_acts[f"hidden_{i}"] = x
-                inner_acts[f"hidden_{i}"] = hidden_inner_act_i
-
-        # Second layer/unembedding: hidden -> B.T -> m dimension -> A.T -> features
-        pre_inner_act_1 = torch.einsum("bih,ikmh->bikm", x, self.B)
-        if topk_mask is not None:
-            assert topk_mask.shape == pre_inner_act_1.shape[:-1]
-            pre_inner_act_1 = torch.einsum("bikm,bik->bikm", pre_inner_act_1, topk_mask)
-        inner_acts["W_T"] = torch.einsum("bikm,ikfm->bikf", pre_inner_act_1, self.A)
-        layer_acts["W_T"] = torch.einsum("bikf->bif", inner_acts["W_T"]) + self.b_final
-
-        out = F.relu(layer_acts["W_T"])
-        return out, layer_acts, inner_acts
+    ) -> Float[Tensor, "batch n_instances n_features"]:
+        return _tms_forward(
+            x=x,
+            linear1=self.linear1,
+            linear2=self.linear2,
+            b_final=self.b_final,
+            hidden_layers=self.hidden_layers,
+            topk_mask=topk_mask,
+        )
 
     def set_subnet_to_zero(
         self, subnet_idx: int
     ) -> dict[str, Float[Tensor, "n_instances in_dim m"] | Float[Tensor, "n_instances m out_dim"]]:
+        # Only need to set the values for linear1 to zero, since linear2 references the same params
         stored_vals = {
-            "A": self.A.data[:, subnet_idx, :, :].detach().clone(),
-            "B": self.B.data[:, subnet_idx, :, :].detach().clone(),
+            "linear1.A": self.linear1.A.data[:, subnet_idx, :, :].detach().clone(),
+            "linear1.B": self.linear1.B.data[:, subnet_idx, :, :].detach().clone(),
         }
-        self.A.data[:, subnet_idx, :, :] = 0.0
-        self.B.data[:, subnet_idx, :, :] = 0.0
+        self.linear1.A.data[:, subnet_idx, :, :] = 0.0
+        self.linear1.B.data[:, subnet_idx, :, :] = 0.0
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponents)
-                stored_vals[f"hidden_{i}_A"] = layer.A.data[:, subnet_idx, :, :].detach().clone()
-                stored_vals[f"hidden_{i}_B"] = layer.B.data[:, subnet_idx, :, :].detach().clone()
+                assert isinstance(layer, LinearComponent)
+                stored_vals[f"hidden_layers.{i}.A"] = (
+                    layer.A.data[:, subnet_idx, :, :].detach().clone()
+                )
+                stored_vals[f"hidden_layers.{i}.B"] = (
+                    layer.B.data[:, subnet_idx, :, :].detach().clone()
+                )
                 layer.A.data[:, subnet_idx, :, :] = 0.0
                 layer.B.data[:, subnet_idx, :, :] = 0.0
 
@@ -315,13 +344,13 @@ class TMSSPDModel(SPDModel):
             str, Float[Tensor, "n_instances in_dim m"] | Float[Tensor, "n_instances m out_dim"]
         ],
     ) -> None:
-        self.A.data[:, subnet_idx, :, :] = stored_vals["A"]
-        self.B.data[:, subnet_idx, :, :] = stored_vals["B"]
+        self.linear1.A.data[:, subnet_idx, :, :] = stored_vals["linear1.A"]
+        self.linear1.B.data[:, subnet_idx, :, :] = stored_vals["linear1.B"]
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponents)
-                layer.A.data[:, subnet_idx, :, :] = stored_vals[f"hidden_{i}_A"]
-                layer.B.data[:, subnet_idx, :, :] = stored_vals[f"hidden_{i}_B"]
+                assert isinstance(layer, LinearComponent)
+                layer.A.data[:, subnet_idx, :, :] = stored_vals[f"hidden_layers.{i}.A"]
+                layer.B.data[:, subnet_idx, :, :] = stored_vals[f"hidden_layers.{i}.B"]
 
     def all_As_and_Bs(
         self,
@@ -329,37 +358,31 @@ class TMSSPDModel(SPDModel):
         str, tuple[Float[Tensor, "n_instances k d_in m"], Float[Tensor, "n_instances k m d_out"]]
     ]:
         """Get all A and B matrices. Note that this won't return bias components."""
-        params: dict[
-            str,
-            tuple[Float[Tensor, "n_instances k d_in m"], Float[Tensor, "n_instances k m d_out"]],
-        ] = {
-            "W": (self.A, self.B),
-            "W_T": (
-                rearrange(self.B, "i k m h -> i k h m"),
-                rearrange(self.A, "i k f m -> i k m f"),
-            ),
+        params = {
+            "linear1": (self.linear1.A, self.linear1.B),
+            "linear2": (self.linear2.A, self.linear2.B),
         }
         if self.hidden_layers is not None:
             for i, layer in enumerate(self.hidden_layers):
-                assert isinstance(layer, InstancesParamComponents)
-                params[f"hidden_{i}"] = (layer.A, layer.B)
+                assert isinstance(layer, LinearComponent)
+                params[f"hidden_layers.{i}"] = (layer.A, layer.B)
         return params
 
     def set_matrices_to_unit_norm(self) -> None:
-        """Set the matrices that need to be normalized to unit norm."""
-        self.A.data /= self.A.data.norm(p=2, dim=-2, keepdim=True)
+        """Set the A matrices to unit norm for stability."""
+        self.linear1.A.data /= self.linear1.A.data.norm(p=2, dim=-2, keepdim=True)
         if self.hidden_layers is not None:
             for layer in self.hidden_layers:
-                assert isinstance(layer, InstancesParamComponents)
+                assert isinstance(layer, LinearComponent)
                 layer.A.data /= layer.A.data.norm(p=2, dim=-2, keepdim=True)
 
     def fix_normalized_adam_gradients(self) -> None:
         """Modify the gradient by subtracting it's component parallel to the activation."""
-        assert self.A.grad is not None
-        remove_grad_parallel_to_subnetwork_vecs(self.A.data, self.A.grad)
+        assert self.linear1.A.grad is not None
+        remove_grad_parallel_to_subnetwork_vecs(self.linear1.A.data, self.linear1.A.grad)
         if self.hidden_layers is not None:
             for layer in self.hidden_layers:
-                assert isinstance(layer, InstancesParamComponents)
+                assert isinstance(layer, LinearComponent)
                 assert layer.A.grad is not None
                 remove_grad_parallel_to_subnetwork_vecs(layer.A.data, layer.A.grad)
 
@@ -422,5 +445,6 @@ class TMSSPDModel(SPDModel):
         )
         model = cls(config=tms_spd_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")
+        params = replace_deprecated_param_names(params, {"A": "linear1.A", "B": "linear1.B"})
         model.load_state_dict(params)
         return model, spd_config

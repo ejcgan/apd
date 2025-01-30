@@ -1,22 +1,23 @@
 import torch
 
-from spd.run_spd import calc_act_recon, calc_param_match_loss
+from spd.run_spd import _calc_param_mse, calc_act_recon
 
 
 class TestCalcParamMatchLoss:
+    # Actually testing _calc_param_mse. calc_param_match_loss should fail hard in most cases, and
+    # testing it would require lots of mocking the way it is currently written.
     def test_calc_param_match_loss_single_instance_single_param(self):
         A = torch.ones(2, 3)
         B = torch.ones(3, 2)
         n_params = 2 * 3 * 2
-        pretrained_weights = {"layer1": torch.tensor([[1.0, 1.0], [1.0, 1.0]])}
-        subnetwork_params = {"layer1": A @ B}
-        param_map = {"layer1": "layer1"}
-        result = calc_param_match_loss(
-            pretrained_weights=pretrained_weights,
-            subnetwork_params_summed=subnetwork_params,
-            param_map=param_map,
-            has_instance_dim=False,
+        spd_params = {"layer1": A @ B}
+        target_params = {"layer1": torch.tensor([[1.0, 1.0], [1.0, 1.0]])}
+
+        result = _calc_param_mse(
+            params1=target_params,
+            params2=spd_params,
             n_params=n_params,
+            device="cpu",
         )
 
         # A: [2, 3], B: [3, 2], both filled with ones
@@ -30,21 +31,19 @@ class TestCalcParamMatchLoss:
         As = [torch.ones(2, 3), torch.ones(3, 3)]
         Bs = [torch.ones(3, 3), torch.ones(3, 2)]
         n_params = 2 * 3 * 3 + 3 * 3 * 2
-        pretrained_weights = {
+        target_params = {
             "layer1": torch.tensor([[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]]),
             "layer2": torch.tensor([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]),
         }
-        subnetwork_params = {
+        spd_params = {
             "layer1": As[0] @ Bs[0],
             "layer2": As[1] @ Bs[1],
         }
-        param_map = {"layer1": "layer1", "layer2": "layer2"}
-        result = calc_param_match_loss(
-            pretrained_weights=pretrained_weights,
-            subnetwork_params_summed=subnetwork_params,
-            param_map=param_map,
-            has_instance_dim=False,
+        result = _calc_param_mse(
+            params1=target_params,
+            params2=spd_params,
             n_params=n_params,
+            device="cpu",
         )
 
         # First layer: AB1: [[3, 3, 3], [3, 3, 3]], diff^2: [[1, 1, 1], [1, 1, 1]]
@@ -58,17 +57,15 @@ class TestCalcParamMatchLoss:
         As = [torch.ones(2, 2, 3)]
         Bs = [torch.ones(2, 3, 2)]
         n_params = 2 * 3 * 2
-        pretrained_weights = {
+        target_params = {
             "layer1": torch.tensor([[[2.0, 2.0], [2.0, 2.0]], [[1.0, 1.0], [1.0, 1.0]]])
         }
-        subnetwork_params = {"layer1": As[0] @ Bs[0]}
-        param_map = {"layer1": "layer1"}
-        result = calc_param_match_loss(
-            pretrained_weights=pretrained_weights,
-            subnetwork_params_summed=subnetwork_params,
-            param_map=param_map,
-            has_instance_dim=True,
+        spd_params = {"layer1": As[0] @ Bs[0]}
+        result = _calc_param_mse(
+            params1=target_params,
+            params2=spd_params,
             n_params=n_params,
+            device="cpu",
         )
 
         # AB [n_instances=2, d_in=2, d_out=2]: [[[3, 3], [3, 3]], [[3, 3], [3, 3]]]

@@ -39,7 +39,7 @@ color_map = {
     "baseline_monosemantic": "grey",
 }
 
-out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/figures2/"
+out_dir = REPO_ROOT / "spd/experiments/resid_mlp/out/figures/"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # %% Loading
@@ -99,7 +99,7 @@ def spd_model_fn(
 
 
 def target_model_fn(batch: Float[Tensor, "batch n_instances"]):
-    return target_model(batch)[0]
+    return target_model(batch)
 
 
 def top1_model_fn(
