@@ -922,18 +922,24 @@ def collect_per_feature_losses(
         # n_instances should be 1
         assert batch.shape[1] == 1
 
-        # Pass through the target model
-        target_model_output, pre_acts, post_acts = target_model(batch)
-        # Pass through the full SPD model
-        model_output_spd, layer_acts, inner_acts = spd_model(batch)
+        # Forward pass on target model
+        target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
+        target_out, target_cache = target_model.run_with_cache(
+            batch, names_filter=target_cache_filter
+        )
+
+        # Do a forward pass with all subnetworks
+        spd_cache_filter = lambda k: k.endswith((".hook_post", ".hook_component_acts"))
+        spd_out, spd_cache = spd_model.run_with_cache(batch, names_filter=spd_cache_filter)
+
         attribution_scores = calculate_attributions(
             model=spd_model,
             batch=batch,
-            out=model_output_spd,
-            target_out=target_model_output,
-            pre_acts=pre_acts,
-            post_acts=post_acts,
-            inner_acts=inner_acts,
+            out=spd_out,
+            target_out=target_out,
+            pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+            post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+            inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
             attribution_type=config.attribution_type,
         )
 
@@ -948,20 +954,16 @@ def collect_per_feature_losses(
             sample_topk_mask = calc_topk_mask(attribution_scores, topk=1, batch_topk=False)
 
             # Get the batch topk model output
-            model_output_spd_batch_topk, _, _ = spd_model(batch, topk_mask=batch_topk_mask)
+            spd_out_batch_topk = spd_model(batch, topk_mask=batch_topk_mask)
             # Get the sample topk model output
-            model_output_spd_sample_topk, _, _ = spd_model(batch, topk_mask=sample_topk_mask)
+            spd_out_sample_topk = spd_model(batch, topk_mask=sample_topk_mask)
 
             # Get rid of the n_instances dimension for simplicity
             batch: Float[Tensor, "batch n_features"] = batch.squeeze(1)
             batch_topk_mask: Float[Tensor, "batch k"] = batch_topk_mask.squeeze(1)
-            target_model_output: Float[Tensor, "batch n_features"] = target_model_output.squeeze(1)
-            model_output_spd_batch_topk: Float[Tensor, "batch n_features"] = (
-                model_output_spd_batch_topk.squeeze(1)
-            )
-            model_output_spd_sample_topk: Float[Tensor, "batch n_features"] = (
-                model_output_spd_sample_topk.squeeze(1)
-            )
+            target_out: Float[Tensor, "batch n_features"] = target_out.squeeze(1)
+            spd_out_batch_topk: Float[Tensor, "batch n_features"] = spd_out_batch_topk.squeeze(1)
+            spd_out_sample_topk: Float[Tensor, "batch n_features"] = spd_out_sample_topk.squeeze(1)
             labels: Float[Tensor, "batch n_features"] = labels.squeeze(1)
 
             # Get the indices of samples where there is exactly one feature active
@@ -973,26 +975,22 @@ def collect_per_feature_losses(
             # Filter to only include the samples where there is exactly one feature active
             batch = batch[exactly_one_active_features_batch]
             labels = labels[exactly_one_active_features_batch]
-            target_model_output = target_model_output[exactly_one_active_features_batch]
-            model_output_spd_batch_topk = model_output_spd_batch_topk[
-                exactly_one_active_features_batch
-            ]
-            model_output_spd_sample_topk = model_output_spd_sample_topk[
-                exactly_one_active_features_batch
-            ]
+            target_out = target_out[exactly_one_active_features_batch]
+            spd_out_batch_topk = spd_out_batch_topk[exactly_one_active_features_batch]
+            spd_out_sample_topk = spd_out_sample_topk[exactly_one_active_features_batch]
             filtered_active_features_batch: Float[Tensor, "sub_batch n_features"] = (
                 active_features_batch[exactly_one_active_features_batch]
             )
 
             # Get the Squared error loss for each sample
-            loss_target_batch_raw: Float[Tensor, "sub_batch 1"] = (
-                (target_model_output - labels) ** 2
-            ).sum(dim=-1, keepdim=True)
+            loss_target_batch_raw: Float[Tensor, "sub_batch 1"] = ((target_out - labels) ** 2).sum(
+                dim=-1, keepdim=True
+            )
             loss_spd_batch_topk_batch_raw: Float[Tensor, "sub_batch 1"] = (
-                (model_output_spd_batch_topk - labels) ** 2
+                (spd_out_batch_topk - labels) ** 2
             ).sum(dim=-1, keepdim=True)
             loss_spd_sample_topk_batch_raw: Float[Tensor, "sub_batch 1"] = (
-                (model_output_spd_sample_topk - labels) ** 2
+                (spd_out_sample_topk - labels) ** 2
             ).sum(dim=-1, keepdim=True)
 
             # Element-wise multiply the loss by the active features
