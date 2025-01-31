@@ -35,6 +35,7 @@ from spd.experiments.resid_mlp.resid_mlp_dataset import (
     ResidualMLPDataset,
 )
 from spd.log import logger
+from spd.module_utils import collect_nested_module_attrs
 from spd.plotting import (
     plot_subnetwork_attributions_statistics,
     plot_subnetwork_correlations,
@@ -156,7 +157,7 @@ def plot_multiple_component_weights(
     step: int | None = None,
 ) -> plt.Figure:
     """Plot each component weight matrix."""
-    all_params = model.all_component_weights()
+    all_params = collect_nested_module_attrs(model, "component_weights")
     # Each param (of which there are n_layers): [k, n_features, n_features]
     n_params = len(all_params)
     param_names = list(all_params.keys())

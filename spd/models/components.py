@@ -6,7 +6,7 @@ from jaxtyping import Bool, Float
 from torch import Tensor, nn
 
 from spd.hooks import HookPoint
-from spd.utils import init_param_
+from spd.module_utils import init_param_
 
 
 class Linear(nn.Module):
@@ -118,3 +118,71 @@ class LinearComponent(nn.Module):
         out = einops.einsum(component_acts, "batch ... k d_out -> batch ... d_out")
         out = self.hook_post(out)
         return out
+
+
+class TransposedLinear(Linear):
+    """Linear layer that uses a transposed weight from another Linear layer.
+
+    We use 'd_in' and 'd_out' to refer to the dimensions of the original Linear layer.
+    """
+
+    def __init__(self, original_weight: nn.Parameter):
+        # Copy the relevant parts from Linear.__init__. Don't copy operations that will call
+        # TransposedLinear.weight.
+        nn.Module.__init__(self)
+        self.hook_pre = HookPoint()  # (batch ... d_out)
+        self.hook_post = HookPoint()  # (batch ... d_in)
+
+        self.register_buffer("original_weight", original_weight, persistent=False)
+
+    @property
+    def weight(self) -> Float[Tensor, "n_instances d_out d_in"]:
+        return einops.rearrange(
+            self.original_weight, "n_instances d_in d_out -> n_instances d_out d_in"
+        )
+
+
+class TransposedLinearComponent(LinearComponent):
+    """LinearComponent that uses a transposed weight from another LinearComponent.
+
+    We use 'd_in' and 'd_out' to refer to the dimensions of the original LinearComponent.
+    """
+
+    def __init__(self, original_A: nn.Parameter, original_B: nn.Parameter):
+        # Copy the relevant parts from LinearComponent.__init__. Don't copy operations that will
+        # call TransposedLinear.A or TransposedLinear.B.
+        nn.Module.__init__(self)
+        self.n_instances, self.k, _, self.m = original_A.shape
+
+        self.hook_pre = HookPoint()  # (batch ... d_out)
+        self.hook_component_acts = HookPoint()  # (batch ... k d_in)
+        self.hook_post = HookPoint()  # (batch ... d_in)
+
+        self.register_buffer("original_A", original_A, persistent=False)
+        self.register_buffer("original_B", original_B, persistent=False)
+
+    @property
+    def A(self) -> Float[Tensor, "n_instances k d_out m"]:
+        # New A is the transpose of the original B
+        return einops.rearrange(
+            self.original_B,
+            "n_instances k m d_out -> n_instances k d_out m",
+        )
+
+    @property
+    def B(self) -> Float[Tensor, "n_instances k d_in m"]:
+        # New B is the transpose of the original A
+        return einops.rearrange(
+            self.original_A,
+            "n_instances k d_in m -> n_instances k m d_in",
+        )
+
+    @property
+    def component_weights(self) -> Float[Tensor, "... k d_out d_in"]:
+        """A @ B before summing over the subnetwork dimension."""
+        return einops.einsum(self.A, self.B, "... k d_out m, ... k m d_in -> ... k d_out d_in")
+
+    @property
+    def weight(self) -> Float[Tensor, "... d_out d_in"]:
+        """A @ B after summing over the subnetwork dimension."""
+        return einops.einsum(self.A, self.B, "... k d_out m, ... k m d_in -> ... d_out d_in")

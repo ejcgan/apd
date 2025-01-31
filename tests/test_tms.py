@@ -12,11 +12,11 @@ from spd.experiments.tms.models import (
     TMSSPDModelConfig,
 )
 from spd.experiments.tms.train_tms import TMSTrainConfig, get_model_and_dataloader, train
+from spd.module_utils import get_nested_module_attr
 from spd.run_spd import Config, TMSTaskConfig, optimize
 from spd.utils import (
     DatasetGeneratedDataLoader,
     SparseFeatureDataset,
-    get_nested_module_attr,
     set_seed,
 )
 

@@ -9,7 +9,7 @@
 # param_match_coeff: 1.0
 # topk_recon_coeff: 1
 # attribution_type: gradient
-# pnorm: 1.0
+# pnorm: null
 # schatten_pnorm: 1.0
 # schatten_coeff: 7e-1
 # batch_size: 2048
@@ -41,7 +41,7 @@ batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 10.0
 attribution_type: gradient
-pnorm: 1.0
+pnorm: null
 schatten_pnorm: 0.9
 schatten_coeff: 15.0
 batch_size: 2048

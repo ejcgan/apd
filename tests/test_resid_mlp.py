@@ -11,8 +11,9 @@ from spd.experiments.resid_mlp.models import (
     ResidualMLPSPDModel,
 )
 from spd.experiments.resid_mlp.resid_mlp_dataset import ResidualMLPDataset
+from spd.module_utils import get_nested_module_attr
 from spd.run_spd import Config, ResidualMLPTaskConfig, optimize
-from spd.utils import DatasetGeneratedDataLoader, get_nested_module_attr, set_seed
+from spd.utils import DatasetGeneratedDataLoader, set_seed
 
 # Create a simple ResidualMLP config that we can use in multiple tests
 RESID_MLP_TASK_CONFIG = ResidualMLPTaskConfig(

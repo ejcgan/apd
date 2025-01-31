@@ -7,7 +7,7 @@ seed: 0
 # topk: 1
 topk: 1.28
 m: null
-pnorm: 1
+pnorm: null
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 1.0
@@ -40,7 +40,7 @@ task_config:
 # seed: 0
 # topk: 1.28 # bs=256
 # m: null
-# pnorm: 1
+# pnorm: null
 # batch_topk: true
 # param_match_coeff: 1.0
 # topk_recon_coeff: 2.0

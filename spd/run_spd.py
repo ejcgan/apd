@@ -25,6 +25,7 @@ from tqdm import tqdm
 from spd.hooks import HookedRootModule
 from spd.log import logger
 from spd.models.base import SPDModel
+from spd.module_utils import collect_nested_module_attrs, get_nested_module_attr
 from spd.types import ModelPath, Probability
 from spd.utils import (
     calc_recon_mse,
@@ -32,7 +33,6 @@ from spd.utils import (
     calculate_attributions,
     get_lr_schedule_fn,
     get_lr_with_warmup,
-    get_nested_module_attr,
 )
 
 
@@ -186,36 +186,36 @@ def get_common_run_name_suffix(config: Config) -> str:
 
 
 def calc_schatten_loss(
-    As_and_Bs_vals: list[
-        tuple[
-            Float[Tensor, "n_instances k d_layer_in m"] | Float[Tensor, "k d_layer_in m"],
-            Float[Tensor, "n_instances k m d_layer_out"] | Float[Tensor, "k m d_layer_out"],
-        ]
-    ],
-    mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
+    As: dict[str, Float[Tensor, "... k d_layer_in m"]],
+    Bs: dict[str, Float[Tensor, "... k m d_layer_out"]],
+    mask: Float[Tensor, "batch k"],
     p: float,
     n_params: int,
+    device: str,
 ) -> Float[Tensor, ""] | Float[Tensor, " n_instances"]:
     """Calculate the Schatten p-norms of the topk subnetworks and sum them.
 
     Args:
-        As_and_Bs_vals: List of tuples containing A and B matrices for each layer
+        As: Dictionary of A matrices for each layer
+        Bs: Dictionary of B matrices for each layer
         mask: The mask to use for the Schatten p-norm penalty. May be a binary mask (if topk) or
             a float mask (if lp sparsity).
         p: The Schatten p-norm to use (from config.schatten_pnorm)
         n_params: The number of parameters in the model
+        device: The device to use for calculations
     Returns:
         The Schatten p-norm penalty for the topk subnetworks
     """
+    assert As.keys() == Bs.keys(), "As and Bs must have the same keys"
     n_instances = mask.shape[1] if mask.ndim == 3 else None
     accumulate_shape = (n_instances,) if n_instances is not None else ()
 
-    schatten_penalty = torch.zeros(accumulate_shape, device=As_and_Bs_vals[0][0].device)
+    schatten_penalty = torch.zeros(accumulate_shape, device=device)
     batch_size = mask.shape[0]
 
-    for A, B in As_and_Bs_vals:
-        # A: [k, d_in, m] or [n_instances, k, d_in, m]
-        # B: [k, m, d_out] or [n_instances, k, m, d_out]
+    for name in As:
+        A = As[name]  # [k, d_in, m] or [n_instances, k, d_in, m]
+        B = Bs[name]  # [k, m, d_out] or [n_instances, k, m, d_out]
         # mask: [batch, k] or [batch, n_instances, k]
 
         # Compute S_A = A^T A and S_B = B B^T
@@ -381,7 +381,7 @@ def optimize(
     for step in tqdm(range(config.steps + 1), ncols=0):
         if config.unit_norm_matrices:
             assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
-            model.set_matrices_to_unit_norm()
+            model.set_As_to_unit_norm()
 
         step_lr = get_lr_with_warmup(
             step=step,
@@ -523,10 +523,12 @@ def optimize(
             schatten_pnorm = config.schatten_pnorm if config.schatten_pnorm is not None else 1.0
             # Use the attributions as the mask in the lp case, and topk_mask otherwise
             schatten_loss = calc_schatten_loss(
-                As_and_Bs_vals=list(model.all_As_and_Bs().values()),
+                As=collect_nested_module_attrs(model, attr_name="A", include_attr_name=False),
+                Bs=collect_nested_module_attrs(model, attr_name="B", include_attr_name=False),
                 mask=mask,
                 p=schatten_pnorm,
                 n_params=n_params,
+                device=device,
             )
 
         lp_sparsity_loss = None
@@ -617,7 +619,6 @@ def optimize(
                 wandb.log({"grad_norm": grad_norm}, step=step)
 
             if config.unit_norm_matrices:
-                assert isinstance(model, SPDModel), "Can only norm matrices in SPDModel instances"
                 model.fix_normalized_adam_gradients()
 
             opt.step()

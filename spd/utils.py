@@ -1,13 +1,11 @@
 import random
 from collections.abc import Callable, Iterator
-from functools import reduce
 from pathlib import Path
 from typing import Any, Generic, Literal, NamedTuple, TypeVar
 
 import einops
 import numpy as np
 import torch
-import torch.nn as nn
 import yaml
 from jaxtyping import Float
 from pydantic import BaseModel, PositiveFloat
@@ -18,6 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 from spd.hooks import HookedRootModule
 from spd.log import logger
 from spd.models.base import SPDModel
+from spd.module_utils import collect_nested_module_attrs
 from spd.settings import REPO_ROOT
 
 T = TypeVar("T", bound=BaseModel)
@@ -130,19 +129,6 @@ def replace_pydantic_model(model: BaseModelType, *updates: dict[str, Any]) -> Ba
     return model.__class__(**deep_update(model.model_dump(), *updates))
 
 
-def init_param_(
-    param: torch.Tensor,
-    scale: float = 1.0,
-    init_type: Literal["kaiming_uniform", "xavier_normal"] = "kaiming_uniform",
-) -> None:
-    if init_type == "kaiming_uniform":
-        torch.nn.init.kaiming_uniform_(param)
-        with torch.no_grad():
-            param.mul_(scale)
-    elif init_type == "xavier_normal":
-        torch.nn.init.xavier_normal_(param, gain=scale)
-
-
 class DatasetGeneratedDataLoader(DataLoader[Q], Generic[Q]):
     """DataLoader that generates batches by calling the dataset's `generate_batch` method."""
 
@@ -224,7 +210,7 @@ def calc_grad_attributions(
     post_act_param_names = [k.removesuffix(".hook_post") for k in post_acts]
     pre_act_param_names = [k.removesuffix(".hook_pre") for k in pre_acts]
     component_weight_names = list(component_weights.keys())
-    assert post_act_param_names == pre_act_param_names == component_weight_names
+    assert set(post_act_param_names) == set(pre_act_param_names) == set(component_weight_names)
 
     attr_shape = target_out.shape[:-1] + (k,)  # (batch, k) or (batch, n_instances, k)
     attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
@@ -290,9 +276,12 @@ def collect_subnetwork_attributions(
     target_out, target_cache = target_model.run_with_cache(
         test_batch, names_filter=target_cache_filter
     )
+    component_weights = collect_nested_module_attrs(
+        spd_model, attr_name="component_weights", include_attr_name=False
+    )
     attribution_scores = calc_grad_attributions(
         target_out=target_out,
-        component_weights=spd_model.all_component_weights(),
+        component_weights=component_weights,
         pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
         post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
         k=spd_model.k,
@@ -309,13 +298,14 @@ def calc_ablation_attributions(
     """Calculate the attributions by ablating each subnetwork one at a time."""
 
     attr_shape = out.shape[:-1] + (model.k,)  # (batch, k) or (batch, n_instances, k)
+    has_instance_dim = len(out.shape) == 3
     attributions = torch.zeros(attr_shape, device=out.device, dtype=out.dtype)
     for subnet_idx in range(model.k):
-        stored_vals = model.set_subnet_to_zero(subnet_idx)
+        stored_vals = model.set_subnet_to_zero(subnet_idx, has_instance_dim)
         ablation_out, _, _ = model(batch)
         out_recon = ((out - ablation_out) ** 2).mean(dim=-1)
         attributions[..., subnet_idx] = out_recon
-        model.restore_subnet(subnet_idx, stored_vals)
+        model.restore_subnet(subnet_idx, stored_vals, has_instance_dim)
     return attributions
 
 
@@ -356,11 +346,14 @@ def calculate_attributions(
     if attribution_type == "ablation":
         attributions = calc_ablation_attributions(model=model, batch=batch, out=out)
     elif attribution_type == "gradient":
+        component_weights = collect_nested_module_attrs(
+            model, attr_name="component_weights", include_attr_name=False
+        )
         attributions = calc_grad_attributions(
             target_out=target_out,
             pre_acts=pre_acts,
-            component_weights=model.all_component_weights(),
             post_acts=post_acts,
+            component_weights=component_weights,
             k=model.k,
         )
     elif attribution_type == "activation":
@@ -401,22 +394,6 @@ def calc_topk_mask(
         topk_mask = einops.rearrange(topk_mask, "... (b k) -> b ... k", b=batch_size)
 
     return topk_mask
-
-
-@torch.inference_mode()
-def remove_grad_parallel_to_subnetwork_vecs(
-    A: Float[Tensor, "... d_in m"], A_grad: Float[Tensor, "... d_in m"]
-) -> None:
-    """Modify the gradient by subtracting it's component parallel to the activation.
-
-    I.e. subtract the projection of the gradient vector onto the activation vector.
-
-    This is to stop Adam from changing the norm of A. Note that this will not completely prevent
-    Adam from changing the norm due to Adam's (m/(sqrt(v) + eps)) term not preserving the norm
-    direction.
-    """
-    parallel_component = einops.einsum(A_grad, A, "... d_in m, ... d_in m -> ... m")
-    A_grad -= einops.einsum(parallel_component, A, "... m, ... d_in m -> ... d_in m")
 
 
 class SPDOutputs(NamedTuple):
@@ -774,22 +751,6 @@ def get_lr_with_warmup(
     if step < warmup_steps:
         return lr * (step / warmup_steps)
     return lr * lr_schedule_fn(step - warmup_steps, steps - warmup_steps)
-
-
-def get_nested_module_attr(module: nn.Module, access_string: str) -> Any:
-    """Get a module by its name, which may contain periods.
-    Taken from https://discuss.pytorch.org/t/how-to-access-to-a-layer-by-module-name/83797/8
-
-    Args:
-        module: The module to search through.
-        access_string: The name of the module to access, which may contain periods.
-    """
-    names = access_string.split(".")
-    try:
-        mod = reduce(getattr, names, module)
-    except AttributeError as err:
-        raise AttributeError(f"Module {module} does not have attribute {access_string}") from err
-    return mod
 
 
 def replace_deprecated_param_names(

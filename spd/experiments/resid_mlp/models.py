@@ -17,12 +17,11 @@ from spd.hooks import HookedRootModule
 from spd.log import logger
 from spd.models.base import SPDModel
 from spd.models.components import Linear, LinearComponent
+from spd.module_utils import init_param_
 from spd.run_spd import Config, ResidualMLPTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
 from spd.utils import (
     handle_deprecated_config_keys,
-    init_param_,
-    remove_grad_parallel_to_subnetwork_vecs,
     replace_deprecated_param_names,
 )
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
@@ -327,16 +326,6 @@ class ResidualMLPSPDModel(SPDModel):
         )
         self.setup()
 
-    def all_component_weights(
-        self,
-    ) -> dict[str, Float[Tensor, "n_instances k d_in d_out"]]:
-        params = {}
-        for i, mlp in enumerate(self.layers):
-            assert isinstance(mlp, MLP)
-            params[f"layers.{i}.mlp_in"] = mlp.mlp_in.component_weights
-            params[f"layers.{i}.mlp_out"] = mlp.mlp_out.component_weights
-        return params
-
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
@@ -361,59 +350,6 @@ class ResidualMLPSPDModel(SPDModel):
         if self.config.apply_output_act_fn:
             out = self.act_fn(out)
         return out
-
-    def set_subnet_to_zero(
-        self, subnet_idx: int
-    ) -> dict[str, Float[Tensor, "n_instances k d_in m"] | Float[Tensor, "n_instances k m d_out"]]:
-        stored_vals = {}
-        for i, mlp in enumerate(self.layers):
-            stored_vals[f"layers.{i}.mlp_in.A"] = mlp.mlp_in.A[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.mlp_in.B"] = mlp.mlp_in.B[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.mlp_out.A"] = mlp.mlp_out.A[subnet_idx].detach().clone()
-            stored_vals[f"layers.{i}.mlp_out.B"] = mlp.mlp_out.B[subnet_idx].detach().clone()
-
-            mlp.mlp_in.A.data[subnet_idx] = 0.0
-            mlp.mlp_in.B.data[subnet_idx] = 0.0
-            mlp.mlp_out.A.data[subnet_idx] = 0.0
-            mlp.mlp_out.B.data[subnet_idx] = 0.0
-        return stored_vals
-
-    def restore_subnet(
-        self,
-        subnet_idx: int,
-        stored_vals: dict[
-            str, Float[Tensor, "n_instances k d_in m"] | Float[Tensor, "n_instances k m d_out"]
-        ],
-    ) -> None:
-        for i, mlp in enumerate(self.layers):
-            mlp.mlp_in.A[subnet_idx].data = stored_vals[f"layers.{i}.mlp_in.A"]
-            mlp.mlp_in.B[subnet_idx].data = stored_vals[f"layers.{i}.mlp_in.B"]
-            mlp.mlp_out.A[subnet_idx].data = stored_vals[f"layers.{i}.mlp_out.A"]
-            mlp.mlp_out.B[subnet_idx].data = stored_vals[f"layers.{i}.mlp_out.B"]
-
-    def all_As_and_Bs(
-        self,
-    ) -> dict[
-        str, tuple[Float[Tensor, "n_instances k d_in m"], Float[Tensor, "n_instances k m d_out"]]
-    ]:
-        """Get all A and B matrices for each layer."""
-        params = {}
-        for i, mlp in enumerate(self.layers):
-            params[f"layers.{i}.mlp_in"] = (mlp.mlp_in.A, mlp.mlp_in.B)
-            params[f"layers.{i}.mlp_out"] = (mlp.mlp_out.A, mlp.mlp_out.B)
-        return params
-
-    def set_matrices_to_unit_norm(self):
-        for mlp in self.layers:
-            mlp.mlp_in.A.data /= mlp.mlp_in.A.data.norm(p=2, dim=-2, keepdim=True)
-            mlp.mlp_out.A.data /= mlp.mlp_out.A.data.norm(p=2, dim=-2, keepdim=True)
-
-    def fix_normalized_adam_gradients(self):
-        for mlp in self.layers:
-            assert mlp.mlp_in.A.grad is not None
-            remove_grad_parallel_to_subnetwork_vecs(mlp.mlp_in.A.data, mlp.mlp_in.A.grad)
-            assert mlp.mlp_out.A.grad is not None
-            remove_grad_parallel_to_subnetwork_vecs(mlp.mlp_out.A.data, mlp.mlp_out.A.grad)
 
     @staticmethod
     def _download_wandb_files(wandb_project_run_id: str) -> ResidualMLPSPDPaths:
