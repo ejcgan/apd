@@ -169,9 +169,13 @@ class BatchedDataLoader(DataLoader[Q], Generic[Q]):
 
 
 def calc_grad_attributions(
-    target_out: Float[Tensor, "batch out_dim"] | Float[Tensor, "batch n_instances out_dim"],
-    pre_acts: dict[str, Float[Tensor, "batch d_in"] | Float[Tensor, "batch n_instances d_in"]],
-    post_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]],
+    target_out: Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"],
+    pre_weight_acts: dict[
+        str, Float[Tensor, "batch d_in"] | Float[Tensor, "batch n_instances d_in"]
+    ],
+    post_weight_acts: dict[
+        str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]
+    ],
     component_weights: dict[
         str, Float[Tensor, "k d_in d_out"] | Float[Tensor, "n_instances k d_in d_out"]
     ],
@@ -182,13 +186,13 @@ def calc_grad_attributions(
     An attribution is the product of the gradient of the target model output w.r.t. the post acts
     and the inner acts (i.e. the output of each subnetwork before being summed).
 
-    Note that we don't use the inner_acts collected from the SPD model, because this includes the
+    Note that we don't use the component_acts collected from the SPD model, because this includes the
     computational graph of the full model. We only want the subnetwork parameters of the current
     layer to be in the computational graph. To do this, we multiply a detached version of the
-    pre_acts by the subnet parameters.
+    pre_weight_acts by the subnet parameters.
 
-    NOTE: Multplying the pre_acts by the subnet parameters would be less efficient than multiplying
-    the pre_acts by A and then B. In the future, we can implement this more efficient version. For
+    NOTE: Multplying the pre_weight_acts by the subnet parameters would be less efficient than multiplying
+    the pre_weight_acts by A and then B. In the future, we can implement this more efficient version. For
     now, this simpler version is fine.
 
     Note: This code may be run in between the training forward pass, and the loss.backward() and
@@ -199,45 +203,40 @@ def calc_grad_attributions(
 
     Args:
         target_out: The output of the target model.
-        pre_acts: The activations at the output of each subnetwork before being summed.
-        post_acts: The activations at the output of each layer after being summed.
+        pre_weight_acts: The activations at the output of each subnetwork before being summed.
+        post_weight_acts: The activations at the output of each layer after being summed.
         component_weights: The component weight matrix at each layer.
         k: The number of components.
     Returns:
         The sum of the (squared) attributions from each output dimension.
     """
     # Ensure that all keys are the same after removing the hook suffixes
-    post_act_param_names = [k.removesuffix(".hook_post") for k in post_acts]
-    pre_act_param_names = [k.removesuffix(".hook_pre") for k in pre_acts]
+    post_weight_act_names = [k.removesuffix(".hook_post") for k in post_weight_acts]
+    pre_weight_act_names = [k.removesuffix(".hook_pre") for k in pre_weight_acts]
     component_weight_names = list(component_weights.keys())
-    assert set(post_act_param_names) == set(pre_act_param_names) == set(component_weight_names)
+    assert set(post_weight_act_names) == set(pre_weight_act_names) == set(component_weight_names)
 
     attr_shape = target_out.shape[:-1] + (k,)  # (batch, k) or (batch, n_instances, k)
-    attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
-        torch.zeros(attr_shape, device=target_out.device, dtype=target_out.dtype)
+    attribution_scores: Float[Tensor, "batch ... k"] = torch.zeros(
+        attr_shape, device=target_out.device, dtype=target_out.dtype
     )
 
     out_dim = target_out.shape[-1]
     for feature_idx in range(out_dim):
-        feature_attributions: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
-            torch.zeros(attr_shape, device=target_out.device, dtype=target_out.dtype)
+        feature_attributions: Float[Tensor, "batch ... k"] = torch.zeros(
+            attr_shape, device=target_out.device, dtype=target_out.dtype
         )
-        grad_post_acts: tuple[
-            Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"], ...
-        ] = torch.autograd.grad(
-            target_out[..., feature_idx].sum(), list(post_acts.values()), retain_graph=True
+        grad_post_weight_acts: tuple[Float[Tensor, "batch ... d_out"], ...] = torch.autograd.grad(
+            target_out[..., feature_idx].sum(), list(post_weight_acts.values()), retain_graph=True
         )
-        for i, param_name in enumerate(post_act_param_names):
-            # Note that this operation would be equivalent to:
-            # einsum(grad_inner_acts, inner_acts, "... k d_out ,... k d_out -> ... k")
-            # since the gradient distributes over the sum.
-            inner_acts = einops.einsum(
-                pre_acts[param_name + ".hook_pre"].detach().clone(),
+        for i, param_name in enumerate(post_weight_act_names):
+            component_acts = einops.einsum(
+                pre_weight_acts[param_name + ".hook_pre"].detach().clone(),
                 component_weights[param_name],
                 "... d_in, ... k d_in d_out -> ... k d_out",
             )
             feature_attributions += einops.einsum(
-                grad_post_acts[i], inner_acts, "... d_out ,... k d_out -> ... k"
+                grad_post_weight_acts[i], component_acts, "... d_out ,... k d_out -> ... k"
             )
 
         attribution_scores += feature_attributions**2
@@ -260,7 +259,7 @@ def collect_subnetwork_attributions(
     Args:
         spd_model: The model to collect attributions on.
         target_model: The target model to collect attributions on.
-        pre_acts: The activations after the parameter matrix in the target model.
+        pre_weight_acts: The activations after the parameter matrix in the target model.
         device: The device to run computations on.
         n_instances: The number of instances in the batch.
 
@@ -282,8 +281,8 @@ def collect_subnetwork_attributions(
     attribution_scores = calc_grad_attributions(
         target_out=target_out,
         component_weights=component_weights,
-        pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
-        post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+        pre_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+        post_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
         k=spd_model.k,
     )
     return attribution_scores
@@ -310,38 +309,40 @@ def calc_ablation_attributions(
 
 
 def calc_activation_attributions(
-    inner_acts: dict[
-        str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
-    ],
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+    component_acts: dict[str, Float[Tensor, "batch ... k d_out"]],
+) -> Float[Tensor, "batch ... k"]:
     """Calculate the attributions by taking the L2 norm of the activations in each subnetwork.
 
     Args:
-        inner_acts: The activations at the output of each subnetwork before being summed.
+        component_acts: The activations at the output of each subnetwork before being summed.
     Returns:
         The attributions for each subnetwork.
     """
-    first_param = inner_acts[next(iter(inner_acts.keys()))]
+    first_param = component_acts[next(iter(component_acts.keys()))]
     assert len(first_param.shape) in (3, 4)
 
-    attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] = (
-        torch.zeros(first_param.shape[:-1], device=first_param.device, dtype=first_param.dtype)
+    attribution_scores: Float[Tensor, "batch ... k"] = torch.zeros(
+        first_param.shape[:-1], device=first_param.device, dtype=first_param.dtype
     )
-    for param_matrix in inner_acts.values():
+    for param_matrix in component_acts.values():
         attribution_scores += param_matrix.pow(2).sum(dim=-1)
     return attribution_scores
 
 
 def calculate_attributions(
     model: SPDModel,
-    batch: Float[Tensor, "... n_features"],
-    out: Float[Tensor, "... n_features"],
-    target_out: Float[Tensor, "... n_features"],
-    pre_acts: dict[str, Float[Tensor, "batch n_instances d_in"] | Float[Tensor, "batch d_in"]],
-    post_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
-    inner_acts: dict[str, Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]],
+    batch: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    out: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    target_out: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    pre_weight_acts: dict[
+        str, Float[Tensor, "batch d_in"] | Float[Tensor, "batch n_instances d_in"]
+    ],
+    post_weight_acts: dict[
+        str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]
+    ],
+    component_acts: dict[str, Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]],
     attribution_type: Literal["ablation", "gradient", "activation"],
-) -> Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"]:
+) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
     attributions = None
     if attribution_type == "ablation":
         attributions = calc_ablation_attributions(model=model, batch=batch, out=out)
@@ -351,13 +352,13 @@ def calculate_attributions(
         )
         attributions = calc_grad_attributions(
             target_out=target_out,
-            pre_acts=pre_acts,
-            post_acts=post_acts,
+            pre_weight_acts=pre_weight_acts,
+            post_weight_acts=post_weight_acts,
             component_weights=component_weights,
             k=model.k,
         )
     elif attribution_type == "activation":
-        attributions = calc_activation_attributions(inner_acts=inner_acts)
+        attributions = calc_activation_attributions(component_acts=component_acts)
     else:
         raise ValueError(f"Invalid attribution type: {attribution_type}")
     return attributions
@@ -407,7 +408,7 @@ class SPDOutputs(NamedTuple):
         Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"]
     )
     layer_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]]
-    inner_acts: dict[
+    component_acts: dict[
         str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
     ]
     attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
@@ -439,9 +440,9 @@ def run_spd_forward_pass(
         batch=input_array,
         out=out,
         target_out=target_out,
-        pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
-        post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
-        inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
+        pre_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+        post_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+        component_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
         attribution_type=attribution_type,
     )
 
@@ -464,7 +465,7 @@ def run_spd_forward_pass(
         spd_model_output=out,
         spd_topk_model_output=topk_spd_out,
         layer_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_post")},
-        inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
+        component_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
         attribution_scores=attribution_scores,
         topk_mask=topk_mask,
     )

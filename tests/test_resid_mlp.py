@@ -205,9 +205,9 @@ def test_resid_mlp_equivalent_to_raw_model() -> None:
     assert torch.allclose(target_out, out, atol=1e-6), "Outputs do not match"
 
     # Assert that all post-acts are the same
-    target_post_acts = {k: v for k, v in target_cache.items() if k.endswith(".hook_post")}
-    spd_post_acts = {k: v for k, v in spd_cache.items() if k.endswith(".hook_post")}
-    for key_name in target_post_acts:
+    target_post_weight_acts = {k: v for k, v in target_cache.items() if k.endswith(".hook_post")}
+    spd_post_weight_acts = {k: v for k, v in spd_cache.items() if k.endswith(".hook_post")}
+    for key_name in target_post_weight_acts:
         assert torch.allclose(
-            target_post_acts[key_name], spd_post_acts[key_name], atol=1e-6
+            target_post_weight_acts[key_name], spd_post_weight_acts[key_name], atol=1e-6
         ), f"post-acts do not match at layer {key_name}"

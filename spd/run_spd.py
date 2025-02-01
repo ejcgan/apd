@@ -289,11 +289,11 @@ def calc_param_match_loss(
 
 
 def calc_lp_sparsity_loss(
-    out: Float[Tensor, "batch n_instances d_model_out"] | Float[Tensor, "batch d_model_out"],
-    attributions: Float[Tensor, "batch n_instances k"] | Float[Tensor, "batch k"],
+    out: Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"],
+    attributions: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
     step_pnorm: float,
 ) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
-    """Calculate the Lp sparsity loss on the attributions (inner_acts * d(out)/d(inner_acts).
+    """Calculate the Lp sparsity loss on the attributions.
 
     Args:
         out: The output of the model.
@@ -314,7 +314,7 @@ def calc_lp_sparsity_loss(
 
 
 def calc_act_recon(
-    target_post_acts: dict[
+    target_post_weight_acts: dict[
         str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]
     ],
     layer_acts: dict[str, Float[Tensor, "batch n_instances d_out"] | Float[Tensor, "batch d_out"]],
@@ -322,7 +322,7 @@ def calc_act_recon(
     """MSE between all target model activations and the output of each subnetwork in the SPD model.
 
     Args:
-        target_post_acts: The activations after each layer in the target model.
+        target_post_weight_acts: The activations after each layer in the target model.
         layer_acts: The activations after each subnetwork in the SPD model.
 
     Returns:
@@ -330,17 +330,17 @@ def calc_act_recon(
             n_instances dimension, otherwise a scalar.
     """
     assert (
-        target_post_acts.keys() == layer_acts.keys()
-    ), f"Layer keys must match: {target_post_acts.keys()} != {layer_acts.keys()}"
+        target_post_weight_acts.keys() == layer_acts.keys()
+    ), f"Layer keys must match: {target_post_weight_acts.keys()} != {layer_acts.keys()}"
 
     device = next(iter(layer_acts.values())).device
 
     total_act_dim = 0  # Accumulate the d_out over all layers for normalization
     loss = torch.zeros(1, device=device)
-    for layer_name in target_post_acts:
-        total_act_dim += target_post_acts[layer_name].shape[-1]
+    for layer_name in target_post_weight_acts:
+        total_act_dim += target_post_weight_acts[layer_name].shape[-1]
 
-        error = ((target_post_acts[layer_name] - layer_acts[layer_name]) ** 2).sum(dim=-1)
+        error = ((target_post_weight_acts[layer_name] - layer_acts[layer_name]) ** 2).sum(dim=-1)
         loss = loss + error
 
     # Normalize by the total number of output dimensions and mean over the batch dim
@@ -427,15 +427,17 @@ def optimize(
                 device=device,
             )
 
-        post_acts = {k: v for k, v in target_cache.items() if k.endswith("hook_post")}
+        post_weight_acts = {k: v for k, v in target_cache.items() if k.endswith("hook_post")}
         attributions = calculate_attributions(
             model=model,
             batch=batch,
             out=out,
             target_out=target_out,
-            pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
-            post_acts=post_acts,
-            inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
+            pre_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+            post_weight_acts=post_weight_acts,
+            component_acts={
+                k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")
+            },
             attribution_type=config.attribution_type,
         )
 
@@ -493,18 +495,18 @@ def optimize(
                 # For now, we treat resid-mlp special in that we take the post-relu activations
                 # We ignore the mlp_out layers
                 assert layer_acts_topk is not None
-                post_acts_after_relu = {}
+                post_relu_acts = {}
                 layer_acts_topk_after_relu = {}
                 for i in range(len(target_model.layers)):
-                    post_acts_after_relu[f"layers.{i}.mlp_in.hook_post"] = torch.nn.functional.relu(
-                        post_acts[f"layers.{i}.mlp_in.hook_post"]
+                    post_relu_acts[f"layers.{i}.mlp_in.hook_post"] = torch.nn.functional.relu(
+                        post_weight_acts[f"layers.{i}.mlp_in.hook_post"]
                     )
                     layer_acts_topk_after_relu[f"layers.{i}.mlp_in.hook_post"] = (
                         torch.nn.functional.relu(layer_acts_topk[f"layers.{i}.mlp_in.hook_post"])
                     )
 
                 act_recon_loss = calc_act_recon(
-                    target_post_acts=post_acts_after_relu, layer_acts=layer_acts_topk_after_relu
+                    target_post_weight_acts=post_relu_acts, layer_acts=layer_acts_topk_after_relu
                 )
             else:
                 act_recon_layer_acts = (
@@ -513,7 +515,7 @@ def optimize(
                     else {k: v for k, v in spd_cache.items() if k.endswith("hook_post")}
                 )
                 act_recon_loss = calc_act_recon(
-                    target_post_acts=post_acts,
+                    target_post_weight_acts=post_weight_acts,
                     layer_acts=act_recon_layer_acts,
                 )
 

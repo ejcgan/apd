@@ -937,9 +937,11 @@ def collect_per_feature_losses(
             batch=batch,
             out=spd_out,
             target_out=target_out,
-            pre_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
-            post_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
-            inner_acts={k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")},
+            pre_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
+            post_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
+            component_acts={
+                k: v for k, v in spd_cache.items() if k.endswith("hook_component_acts")
+            },
             attribution_type=config.attribution_type,
         )
 
