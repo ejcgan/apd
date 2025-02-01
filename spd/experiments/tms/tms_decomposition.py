@@ -47,7 +47,6 @@ def get_run_name(config: Config, tms_model_config: TMSModelConfig) -> str:
         run_suffix += f"ft{tms_model_config.n_features}_"
         run_suffix += f"hid{tms_model_config.n_hidden}"
         run_suffix += f"hid-layers{tms_model_config.n_hidden_layers}"
-        run_suffix += f"k{config.task_config.k}"
     return config.wandb_run_name_prefix + run_suffix
 
 
@@ -83,7 +82,7 @@ def plot_A_matrix(x: torch.Tensor, pos_only: bool = False) -> plt.Figure:
 
 
 def plot_subnetwork_attributions_multiple_instances(
-    attribution_scores: Float[Tensor, "batch n_instances k"],
+    attribution_scores: Float[Tensor, "batch n_instances C"],
     out_dir: Path,
     step: int | None,
 ) -> plt.Figure:
@@ -138,7 +137,7 @@ def plot_subnetwork_attributions_multiple_instances(
 
 
 def plot_subnetwork_attributions_statistics_multiple_instances(
-    topk_mask: Float[Tensor, "batch_size n_instances k"], out_dir: Path, step: int | None
+    topk_mask: Float[Tensor, "batch_size n_instances C"], out_dir: Path, step: int | None
 ) -> plt.Figure:
     """Plot a row of vertical bar charts showing active subnetworks for each instance."""
     n_instances = topk_mask.shape[1]
@@ -192,18 +191,18 @@ def plot_component_weights(model: TMSSPDModel, step: int, out_dir: Path, **_) ->
     component_weights = model.linear1.component_weights
 
     # component_weights: [n_instances, k, n_features, n_hidden]
-    n_instances, k, dim1, dim2 = component_weights.shape
+    n_instances, C, dim1, dim2 = component_weights.shape
 
     fig, axs = plt.subplots(
-        k,
+        C,
         n_instances,
-        figsize=(2 * n_instances, 2 * k),
+        figsize=(2 * n_instances, 2 * C),
         constrained_layout=True,
     )
 
     for i in range(n_instances):
         instance_max = np.abs(component_weights[i].detach().cpu().numpy()).max()
-        for j in range(k):
+        for j in range(C):
             ax = axs[j, i]  # type: ignore
             param = component_weights[i, j].detach().cpu().numpy()
             ax.matshow(param, cmap="RdBu", vmin=-instance_max, vmax=instance_max)
@@ -211,7 +210,7 @@ def plot_component_weights(model: TMSSPDModel, step: int, out_dir: Path, **_) ->
 
             if i == 0:
                 ax.set_ylabel(f"k={j}", rotation=0, ha="right", va="center")
-            if j == k - 1:
+            if j == C - 1:
                 ax.set_xlabel(f"Inst {i}", rotation=45, ha="right")
 
     fig.suptitle(f"Component Weights (Step {step})")
@@ -222,13 +221,13 @@ def plot_component_weights(model: TMSSPDModel, step: int, out_dir: Path, **_) ->
 
 
 def plot_batch_frequencies(
-    frequencies: Float[Tensor, "n_instances k"],
+    frequencies: Float[Tensor, "n_instances C"],
     xlabel: str,
     ax: plt.Axes,
     batch_size: int,
     title: str | None = None,
 ) -> None:
-    """Plot frequency of k activations for each instance on a given axis.
+    """Plot frequency of C activations for each instance on a given axis.
 
     Args:
         frequencies: Tensor counting frequencies for each instance
@@ -238,11 +237,11 @@ def plot_batch_frequencies(
         title: Optional title for the subplot
     """
     n_instances = frequencies.shape[0]
-    k = frequencies.shape[1]
+    C = frequencies.shape[1]
 
     for instance_idx in range(n_instances):
         bars = ax.bar(
-            np.arange(k) + instance_idx * (k + 1),  # Add spacing between instances
+            np.arange(C) + instance_idx * (C + 1),  # Add spacing between instances
             frequencies[instance_idx].detach().cpu().numpy(),
             align="center",
             width=0.8,
@@ -270,16 +269,16 @@ def plot_batch_frequencies(
     all_ticks = []
     all_labels = []
     for i in range(n_instances):
-        ticks = np.arange(k) + i * (k + 1)
+        ticks = np.arange(C) + i * (C + 1)
         all_ticks.extend(ticks)
-        all_labels.extend([str(j) for j in range(k)])
+        all_labels.extend([str(j) for j in range(C)])
     ax.set_xticks(all_ticks)
     ax.set_xticklabels(all_labels)
 
 
 def plot_batch_statistics(
     batch: Float[Tensor, "batch n_instances n_features"],
-    topk_mask: Float[Tensor, "batch n_instances k"],
+    topk_mask: Float[Tensor, "batch n_instances C"],
     out_dir: Path,
     step: int | None,
 ) -> dict[str, plt.Figure]:
@@ -335,7 +334,7 @@ def make_plots(
     out_dir: Path,
     device: str,
     config: Config,
-    topk_mask: Float[Tensor, "batch n_instances k"] | None,
+    topk_mask: Float[Tensor, "batch n_instances C"] | None,
     batch: Float[Tensor, "batch n_instances n_features"],
     **_,
 ) -> dict[str, plt.Figure]:
@@ -429,7 +428,7 @@ def main(
 
     tms_spd_model_config = TMSSPDModelConfig(
         **target_model.config.model_dump(mode="json"),
-        k=task_config.k,
+        C=config.C,
         m=config.m,
         bias_val=task_config.bias_val,
     )

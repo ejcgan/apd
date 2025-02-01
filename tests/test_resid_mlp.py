@@ -18,7 +18,6 @@ from spd.utils import DatasetGeneratedDataLoader, set_seed
 # Create a simple ResidualMLP config that we can use in multiple tests
 RESID_MLP_TASK_CONFIG = ResidualMLPTaskConfig(
     task_name="residual_mlp",
-    k=3,
     feature_probability=0.333,
     init_scale=1.0,
     data_generation_type="at_least_zero_active",
@@ -45,6 +44,7 @@ def test_resid_mlp_decomposition_happy_path() -> None:
     device = "cpu"
     config = Config(
         seed=0,
+        C=3,
         topk=1,
         batch_topk=True,
         param_match_coeff=1.0,
@@ -68,7 +68,7 @@ def test_resid_mlp_decomposition_happy_path() -> None:
     target_model = ResidualMLPModel(config=resid_mlp_config).to(device)
 
     # Create the SPD model
-    spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), k=config.task_config.k)
+    spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), C=config.C)
     model = ResidualMLPSPDModel(config=spd_config).to(device)
 
     # Use the pretrained model's embedding matrices and don't train them further
@@ -159,12 +159,12 @@ def test_resid_mlp_equivalent_to_raw_model() -> None:
         in_bias=True,
         out_bias=True,
     )
-    k = 2
+    C = 2
 
     target_model = ResidualMLPModel(config=resid_mlp_config).to(device)
 
     # Create the SPD model with k=1
-    resid_mlp_spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), k=k)
+    resid_mlp_spd_config = ResidualMLPSPDConfig(**resid_mlp_config.model_dump(), C=C)
     spd_model = ResidualMLPSPDModel(config=resid_mlp_spd_config).to(device)
 
     # Init all params to random values

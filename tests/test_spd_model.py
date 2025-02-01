@@ -10,13 +10,13 @@ def test_tms_set_and_restore_subnet():
         n_instances=2,
         n_features=4,
         n_hidden=3,
-        k=5,
+        C=5,
         n_hidden_layers=1,
         bias_val=0.0,
         device="cpu",
     )
     model = TMSSPDModel(config)
-    assert model.linear1.component_weights.shape == (2, 5, 4, 3)  # (n_instances, k, d_in, d_out)
+    assert model.linear1.component_weights.shape == (2, 5, 4, 3)  # (n_instances, C, d_in, d_out)
 
     # Get the original values of the weight_matrix of subnet_idx
     original_vals = model.linear1.component_weights[:, subnet_idx, :, :].detach().clone()
@@ -52,13 +52,13 @@ def test_resid_mlp_set_and_restore_subnet():
         in_bias=False,
         out_bias=False,
         init_scale=1.0,
-        k=5,
+        C=5,
         init_type="xavier_normal",
     )
     model = ResidualMLPSPDModel(config)
 
     # Check shapes of first layer's component weights
-    assert model.layers[0].mlp_in.component_weights.shape == (2, 5, 6, 8)  # n_inst, k, d_in, d_out
+    assert model.layers[0].mlp_in.component_weights.shape == (2, 5, 6, 8)  # n_inst, C, d_in, d_out
 
     # Get the original values of the weight_matrix of subnet_idx for both mlp_in and mlp_out
     original_vals_in = (

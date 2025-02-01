@@ -36,17 +36,6 @@ COLOR_PALETTE = [
     "#56B4E9",
 ]
 
-DEPRECATED_CONFIG_KEYS = [
-    "topk_param_attrib_coeff",
-    "orthog_coeff",
-    "hardcode_topk_mask_step",
-    "pnorm_end",
-    "topk_l2_coeff",
-    "spd_type",
-    "sparsity_warmup_pct",
-]
-RENAMED_CONFIG_KEYS = {"topk_act_recon_coeff": "act_recon_coeff"}
-
 
 def to_root_path(path: str | Path) -> Path:
     """Converts relative paths to absolute ones, assuming they are relative to the rib root."""
@@ -94,7 +83,6 @@ def load_config(config_path_or_obj: Path | str | T, config_model: type[T]) -> T:
     assert Path(config_path_or_obj).exists(), f"Config file {config_path_or_obj} does not exist."
     with open(config_path_or_obj) as f:
         config_dict = yaml.safe_load(f)
-    config_dict = handle_deprecated_config_keys(config_dict)
     return config_model(**config_dict)
 
 
@@ -177,10 +165,10 @@ def calc_grad_attributions(
         str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]
     ],
     component_weights: dict[
-        str, Float[Tensor, "k d_in d_out"] | Float[Tensor, "n_instances k d_in d_out"]
+        str, Float[Tensor, "C d_in d_out"] | Float[Tensor, "n_instances C d_in d_out"]
     ],
-    k: int,
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+    C: int,
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     """Calculate the sum of the (squared) attributions from each output dimension.
 
     An attribution is the product of the gradient of the target model output w.r.t. the post acts
@@ -211,19 +199,19 @@ def calc_grad_attributions(
         The sum of the (squared) attributions from each output dimension.
     """
     # Ensure that all keys are the same after removing the hook suffixes
-    post_weight_act_names = [k.removesuffix(".hook_post") for k in post_weight_acts]
-    pre_weight_act_names = [k.removesuffix(".hook_pre") for k in pre_weight_acts]
+    post_weight_act_names = [C.removesuffix(".hook_post") for C in post_weight_acts]
+    pre_weight_act_names = [C.removesuffix(".hook_pre") for C in pre_weight_acts]
     component_weight_names = list(component_weights.keys())
     assert set(post_weight_act_names) == set(pre_weight_act_names) == set(component_weight_names)
 
-    attr_shape = target_out.shape[:-1] + (k,)  # (batch, k) or (batch, n_instances, k)
-    attribution_scores: Float[Tensor, "batch ... k"] = torch.zeros(
+    attr_shape = target_out.shape[:-1] + (C,)  # (batch, C) or (batch, n_instances, C)
+    attribution_scores: Float[Tensor, "batch ... C"] = torch.zeros(
         attr_shape, device=target_out.device, dtype=target_out.dtype
     )
 
     out_dim = target_out.shape[-1]
     for feature_idx in range(out_dim):
-        feature_attributions: Float[Tensor, "batch ... k"] = torch.zeros(
+        feature_attributions: Float[Tensor, "batch ... C"] = torch.zeros(
             attr_shape, device=target_out.device, dtype=target_out.dtype
         )
         grad_post_weight_acts: tuple[Float[Tensor, "batch ... d_out"], ...] = torch.autograd.grad(
@@ -233,10 +221,10 @@ def calc_grad_attributions(
             component_acts = einops.einsum(
                 pre_weight_acts[param_name + ".hook_pre"].detach().clone(),
                 component_weights[param_name],
-                "... d_in, ... k d_in d_out -> ... k d_out",
+                "... d_in, ... C d_in d_out -> ... C d_out",
             )
             feature_attributions += einops.einsum(
-                grad_post_weight_acts[i], component_acts, "... d_out ,... k d_out -> ... k"
+                grad_post_weight_acts[i], component_acts, "... d_out ,... C d_out -> ... C"
             )
 
         attribution_scores += feature_attributions**2
@@ -249,7 +237,7 @@ def collect_subnetwork_attributions(
     target_model: HookedRootModule,
     device: str,
     n_instances: int | None = None,
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     """
     Collect subnetwork attributions.
 
@@ -283,34 +271,36 @@ def collect_subnetwork_attributions(
         component_weights=component_weights,
         pre_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_pre")},
         post_weight_acts={k: v for k, v in target_cache.items() if k.endswith("hook_post")},
-        k=spd_model.k,
+        C=spd_model.C,
     )
     return attribution_scores
 
 
 @torch.inference_mode()
 def calc_ablation_attributions(
-    model: SPDModel,
-    batch: Float[Tensor, "batch ... n_features"],
-    out: Float[Tensor, "batch ... d_model_out"],
-) -> Float[Tensor, "batch ... k"]:
+    spd_model: SPDModel,
+    batch: Float[Tensor, "batch n_features"] | Float[Tensor, "batch n_instances n_features"],
+    out: Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"],
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     """Calculate the attributions by ablating each subnetwork one at a time."""
 
-    attr_shape = out.shape[:-1] + (model.k,)  # (batch, k) or (batch, n_instances, k)
+    attr_shape = out.shape[:-1] + (spd_model.C,)  # (batch, C) or (batch, n_instances, C)
     has_instance_dim = len(out.shape) == 3
     attributions = torch.zeros(attr_shape, device=out.device, dtype=out.dtype)
-    for subnet_idx in range(model.k):
-        stored_vals = model.set_subnet_to_zero(subnet_idx, has_instance_dim)
-        ablation_out, _, _ = model(batch)
+    for subnet_idx in range(spd_model.C):
+        stored_vals = spd_model.set_subnet_to_zero(subnet_idx, has_instance_dim)
+        ablation_out, _, _ = spd_model(batch)
         out_recon = ((out - ablation_out) ** 2).mean(dim=-1)
         attributions[..., subnet_idx] = out_recon
-        model.restore_subnet(subnet_idx, stored_vals, has_instance_dim)
+        spd_model.restore_subnet(subnet_idx, stored_vals, has_instance_dim)
     return attributions
 
 
 def calc_activation_attributions(
-    component_acts: dict[str, Float[Tensor, "batch ... k d_out"]],
-) -> Float[Tensor, "batch ... k"]:
+    component_acts: dict[
+        str, Float[Tensor, "batch C d_out"] | Float[Tensor, "batch n_instances C d_out"]
+    ],
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     """Calculate the attributions by taking the L2 norm of the activations in each subnetwork.
 
     Args:
@@ -321,8 +311,8 @@ def calc_activation_attributions(
     first_param = component_acts[next(iter(component_acts.keys()))]
     assert len(first_param.shape) in (3, 4)
 
-    attribution_scores: Float[Tensor, "batch ... k"] = torch.zeros(
-        first_param.shape[:-1], device=first_param.device, dtype=first_param.dtype
+    attribution_scores: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"] = (
+        torch.zeros(first_param.shape[:-1], device=first_param.device, dtype=first_param.dtype)
     )
     for param_matrix in component_acts.values():
         attribution_scores += param_matrix.pow(2).sum(dim=-1)
@@ -340,12 +330,12 @@ def calculate_attributions(
     post_weight_acts: dict[
         str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]
     ],
-    component_acts: dict[str, Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]],
+    component_acts: dict[str, Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]],
     attribution_type: Literal["ablation", "gradient", "activation"],
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     attributions = None
     if attribution_type == "ablation":
-        attributions = calc_ablation_attributions(model=model, batch=batch, out=out)
+        attributions = calc_ablation_attributions(spd_model=model, batch=batch, out=out)
     elif attribution_type == "gradient":
         component_weights = collect_nested_module_attrs(
             model, attr_name="component_weights", include_attr_name=False
@@ -355,7 +345,7 @@ def calculate_attributions(
             pre_weight_acts=pre_weight_acts,
             post_weight_acts=post_weight_acts,
             component_weights=component_weights,
-            k=model.k,
+            C=model.C,
         )
     elif attribution_type == "activation":
         attributions = calc_activation_attributions(component_acts=component_acts)
@@ -365,10 +355,10 @@ def calculate_attributions(
 
 
 def calc_topk_mask(
-    attribution_scores: Float[Tensor, "batch ... k"],
+    attribution_scores: Float[Tensor, "batch ... C"],
     topk: float,
     batch_topk: bool,
-) -> Float[Tensor, "batch ... k"]:
+) -> Float[Tensor, "batch ... C"]:
     """Calculate the top-k mask.
 
     Args:
@@ -385,14 +375,14 @@ def calc_topk_mask(
     topk = int(topk * batch_size) if batch_topk else int(topk)
 
     if batch_topk:
-        attribution_scores = einops.rearrange(attribution_scores, "b ... k -> ... (b k)")
+        attribution_scores = einops.rearrange(attribution_scores, "b ... C -> ... (b C)")
 
     topk_indices = attribution_scores.topk(topk, dim=-1).indices
     topk_mask = torch.zeros_like(attribution_scores, dtype=torch.bool)
     topk_mask.scatter_(dim=-1, index=topk_indices, value=True)
 
     if batch_topk:
-        topk_mask = einops.rearrange(topk_mask, "... (b k) -> b ... k", b=batch_size)
+        topk_mask = einops.rearrange(topk_mask, "... (b C) -> b ... C", b=batch_size)
 
     return topk_mask
 
@@ -409,10 +399,10 @@ class SPDOutputs(NamedTuple):
     )
     layer_acts: dict[str, Float[Tensor, "batch d_out"] | Float[Tensor, "batch n_instances d_out"]]
     component_acts: dict[
-        str, Float[Tensor, "batch k d_out"] | Float[Tensor, "batch n_instances k d_out"]
+        str, Float[Tensor, "batch C d_out"] | Float[Tensor, "batch n_instances C d_out"]
     ]
-    attribution_scores: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
-    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]
+    attribution_scores: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]
+    topk_mask: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]
 
 
 def run_spd_forward_pass(
@@ -423,7 +413,7 @@ def run_spd_forward_pass(
     batch_topk: bool,
     topk: float,
     distil_from_target: bool,
-    topk_mask: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"] | None = None,
+    topk_mask: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"] | None = None,
 ) -> SPDOutputs:
     # Forward pass on target model
     target_cache_filter = lambda k: k.endswith((".hook_pre", ".hook_post"))
@@ -705,20 +695,6 @@ def calc_recon_mse(
     else:
         raise ValueError(f"Expected 2 or 3 dims in recon_loss, got {recon_loss.ndim}")
     return recon_loss
-
-
-def handle_deprecated_config_keys(config_dict: dict[str, Any]) -> dict[str, Any]:
-    """Remove deprecated config keys and change names of any keys that have been renamed."""
-    for key in list(config_dict.keys()):
-        val = config_dict[key]
-        if key in DEPRECATED_CONFIG_KEYS:
-            logger.warning(f"{key} is deprecated, but has a value: {val}. Removing from config.")
-            del config_dict[key]
-        elif key in RENAMED_CONFIG_KEYS:
-            logger.info(f"Renaming {key} to {RENAMED_CONFIG_KEYS[key]}")
-            config_dict[RENAMED_CONFIG_KEYS[key]] = val
-            del config_dict[key]
-    return config_dict
 
 
 def get_lr_schedule_fn(

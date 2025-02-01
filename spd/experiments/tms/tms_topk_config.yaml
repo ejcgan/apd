@@ -4,6 +4,7 @@
 # wandb_run_name_prefix: ""
 # unit_norm_matrices: false
 # seed: 0
+# C: 5
 # topk: 0.211
 # batch_topk: true
 # param_match_coeff: 1.0
@@ -22,7 +23,6 @@
 # lr_warmup_pct: 0.05
 # task_config:
 #   task_name: tms
-#   k: 5
 #   bias_val: 0.0
 #   train_bias: false
 #   feature_probability: 0.05
@@ -37,6 +37,7 @@ unit_norm_matrices: false
 seed: 0
 topk: 2.0
 # topk: 0.8 # synced inputs
+C: 40
 batch_topk: true
 param_match_coeff: 1.0
 topk_recon_coeff: 10.0
@@ -54,7 +55,6 @@ lr_schedule: cosine
 lr_warmup_pct: 0.05
 task_config:
   task_name: tms
-  k: 40
   bias_val: 0.0
   train_bias: false
   feature_probability: 0.05

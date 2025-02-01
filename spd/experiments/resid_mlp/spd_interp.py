@@ -70,7 +70,7 @@ print(f"Feature probability: {config.task_config.feature_probability}")
 print(f"Embedding dimension: {model.config.d_embed}")
 print(f"MLP dimension: {model.config.d_mlp}")
 print(f"Number of layers: {model.config.n_layers}")
-print(f"Number of subnetworks (k): {model.config.k}")
+print(f"Number of subnetworks (C): {model.config.C}")
 model = model.to(device)
 label_coeffs = label_coeffs.to(device)
 target_model = target_model.to(device)
@@ -104,7 +104,7 @@ def target_model_fn(batch: Float[Tensor, "batch n_instances"]):
 
 def top1_model_fn(
     batch: Float[Tensor, "batch n_instances n_features"],
-    topk_mask: Float[Tensor, "batch n_instances k"] | None,
+    topk_mask: Float[Tensor, "batch n_instances C"] | None,
 ) -> SPDOutputs:
     """Top1 if topk_mask is None, else just use provided topk_mask"""
     topk_mask = topk_mask.to(device) if topk_mask is not None else None

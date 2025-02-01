@@ -23,7 +23,6 @@ from spd.utils import (
 # Create a simple TMS config that we can use in multiple tests
 TMS_TASK_CONFIG = TMSTaskConfig(
     task_name="tms",
-    k=5,
     feature_probability=0.5,
     train_bias=False,
     bias_val=0.0,
@@ -48,7 +47,7 @@ def tms_spd_happy_path(config: Config, n_hidden_layers: int = 0):
 
     tms_spd_model_config = TMSSPDModelConfig(
         **tms_model_config.model_dump(mode="json"),
-        k=config.task_config.k,
+        C=config.C,
         bias_val=config.task_config.bias_val,
     )
     model = TMSSPDModel(config=tms_spd_model_config)
@@ -96,6 +95,7 @@ def tms_spd_happy_path(config: Config, n_hidden_layers: int = 0):
 
 def test_tms_batch_topk_no_schatten():
     config = Config(
+        C=5,
         topk=2,
         batch_topk=True,
         batch_size=4,
@@ -114,6 +114,7 @@ def test_tms_batch_topk_no_schatten():
 @pytest.mark.parametrize("n_hidden_layers", [0, 2])
 def test_tms_batch_topk_and_schatten(n_hidden_layers: int):
     config = Config(
+        C=5,
         topk=2,
         batch_topk=True,
         batch_size=4,
@@ -131,6 +132,7 @@ def test_tms_batch_topk_and_schatten(n_hidden_layers: int):
 
 def test_tms_topk_and_l2():
     config = Config(
+        C=5,
         topk=2,
         batch_topk=False,
         batch_size=4,
@@ -148,6 +150,7 @@ def test_tms_topk_and_l2():
 
 def test_tms_lp():
     config = Config(
+        C=5,
         topk=None,
         batch_topk=False,
         batch_size=4,
@@ -165,6 +168,7 @@ def test_tms_lp():
 @pytest.mark.parametrize("n_hidden_layers", [0, 2])
 def test_tms_topk_and_lp(n_hidden_layers: int):
     config = Config(
+        C=5,
         topk=2,
         batch_topk=False,
         batch_size=4,
@@ -302,14 +306,14 @@ def test_tms_equivalent_to_raw_model() -> None:
         n_hidden_layers=1,
         device=device,
     )
-    k = 2
+    C = 2
 
     target_model = TMSModel(config=tms_config).to(device)
 
     # Create the SPD model
     tms_spd_config = TMSSPDModelConfig(
         **tms_config.model_dump(),
-        k=k,
+        C=C,
         m=3,  # Small m for testing
         bias_val=0.0,
     )

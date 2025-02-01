@@ -20,10 +20,7 @@ from spd.models.components import (
 )
 from spd.run_spd import Config, TMSTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
-from spd.utils import (
-    handle_deprecated_config_keys,
-    replace_deprecated_param_names,
-)
+from spd.utils import replace_deprecated_param_names
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
@@ -48,7 +45,7 @@ def _tms_forward(
     linear1: Linear | LinearComponent,
     linear2: TransposedLinear | TransposedLinearComponent,
     b_final: Float[Tensor, "n_instances n_features"],
-    topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+    topk_mask: Bool[Tensor, "batch n_instances C"] | None = None,
     hidden_layers: nn.ModuleList | None = None,
 ) -> Float[Tensor, "batch n_instances n_features"]:
     """Forward pass used for TMSModel and TMSSPDModel.
@@ -170,7 +167,7 @@ class TMSSPDModelConfig(BaseModel):
     n_features: PositiveInt
     n_hidden: PositiveInt
     n_hidden_layers: NonNegativeInt
-    k: PositiveInt | None = None
+    C: PositiveInt | None = None
     bias_val: float
     device: str
     m: PositiveInt | None = None
@@ -182,7 +179,7 @@ class TMSSPDModel(SPDModel):
         self.config = config
         self.n_instances = config.n_instances  # Required for backwards compatibility
         self.n_features = config.n_features  # Required for backwards compatibility
-        self.k = config.k if config.k is not None else config.n_features
+        self.C = config.C if config.C is not None else config.n_features
         self.bias_val = config.bias_val
 
         self.m = min(config.n_features, config.n_hidden) + 1 if config.m is None else config.m
@@ -193,7 +190,7 @@ class TMSSPDModel(SPDModel):
             n_instances=config.n_instances,
             init_type="xavier_normal",
             init_scale=1.0,
-            k=self.k,
+            C=self.C,
             m=self.m,
         )
         self.linear2 = TransposedLinearComponent(self.linear1.A, self.linear1.B)
@@ -214,7 +211,7 @@ class TMSSPDModel(SPDModel):
                         n_instances=config.n_instances,
                         init_type="xavier_normal",
                         init_scale=1.0,
-                        k=self.k,
+                        C=self.C,
                         m=self.m,
                     )
                     for _ in range(config.n_hidden_layers)
@@ -226,7 +223,7 @@ class TMSSPDModel(SPDModel):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+        topk_mask: Bool[Tensor, "batch n_instances C"] | None = None,
     ) -> Float[Tensor, "batch n_instances n_features"]:
         return _tms_forward(
             x=x,
@@ -281,7 +278,6 @@ class TMSSPDModel(SPDModel):
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
 
-        final_config_dict = handle_deprecated_config_keys(final_config_dict)
         spd_config = Config(**final_config_dict)
 
         with open(paths.tms_train_config) as f:
@@ -290,7 +286,7 @@ class TMSSPDModel(SPDModel):
         assert isinstance(spd_config.task_config, TMSTaskConfig)
         tms_spd_config = TMSSPDModelConfig(
             **tms_train_config_dict["tms_model_config"],
-            k=spd_config.task_config.k,
+            C=spd_config.C,
             m=spd_config.m,
             bias_val=spd_config.task_config.bias_val,
         )

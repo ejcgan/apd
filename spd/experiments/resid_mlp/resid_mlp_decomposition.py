@@ -65,7 +65,6 @@ def get_run_name(
     n_layers: int,
     d_resid: int,
     d_mlp: int,
-    k: int,
     m: int | None,
     init_scale: float,
 ) -> str:
@@ -75,9 +74,7 @@ def get_run_name(
         run_suffix = config.wandb_run_name
     else:
         run_suffix = get_common_run_name_suffix(config)
-        run_suffix += (
-            f"scale{init_scale}_ft{n_features}_lay{n_layers}_resid{d_resid}_mlp{d_mlp}_k{k}"
-        )
+        run_suffix += f"scale{init_scale}_ft{n_features}_lay{n_layers}_resid{d_resid}_mlp{d_mlp}"
         if m is not None:
             run_suffix += f"_m{m}"
     return config.wandb_run_name_prefix + run_suffix
@@ -85,28 +82,28 @@ def get_run_name(
 
 def calc_n_active_features_per_subnet(
     model: ResidualMLPSPDModel, cutoff: float, device: str
-) -> tuple[Float[Tensor, "n_instances k"], Float[Tensor, "n_instances n_features"]]:
+) -> tuple[Float[Tensor, "n_instances C"], Float[Tensor, "n_instances n_features"]]:
     """Calculate the number of active features per subnet (and per instance if n_instances > 1)."""
-    n_active_features_per_subnet: Float[Tensor, "n_instances k"] = torch.zeros(
-        (model.config.n_instances, model.k), device=device
+    n_active_features_per_subnet: Float[Tensor, "n_instances C"] = torch.zeros(
+        (model.config.n_instances, model.C), device=device
     )
     active_feature_counts_per_subnet: Float[Tensor, "n_instances n_features"] = torch.zeros(
         (model.config.n_instances, model.config.n_features), device=device
     )
-    for k in range(model.k):
+    for c in range(model.C):
         relu_conns: Float[Tensor, "n_instances n_features d_mlp"] = spd_calculate_diag_relu_conns(
-            model, device, k_select=k
+            model, device, k_select=c
         )
         # Count the number of features for which each subnet fires beyond the cutoff
         above_cutoff = relu_conns.max(dim=-1).values > cutoff
-        n_active_features_per_subnet[:, k] = above_cutoff.sum(dim=-1)
+        n_active_features_per_subnet[:, c] = above_cutoff.sum(dim=-1)
         active_feature_counts_per_subnet[:] += above_cutoff
 
     return n_active_features_per_subnet, active_feature_counts_per_subnet
 
 
 def plot_subnetwork_attributions(
-    attribution_scores: Float[Tensor, "batch n_instances k"],
+    attribution_scores: Float[Tensor, "batch n_instances C"],
     out_dir: Path | None,
     step: int | None,
 ) -> plt.Figure:
@@ -162,7 +159,7 @@ def plot_multiple_component_weights(
     n_params = len(all_params)
     param_names = list(all_params.keys())
     n_instances = model.config.n_instances
-    k = model.k
+    C = model.C
 
     # Find global min and max for normalization
     all_values = []
@@ -175,8 +172,8 @@ def plot_multiple_component_weights(
 
     fig, axs = plt.subplots(
         n_instances * n_params,
-        k,
-        figsize=(2 * k, n_instances * n_params),
+        C,
+        figsize=(2 * C, n_instances * n_params),
         constrained_layout=False,
     )
     axs = np.array(axs)
@@ -184,7 +181,7 @@ def plot_multiple_component_weights(
     for instance_idx in range(n_instances):
         for param_idx in range(n_params):
             param_name = param_names[param_idx]
-            for subnet_idx in range(k):
+            for subnet_idx in range(C):
                 col_idx = subnet_idx
                 row_idx = instance_idx * n_params + param_idx
 
@@ -282,7 +279,7 @@ def resid_mlp_plot_results_fn(
     out_dir: Path | None,
     device: str,
     config: Config,
-    topk_mask: Float[Tensor, "batch_size k"] | None,
+    topk_mask: Float[Tensor, "batch_size C"] | None,
     dataloader: DatasetGeneratedDataLoader[
         tuple[Float[Tensor, "batch n_features"], Float[Tensor, "batch d_embed"]]
     ]
@@ -467,7 +464,7 @@ def resid_mlp_plot_results_fn(
     )
 
     if config.topk is not None:
-        if dataloader is not None and config.task_config.k > 1:
+        if dataloader is not None and config.C > 1:
             fig_dict_correlations = plot_subnetwork_correlations(
                 dataloader=dataloader,
                 target_model=target_model,
@@ -549,7 +546,6 @@ def main(
         n_layers=target_model.config.n_layers,
         d_resid=target_model.config.d_embed,
         d_mlp=target_model.config.d_mlp,
-        k=config.task_config.k,
         m=config.m,
         init_scale=config.task_config.init_scale,
     )
@@ -586,7 +582,7 @@ def main(
         in_bias=target_model.config.in_bias,
         out_bias=target_model.config.out_bias,
         init_scale=config.task_config.init_scale,
-        k=config.task_config.k,
+        C=config.C,
         m=config.m,
     )
     model = ResidualMLPSPDModel(config=model_config).to(device)

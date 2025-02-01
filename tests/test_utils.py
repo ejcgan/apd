@@ -90,7 +90,7 @@ def test_calc_activation_attributions_different_d_out():
 
 
 def test_calc_activation_attributions_with_n_instances():
-    # Batch=1, n_instances=2, k=2, d_out=2
+    # Batch=1, n_instances=2, C=2, d_out=2
     component_acts = {
         "layer1": torch.tensor([[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]),
         "layer2": torch.tensor([[[[9.0, 10.0], [11.0, 12.0]], [[13.0, 14.0], [15.0, 16.0]]]]),

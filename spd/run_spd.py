@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, ClassVar, Literal, Self
 
 import einops
 import matplotlib.pyplot as plt
@@ -39,7 +39,6 @@ from spd.utils import (
 class TMSTaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["tms"] = "tms"
-    k: PositiveInt
     feature_probability: Probability
     train_bias: bool
     bias_val: float
@@ -52,7 +51,6 @@ class TMSTaskConfig(BaseModel):
 class ResidualMLPTaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["residual_mlp"] = "residual_mlp"
-    k: PositiveInt
     feature_probability: Probability
     init_scale: float = 1.0
     data_generation_type: Literal[
@@ -87,6 +85,7 @@ class Config(BaseModel):
     lp_sparsity_coeff: NonNegativeFloat | None = None
     distil_from_target: bool = False
     pnorm: PositiveFloat | None = None
+    C: PositiveInt
     m: PositiveInt | None = None
     lr_schedule: Literal["linear", "constant", "cosine", "exponential"] = "constant"
     lr_exponential_halflife: PositiveFloat | None = None
@@ -95,6 +94,37 @@ class Config(BaseModel):
     unit_norm_matrices: bool = False
     attribution_type: Literal["gradient", "ablation", "activation"] = "gradient"
     task_config: TMSTaskConfig | ResidualMLPTaskConfig = Field(..., discriminator="task_name")
+
+    DEPRECATED_CONFIG_KEYS: ClassVar[list[str]] = [
+        "topk_param_attrib_coeff",
+        "orthog_coeff",
+        "hardcode_topk_mask_step",
+        "pnorm_end",
+        "topk_l2_coeff",
+        "spd_type",
+        "sparsity_warmup_pct",
+    ]
+    RENAMED_CONFIG_KEYS: ClassVar[dict[str, str]] = {"topk_act_recon_coeff": "act_recon_coeff"}
+
+    @model_validator(mode="before")
+    def handle_deprecated_config_keys(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
+        """Remove deprecated config keys and change names of any keys that have been renamed."""
+        # Move k from task_config to Config and rename it to C
+        if "task_config" in config_dict and "k" in config_dict["task_config"]:
+            logger.warning("task_config.k is deprecated, please use C in the main Config instead")
+            config_dict["C"] = config_dict["task_config"]["k"]
+            del config_dict["task_config"]["k"]
+
+        for key in list(config_dict.keys()):
+            val = config_dict[key]
+            if key in cls.DEPRECATED_CONFIG_KEYS:
+                logger.warning(f"{key} is deprecated, but has value: {val}. Removing from config.")
+                del config_dict[key]
+            elif key in cls.RENAMED_CONFIG_KEYS:
+                logger.info(f"Renaming {key} to {cls.RENAMED_CONFIG_KEYS[key]}")
+                config_dict[cls.RENAMED_CONFIG_KEYS[key]] = val
+                del config_dict[key]
+        return config_dict
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -178,6 +208,7 @@ def get_common_run_name_suffix(config: Config) -> str:
         run_suffix += f"schatten{config.schatten_coeff:.2e}_"
     if config.act_recon_coeff is not None:
         run_suffix += f"actrecon_{config.act_recon_coeff:.2e}_"
+    run_suffix += f"C{config.C}_"
     run_suffix += f"sd{config.seed}_"
     run_suffix += f"attr-{config.attribution_type[:3]}_"
     run_suffix += f"lr{config.lr:.2e}_"
@@ -186,9 +217,9 @@ def get_common_run_name_suffix(config: Config) -> str:
 
 
 def calc_schatten_loss(
-    As: dict[str, Float[Tensor, "... k d_layer_in m"]],
-    Bs: dict[str, Float[Tensor, "... k m d_layer_out"]],
-    mask: Float[Tensor, "batch k"],
+    As: dict[str, Float[Tensor, "C d_layer_in m"] | Float[Tensor, "n_instances C d_layer_in m"]],
+    Bs: dict[str, Float[Tensor, "C m d_layer_out"] | Float[Tensor, "n_instances C m d_layer_out"]],
+    mask: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"],
     p: float,
     n_params: int,
     device: str,
@@ -214,18 +245,18 @@ def calc_schatten_loss(
     batch_size = mask.shape[0]
 
     for name in As:
-        A = As[name]  # [k, d_in, m] or [n_instances, k, d_in, m]
-        B = Bs[name]  # [k, m, d_out] or [n_instances, k, m, d_out]
-        # mask: [batch, k] or [batch, n_instances, k]
+        A = As[name]  # [C, d_in, m] or [n_instances, C, d_in, m]
+        B = Bs[name]  # [C, m, d_out] or [n_instances, C, m, d_out]
+        # mask: [batch, C] or [batch, n_instances, C]
 
         # Compute S_A = A^T A and S_B = B B^T
-        S_A = einops.einsum(A, A, "... k d_in m, ... k d_in m -> ... k m")
-        S_B = einops.einsum(B, B, "... k m d_out, ... k m d_out -> ... k m")
+        S_A = einops.einsum(A, A, "... C d_in m, ... C d_in m -> ... C m")
+        S_B = einops.einsum(B, B, "... C m d_out, ... C m d_out -> ... C m")
 
         S_AB = S_A * S_B
 
         # Apply topk mask
-        S_AB_topk = einops.einsum(S_AB, mask, "... k m, batch ... k -> batch ... k m")
+        S_AB_topk = einops.einsum(S_AB, mask, "... C m, batch ... C -> batch ... C m")
 
         # Sum the Schatten p-norm
         schatten_penalty = schatten_penalty + ((S_AB_topk + 1e-16) ** (0.5 * p)).sum(
@@ -290,9 +321,9 @@ def calc_param_match_loss(
 
 def calc_lp_sparsity_loss(
     out: Float[Tensor, "batch d_model_out"] | Float[Tensor, "batch n_instances d_model_out"],
-    attributions: Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"],
+    attributions: Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"],
     step_pnorm: float,
-) -> Float[Tensor, "batch k"] | Float[Tensor, "batch n_instances k"]:
+) -> Float[Tensor, "batch C"] | Float[Tensor, "batch n_instances C"]:
     """Calculate the Lp sparsity loss on the attributions.
 
     Args:
@@ -301,7 +332,7 @@ def calc_lp_sparsity_loss(
         step_pnorm: The pnorm to use for the sparsity loss.
     Returns:
         The Lp sparsity loss. Will have an n_instances dimension if the model has an n_instances
-            dimension. Note that we keep the batch and k dimensions as we need them if calculating
+            dimension. Note that we keep the batch and C dimensions as we need them if calculating
             the schatten loss.
     """
     # Average the attributions over the output dimensions
@@ -457,7 +488,7 @@ def optimize(
         ) = None, None, None, None, None
         if config.topk is not None:
             # We always assume the final subnetwork is the one we want to distil
-            topk_attrs: Float[Tensor, "batch ... k"] = (
+            topk_attrs: Float[Tensor, "batch ... C"] = (
                 attributions[..., :-1] if config.distil_from_target else attributions
             )
             if config.exact_topk:
@@ -535,7 +566,7 @@ def optimize(
 
         lp_sparsity_loss = None
         if lp_sparsity_loss_per_k is not None:
-            # Sum over the k dimension (-1) and mean over the batch dimension (0)
+            # Sum over the C dimension (-1) and mean over the batch dimension (0)
             lp_sparsity_loss = lp_sparsity_loss_per_k.sum(dim=-1).mean(dim=0)
 
         loss_terms = {

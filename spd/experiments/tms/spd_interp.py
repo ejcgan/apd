@@ -35,10 +35,10 @@ def plot_vectors(
             arr = subnets[instance_idx, subnet_idx].cpu().detach().numpy()
 
             # Plot each feature with its unique color
-            for k in range(n_features):
-                ax.scatter(arr[k, 0], arr[k, 1], color=colors[k])
+            for j in range(n_features):
+                ax.scatter(arr[j, 0], arr[j, 1], color=colors[j])
                 ax.add_collection(
-                    mc.LineCollection([[(0, 0), (arr[k, 0], arr[k, 1])]], colors=[colors[k]])
+                    mc.LineCollection([[(0, 0), (arr[j, 0], arr[j, 1])]], colors=[colors[j]])
                 )
 
             ax.set_aspect("equal")
@@ -264,7 +264,7 @@ def plot_max_cosine_sim(max_cosine_sim: Float[Tensor, " n_features"]) -> plt.Fig
 
 
 cosine_sims = torch.einsum(
-    "k f h, f h -> k f",
+    "C f h, f h -> C f",
     subnets[instance_idx] / torch.norm(subnets[instance_idx], dim=-1, keepdim=True),
     target_model.linear1.weight[instance_idx]
     / torch.norm(target_model.linear1.weight[instance_idx], dim=-1, keepdim=True),

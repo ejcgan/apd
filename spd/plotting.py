@@ -27,13 +27,13 @@ from spd.utils import (
 
 
 def plot_subnetwork_attributions_statistics(
-    topk_mask: Float[Tensor, "batch_size n_instances k"],
+    topk_mask: Float[Tensor, "batch_size n_instances C"],
 ) -> dict[str, plt.Figure]:
     """Plot vertical bar charts of the number of active subnetworks over the batch for each instance."""
     batch_size = topk_mask.shape[0]
     if topk_mask.ndim == 2:
         n_instances = 1
-        topk_mask = einops.repeat(topk_mask, "batch k -> batch n_instances k", n_instances=1)
+        topk_mask = einops.repeat(topk_mask, "batch C -> batch n_instances C", n_instances=1)
     else:
         n_instances = topk_mask.shape[1]
 
@@ -130,7 +130,7 @@ def plot_subnetwork_correlations(
         n_instances = spd_model.n_instances
     else:
         n_instances = 1
-        topk_masks = einops.repeat(topk_masks, "batch k -> batch n_instances k", n_instances=1)
+        topk_masks = einops.repeat(topk_masks, "batch C -> batch n_instances C", n_instances=1)
 
     fig, axs = plt.subplots(
         ncols=n_instances, nrows=1, figsize=(5 * n_instances, 5), constrained_layout=True

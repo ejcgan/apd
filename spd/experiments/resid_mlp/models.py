@@ -20,10 +20,7 @@ from spd.models.components import Linear, LinearComponent
 from spd.module_utils import init_param_
 from spd.run_spd import Config, ResidualMLPTaskConfig
 from spd.types import WANDB_PATH_PREFIX, ModelPath
-from spd.utils import (
-    handle_deprecated_config_keys,
-    replace_deprecated_param_names,
-)
+from spd.utils import replace_deprecated_param_names
 from spd.wandb_utils import download_wandb_file, fetch_latest_wandb_checkpoint, fetch_wandb_run_dir
 
 
@@ -55,7 +52,7 @@ class MLP(nn.Module):
                 n_instances=n_instances,
                 init_type=init_type,
                 init_scale=init_scale,
-                k=spd_kwargs["k"],
+                C=spd_kwargs["C"],
                 m=spd_kwargs["m"],
             )
             self.mlp_out = LinearComponent(
@@ -64,7 +61,7 @@ class MLP(nn.Module):
                 n_instances=n_instances,
                 init_type=init_type,
                 init_scale=init_scale,
-                k=spd_kwargs["k"],
+                C=spd_kwargs["C"],
                 m=spd_kwargs["m"],
             )
         else:
@@ -95,7 +92,7 @@ class MLP(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch ... d_model"],
-        topk_mask: Bool[Tensor, "batch ... k"] | None = None,
+        topk_mask: Bool[Tensor, "batch ... C"] | None = None,
     ) -> tuple[Float[Tensor, "batch ... d_model"],]:
         """Run a forward pass and cache pre and post activations for each parameter.
 
@@ -282,7 +279,7 @@ class ResidualMLPSPDConfig(BaseModel):
     in_bias: bool
     out_bias: bool
     init_scale: float
-    k: PositiveInt
+    C: PositiveInt
     m: PositiveInt | None = None
     init_type: Literal["kaiming_uniform", "xavier_normal"] = "xavier_normal"
 
@@ -296,7 +293,7 @@ class ResidualMLPSPDModel(SPDModel):
         self.config = config
         self.n_features = config.n_features  # Required for backward compatibility
         self.n_instances = config.n_instances  # Required for backward compatibility
-        self.k = config.k  # Required for backward compatibility
+        self.C = config.C  # Required for backward compatibility
 
         assert config.act_fn_name in ["gelu", "relu"]
         self.act_fn = F.gelu if config.act_fn_name == "gelu" else F.relu
@@ -319,7 +316,7 @@ class ResidualMLPSPDModel(SPDModel):
                     in_bias=config.in_bias,
                     out_bias=config.out_bias,
                     act_fn=self.act_fn,
-                    spd_kwargs={"k": config.k, "m": self.m},
+                    spd_kwargs={"C": config.C, "m": self.m},
                 )
                 for _ in range(config.n_layers)
             ]
@@ -329,7 +326,7 @@ class ResidualMLPSPDModel(SPDModel):
     def forward(
         self,
         x: Float[Tensor, "batch n_instances n_features"],
-        topk_mask: Bool[Tensor, "batch n_instances k"] | None = None,
+        topk_mask: Bool[Tensor, "batch n_instances C"] | None = None,
     ) -> Float[Tensor, "batch n_instances d_embed"]:
         """
         Returns:
@@ -402,7 +399,6 @@ class ResidualMLPSPDModel(SPDModel):
 
         with open(paths.final_config) as f:
             final_config_dict = yaml.safe_load(f)
-        final_config_dict = handle_deprecated_config_keys(final_config_dict)
         config = Config(**final_config_dict)
 
         with open(paths.resid_mlp_train_config) as f:
@@ -413,7 +409,7 @@ class ResidualMLPSPDModel(SPDModel):
 
         assert isinstance(config.task_config, ResidualMLPTaskConfig)
         resid_mlp_spd_config = ResidualMLPSPDConfig(
-            **resid_mlp_train_config_dict["resid_mlp_config"], k=config.task_config.k, m=config.m
+            **resid_mlp_train_config_dict["resid_mlp_config"], C=config.C, m=config.m
         )
         model = cls(config=resid_mlp_spd_config)
         params = torch.load(paths.checkpoint, weights_only=True, map_location="cpu")

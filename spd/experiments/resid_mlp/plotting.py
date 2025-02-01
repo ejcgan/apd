@@ -557,53 +557,53 @@ def spd_calculate_virtual_weights(model: ResidualMLPSPDModel, device: str) -> di
     n_features = model.config.n_features
     d_embed = model.config.d_embed
     d_mlp = model.config.d_mlp
-    k_max = model.config.k
+    C = model.config.C
     has_bias1 = model.layers[0].bias1 is not None
     has_bias2 = model.layers[0].bias2 is not None
     n_layers = model.config.n_layers
     # Get weights
     W_E: Float[Tensor, "n_instances n_features d_embed"] = model.W_E
     W_U: Float[Tensor, "n_instances d_embed n_features"] = model.W_U
-    W_in: Float[Tensor, "n_instances k d_embed d_mlp_eff"] = torch.cat(
+    W_in: Float[Tensor, "n_instances C d_embed d_mlp_eff"] = torch.cat(
         [model.layers[i].mlp_in.component_weights for i in range(n_layers)], dim=-1
     )
-    W_out: Float[Tensor, "n_instances k d_mlp_eff d_embed"] = torch.cat(
+    W_out: Float[Tensor, "n_instances C d_mlp_eff d_embed"] = torch.cat(
         [model.layers[i].mlp_out.component_weights for i in range(n_layers)],
         dim=-2,
     )
-    b_in: Float[Tensor, "n_instances k d_mlp_eff"] | None = (
+    b_in: Float[Tensor, "n_instances C d_mlp_eff"] | None = (
         torch.cat([model.layers[i].bias1 for i in range(n_layers)], dim=-1) if has_bias1 else None
     )
-    b_out: Float[Tensor, "n_instances k d_embed"] | None = (
+    b_out: Float[Tensor, "n_instances C d_embed"] | None = (
         torch.stack([model.layers[i].bias2 for i in range(n_layers)]).sum(dim=0)
         if has_bias2
         else None
     )
     assert W_E.shape == (n_instances, n_features, d_embed)
     assert W_U.shape == (n_instances, d_embed, n_features)
-    assert W_in.shape == (n_instances, k_max, d_embed, n_layers * d_mlp)
-    assert W_out.shape == (n_instances, k_max, n_layers * d_mlp, d_embed)
-    assert b_in.shape == (n_instances, k_max, n_layers * d_mlp) if b_in is not None else True
-    assert b_out.shape == (n_instances, k_max, d_embed) if b_out is not None else True
+    assert W_in.shape == (n_instances, C, d_embed, n_layers * d_mlp)
+    assert W_out.shape == (n_instances, C, n_layers * d_mlp, d_embed)
+    assert b_in.shape == (n_instances, C, n_layers * d_mlp) if b_in is not None else True
+    assert b_out.shape == (n_instances, C, d_embed) if b_out is not None else True
     # Calculate connection strengths / virtual weights
-    in_conns: Float[Tensor, "n_instances k n_features d_mlp"] = einops.einsum(
+    in_conns: Float[Tensor, "n_instances C n_features d_mlp"] = einops.einsum(
         W_E,
         W_in,
-        "n_instances n_features d_embed, n_instances k d_embed d_mlp -> n_instances k n_features d_mlp",
+        "n_instances n_features d_embed, n_instances C d_embed d_mlp -> n_instances C n_features d_mlp",
     )
-    out_conns: Float[Tensor, "n_instances k d_mlp n_features"] = einops.einsum(
+    out_conns: Float[Tensor, "n_instances C d_mlp n_features"] = einops.einsum(
         W_out,
         W_E,
-        "n_instances k d_mlp d_embed, n_instances n_features d_embed -> n_instances k d_mlp n_features",
+        "n_instances C d_mlp d_embed, n_instances n_features d_embed -> n_instances C d_mlp n_features",
     )
-    diag_relu_conns: Float[Tensor, "n_instances k n_features d_mlp"] = einops.einsum(
+    diag_relu_conns: Float[Tensor, "n_instances C n_features d_mlp"] = einops.einsum(
         in_conns,
         out_conns,
-        "n_instances k n_features d_mlp, n_instances k d_mlp n_features -> n_instances k n_features d_mlp",
+        "n_instances C n_features d_mlp, n_instances C d_mlp n_features -> n_instances C n_features d_mlp",
     )
-    assert in_conns.shape == (n_instances, k_max, n_features, n_layers * d_mlp)
-    assert out_conns.shape == (n_instances, k_max, n_layers * d_mlp, n_features)
-    assert diag_relu_conns.shape == (n_instances, k_max, n_features, n_layers * d_mlp)
+    assert in_conns.shape == (n_instances, C, n_features, n_layers * d_mlp)
+    assert out_conns.shape == (n_instances, C, n_layers * d_mlp, n_features)
+    assert diag_relu_conns.shape == (n_instances, C, n_features, n_layers * d_mlp)
     virtual_weights = {
         "W_E": W_E,
         "W_U": W_U,
@@ -633,8 +633,8 @@ def spd_calculate_diag_relu_conns(
     elif k_select == "sum_nocrossterms":
         return virtual_weights["diag_relu_conns"].sum(dim=1)
     else:
-        in_conns: Float[Tensor, "n_instances k n_features d_mlp"] = virtual_weights["in_conns"]
-        out_conns: Float[Tensor, "n_instances k d_mlp n_features"] = virtual_weights["out_conns"]
+        in_conns: Float[Tensor, "n_instances C n_features d_mlp"] = virtual_weights["in_conns"]
+        out_conns: Float[Tensor, "n_instances C d_mlp n_features"] = virtual_weights["out_conns"]
         if k_select == "sum_onlycrossterms":
             nocross_diag_relu_conns: Float[Tensor, "n_instances n_features d_mlp"] = (
                 virtual_weights["diag_relu_conns"].sum(dim=1)
@@ -665,7 +665,7 @@ def plot_spd_relu_contribution(
     k_plot_limit: int | None = None,
 ):
     offset = 4
-    nrows = (k_plot_limit or spd_model.config.k) + offset
+    nrows = (k_plot_limit or spd_model.config.C) + offset
     fig1, axes1 = plt.subplots(nrows, 1, figsize=(20, 3 + 2 * nrows), constrained_layout=True)
     axes1 = np.atleast_1d(axes1)  # type: ignore
     fig2, axes2 = plt.subplots(nrows, 1, figsize=(10, 3 + 2 * nrows), constrained_layout=True)
@@ -696,14 +696,14 @@ def plot_spd_relu_contribution(
     axes2[3].set_ylabel("SPD model sum only cross terms", fontsize=8)
     axes1[3].set_xlabel("")
     axes2[3].set_xlabel("")
-    for k in range(k_plot_limit or spd_model.config.k):
-        relu_conns = spd_calculate_diag_relu_conns(spd_model, device, k_select=k)
-        relu_contribution_plot(axes1[k + offset], axes2[k + offset], relu_conns, spd_model, device)
-        axes1[k + offset].set_ylabel(f"k={k}")
-        axes2[k + offset].set_ylabel(f"k={k}")
-        if k < (k_plot_limit or spd_model.config.k) - 1:
-            axes1[k + offset].set_xlabel("")
-            axes2[k + offset].set_xlabel("")
+    for c in range(k_plot_limit or spd_model.config.C):
+        relu_conns = spd_calculate_diag_relu_conns(spd_model, device, k_select=c)
+        relu_contribution_plot(axes1[c + offset], axes2[c + offset], relu_conns, spd_model, device)
+        axes1[c + offset].set_ylabel(f"k={c}")
+        axes2[c + offset].set_ylabel(f"k={c}")
+        if (k_plot_limit or spd_model.config.C) - 1 > c:
+            axes1[c + offset].set_xlabel("")
+            axes2[c + offset].set_xlabel("")
     return fig1, fig2
 
 
@@ -715,7 +715,7 @@ def plot_spd_feature_contributions(
 ) -> plt.Figure:
     instance_idx = 0
     offset = 4
-    nrows = (k_plot_limit or spd_model.config.k) + offset
+    nrows = (k_plot_limit or spd_model.config.C) + offset
     fig1, axes1 = plt.subplots(nrows, 1, figsize=(20, 3 + 2 * nrows), constrained_layout=True)
     axes1 = np.atleast_1d(axes1)  # type: ignore
 
@@ -749,11 +749,11 @@ def plot_spd_feature_contributions(
     # axes1[2].set_xlabel("")
     # axes2[2].set_xlabel("")
 
-    diag_relu_conns: Float[Tensor, "k n_features d_mlp"] = spd_calculate_virtual_weights(
+    diag_relu_conns: Float[Tensor, "C n_features d_mlp"] = spd_calculate_virtual_weights(
         spd_model, device
     )["diag_relu_conns"][instance_idx]
     max_component_indices = diag_relu_conns.max(dim=-1).values.argmax(dim=0)
-    # For each feature, use the k values based on the max_component_indices
+    # For each feature, use the C values based on the max_component_indices
     max_component_contributions: Float[Tensor, "n_features d_mlp"] = diag_relu_conns[
         max_component_indices, torch.arange(spd_model.config.n_features)
     ]
@@ -790,18 +790,18 @@ def plot_spd_feature_contributions(
     axes1[2].set_ylim(y_min, y_max)
     axes1[3].set_ylim(y_min, y_max)
 
-    for k in range(k_plot_limit or spd_model.config.k):
-        relu_conns = spd_calculate_diag_relu_conns(spd_model, device, k_select=k)
+    for c in range(k_plot_limit or spd_model.config.C):
+        relu_conns = spd_calculate_diag_relu_conns(spd_model, device, k_select=c)
         # relu_contribution_plot(axes1[k + offset], relu_conns, spd_model, device)
         feature_contribution_plot(
-            ax=axes1[k + offset],
+            ax=axes1[c + offset],
             all_diag_relu_conns=relu_conns[instance_idx],
             model=spd_model,
             n_features=n_features,
         )
-        axes1[k + offset].set_ylabel(f"k={k}")
-        if k < (k_plot_limit or spd_model.config.k) - 1:
-            axes1[k + offset].set_xlabel("")
+        axes1[c + offset].set_ylabel(f"k={c}")
+        if (k_plot_limit or spd_model.config.C) - 1 > c:
+            axes1[c + offset].set_xlabel("")
     return fig1
 
 
@@ -841,12 +841,12 @@ def plot_spd_feature_contributions_truncated(
     # spd_relu_conns: Float[Tensor, "n_features d_mlp"] = spd_calculate_diag_relu_conns(
     #     spd_model, device, k_select="sum_nocrossterms"
     # )[0, :n_features, :]
-    # Instead, we want find the k which has the largest neuron for each feature index
-    diag_relu_conns: Float[Tensor, "k n_features d_mlp"] = spd_calculate_virtual_weights(
+    # Instead, we want find the C which has the largest neuron for each feature index
+    diag_relu_conns: Float[Tensor, "C n_features d_mlp"] = spd_calculate_virtual_weights(
         spd_model, device
     )["diag_relu_conns"][0, :, :n_features, :]
     max_component_indices = diag_relu_conns.max(dim=-1).values.argmax(dim=0)
-    # For each feature, use the k values based on the max_component_indices
+    # For each feature, use the C values based on the max_component_indices
     max_component_contributions: Float[Tensor, "n_features d_mlp"] = diag_relu_conns[
         max_component_indices, torch.arange(n_features)
     ]
@@ -962,7 +962,7 @@ def collect_per_feature_losses(
 
             # Get rid of the n_instances dimension for simplicity
             batch: Float[Tensor, "batch n_features"] = batch.squeeze(1)
-            batch_topk_mask: Float[Tensor, "batch k"] = batch_topk_mask.squeeze(1)
+            batch_topk_mask: Float[Tensor, "batch C"] = batch_topk_mask.squeeze(1)
             target_out: Float[Tensor, "batch n_features"] = target_out.squeeze(1)
             spd_out_batch_topk: Float[Tensor, "batch n_features"] = spd_out_batch_topk.squeeze(1)
             spd_out_sample_topk: Float[Tensor, "batch n_features"] = spd_out_sample_topk.squeeze(1)
@@ -1058,10 +1058,10 @@ def collect_average_components_per_feature(
         assert batch.shape[1] == 1
 
         # Get which components were active for each feature
-        topk_mask_raw: Float[Tensor, "batch n_instances k"] = model_fn(batch).topk_mask
+        topk_mask_raw: Float[Tensor, "batch n_instances C"] = model_fn(batch).topk_mask
 
         batch: Float[Tensor, "batch n_features"] = batch.squeeze(1)
-        topk_mask: Float[Tensor, "batch k"] = topk_mask_raw.squeeze(1)
+        topk_mask: Float[Tensor, "batch C"] = topk_mask_raw.squeeze(1)
 
         active_features_batch: Float[Tensor, "batch n_features"] = (batch != 0).float()
 
@@ -1162,8 +1162,8 @@ def plot_virtual_weights_target_spd(
     target_virtual_weights = calculate_virtual_weights(target_model, device)
     spd_virtual_weights = spd_calculate_virtual_weights(model=model, device=device)
     instance_idx = 0
-    fig = plt.figure(constrained_layout=True, figsize=(10, 2 * model.config.k + 8))
-    gs = fig.add_gridspec(ncols=2, nrows=model.config.k + 1 + 2)
+    fig = plt.figure(constrained_layout=True, figsize=(10, 2 * model.config.C + 8))
+    gs = fig.add_gridspec(ncols=2, nrows=model.config.C + 1 + 2)
     ax_ID = fig.add_subplot(gs[:2, :])
     W_E_W_U = einops.einsum(
         target_virtual_weights["W_E"][instance_idx],
@@ -1201,21 +1201,21 @@ def plot_virtual_weights_target_spd(
         colorbar_format="%.2f",
         norm=norm,
     )
-    for ki in range(model.config.k):
-        ax1 = fig.add_subplot(gs[3 + ki, 0])
-        ax2 = fig.add_subplot(gs[3 + ki, 1])
+    for c in range(model.config.C):
+        ax1 = fig.add_subplot(gs[3 + c, 0])
+        ax2 = fig.add_subplot(gs[3 + c, 1])
         plot_matrix(
             ax1,
-            spd_virtual_weights["in_conns"][instance_idx, ki].T,
+            spd_virtual_weights["in_conns"][instance_idx, c].T,
             "$(W_E W_{in})^T$",
             "Features",
-            f"k={ki} Neurons",
+            f"c={c} Neurons",
             colorbar_format="%.2f",
             norm=norm,
         )
         plot_matrix(
             ax2,
-            spd_virtual_weights["out_conns"][instance_idx, ki],
+            spd_virtual_weights["out_conns"][instance_idx, c],
             "$W_{out} W_U$",
             "Features",
             "Neurons",
@@ -1232,12 +1232,12 @@ def plot_resid_vs_mlp_out(
     topk_model_fn: Callable[
         [
             Float[Tensor, "batch n_instances n_features"],
-            Float[Tensor, "batch n_instances k"] | None,
+            Float[Tensor, "batch n_instances C"] | None,
         ],
         SPDOutputs,
     ]
     | None = None,
-    subnet_indices: Float[Tensor, " k"] | None = None,
+    subnet_indices: Float[Tensor, " C"] | None = None,
     instance_idx: int = 0,
     feature_idx: int = 0,
 ):
@@ -1441,7 +1441,7 @@ def get_scrubbed_losses(
     top1_model_fn: Callable[
         [
             Float[Tensor, "batch n_instances n_features"],
-            Float[Tensor, "batch n_instances k"] | None,
+            Float[Tensor, "batch n_instances C"] | None,
         ],
         SPDOutputs,
     ],
@@ -1485,13 +1485,13 @@ def get_scrubbed_losses(
         active_features = torch.where(batch != 0)
         # Randomly assign 0 or 1 to topk mask
         random_topk_mask = torch.randint(
-            0, 2, (batch_size, model.config.n_instances, model.config.k)
+            0, 2, (batch_size, model.config.n_instances, model.config.C)
         )
         scrubbed_topk_mask = torch.randint(
-            0, 2, (batch_size, model.config.n_instances, model.config.k)
+            0, 2, (batch_size, model.config.n_instances, model.config.C)
         )
         antiscrubbed_topk_mask = torch.randint(
-            0, 2, (batch_size, model.config.n_instances, model.config.k)
+            0, 2, (batch_size, model.config.n_instances, model.config.C)
         )
         for b, i, f in zip(*active_features, strict=False):
             s = subnet_indices[f.item()]
@@ -1612,7 +1612,7 @@ def plot_scrub_losses(
 
 def plot_feature_response_with_subnets(
     topk_model_fn: Callable[
-        [Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances k"]],
+        [Float[Tensor, "batch n_instances n_features"], Float[Tensor, "batch n_instances C"]],
         SPDOutputs,
     ],
     device: str,
@@ -1628,7 +1628,7 @@ def plot_feature_response_with_subnets(
     n_instances = model_config.n_instances
     n_features = model_config.n_features
     batch_size = batch_size or n_features
-    k = model_config.k
+    C = model_config.C
 
     if color_map is None:
         color_map = {
@@ -1644,8 +1644,8 @@ def plot_feature_response_with_subnets(
 
     batch = torch.zeros(batch_size, n_instances, n_features, device=device)
     batch[:, instance_idx, feature_idx] = 1
-    topk_mask_blue = torch.zeros(batch_size, n_instances, k, device=device)
-    topk_mask_red = torch.zeros(batch_size, n_instances, k, device=device)
+    topk_mask_blue = torch.zeros(batch_size, n_instances, C, device=device)
+    topk_mask_red = torch.zeros(batch_size, n_instances, C, device=device)
     topk_mask_blue[:, :, subnet_idx] = 1
     for s in range(batch_size):
         # Randomly ablate half the features
@@ -1661,8 +1661,8 @@ def plot_feature_response_with_subnets(
     assert torch.allclose(
         topk_mask_red[:, :, subnet_idx], torch.zeros_like(topk_mask_red[:, :, subnet_idx])
     )
-    zeros_topk_mask = torch.zeros(batch_size, n_instances, k, device=device)
-    ones_topk_mask = torch.ones(batch_size, n_instances, k, device=device)
+    zeros_topk_mask = torch.zeros(batch_size, n_instances, C, device=device)
+    ones_topk_mask = torch.ones(batch_size, n_instances, C, device=device)
     out_WE_WU_only = topk_model_fn(batch, zeros_topk_mask).spd_topk_model_output[:, instance_idx, :]
 
     out_red = topk_model_fn(batch, topk_mask_red)
@@ -1753,7 +1753,7 @@ def get_feature_subnet_map(
     top1_model_fn: Callable[
         [
             Float[Tensor, "batch n_instances n_features"],
-            Float[Tensor, "batch n_instances k"] | None,
+            Float[Tensor, "batch n_instances C"] | None,
         ],
         SPDOutputs,
     ],
