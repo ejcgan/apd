@@ -179,11 +179,7 @@ def calc_grad_attributions(
     layer to be in the computational graph. To do this, we multiply a detached version of the
     pre_weight_acts by the subnet parameters.
 
-    NOTE: Multplying the pre_weight_acts by the subnet parameters would be less efficient than multiplying
-    the pre_weight_acts by A and then B. In the future, we can implement this more efficient version. For
-    now, this simpler version is fine.
-
-    Note: This code may be run in between the training forward pass, and the loss.backward() and
+    NOTE: This code may be run in between the training forward pass, and the loss.backward() and
     opt.step() calls; it must not mess with the training. The reason the current implementation is
     fine to run anywhere is that we just use autograd rather than backward which does not
     populate the .grad attributes. Unrelatedly, we use retain_graph=True in a bunch of cases
@@ -208,7 +204,13 @@ def calc_grad_attributions(
     attribution_scores: Float[Tensor, "batch ... C"] = torch.zeros(
         attr_shape, device=target_out.device, dtype=target_out.dtype
     )
-
+    component_acts = {}
+    for param_name in pre_weight_act_names:
+        component_acts[param_name] = einops.einsum(
+            pre_weight_acts[param_name + ".hook_pre"].detach().clone(),
+            component_weights[param_name],
+            "... d_in, ... C d_in d_out -> ... C d_out",
+        )
     out_dim = target_out.shape[-1]
     for feature_idx in range(out_dim):
         feature_attributions: Float[Tensor, "batch ... C"] = torch.zeros(
@@ -218,13 +220,10 @@ def calc_grad_attributions(
             target_out[..., feature_idx].sum(), list(post_weight_acts.values()), retain_graph=True
         )
         for i, param_name in enumerate(post_weight_act_names):
-            component_acts = einops.einsum(
-                pre_weight_acts[param_name + ".hook_pre"].detach().clone(),
-                component_weights[param_name],
-                "... d_in, ... C d_in d_out -> ... C d_out",
-            )
             feature_attributions += einops.einsum(
-                grad_post_weight_acts[i], component_acts, "... d_out ,... C d_out -> ... C"
+                grad_post_weight_acts[i],
+                component_acts[param_name],
+                "... d_out ,... C d_out -> ... C",
             )
 
         attribution_scores += feature_attributions**2
