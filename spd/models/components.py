@@ -107,11 +107,6 @@ class LinearComponent(nn.Module):
         component_acts = einops.einsum(
             inner_acts, self.B, "batch ... C m, ... C m d_out -> batch ... C d_out"
         )
-
-        if topk_mask is not None:
-            component_acts = einops.einsum(
-                component_acts, topk_mask, "batch ... C d_out, batch ... C -> batch ... C d_out"
-            )
         self.hook_component_acts(component_acts)
 
         # Sum over subnetwork dimension
