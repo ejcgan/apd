@@ -60,5 +60,5 @@ task_config:
   feature_probability: 0.05
   # feature_probability: 0.02 # synced inputs
   data_generation_type: "at_least_zero_active"
-  pretrained_model_path: "wandb:spd-train-tms/runs/tmzweoqk"
+  pretrained_model_path: "wandb:spd-train-tms/runs/hi2v3pro"
   # pretrained_model_path: "wandb:spd-train-tms/runs/rkflpubi" # synced inputs

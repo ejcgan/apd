@@ -1,0 +1,41 @@
+# Example sweep config for MNIST decomposition
+program: spd/experiments/mnist/mnist_decomposition.py
+method: grid
+metric:
+  name: total_loss
+  goal: minimize
+parameters:
+  topk:
+    values: [5, 10]
+  C:
+    values: [20, 30]
+  batch_size:
+    value: 256
+  steps:
+    value: 1000
+  print_freq:
+    value: 100
+  image_freq:
+    value: 200
+  lr:
+    value: 0.001
+  schatten_coeff:
+    values: [0.1, 1.0]
+  schatten_pnorm:
+    value: 2.0
+  topk_recon_coeff:
+    values: [0.1, 1.0]
+  attribution_type:
+    value: "gradient"
+  batch_topk:
+    value: true
+  lr_schedule:
+    value: "cosine"
+  lr_warmup_pct:
+    value: 0.1
+  task_config:
+    parameters:
+      task_name:
+        value: "mnist"
+      pretrained_model_path:
+        value: "path/to/pretrained/mnist_model.pth"  # Replace with actual path

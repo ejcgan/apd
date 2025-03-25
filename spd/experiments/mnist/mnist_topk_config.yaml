@@ -1,0 +1,32 @@
+# Example configuration for MNIST decomposition with topk
+wandb_project: "spd-mnist"
+seed: 0
+topk: 1
+batch_topk: true
+exact_topk: false
+batch_size: 256
+steps: 3000
+print_freq: 100
+image_freq: 100
+image_on_first_step: true
+slow_images: false
+save_freq: 500
+lr: 1e-3
+out_recon_coeff: 0.1
+act_recon_coeff: null
+param_match_coeff: 1.0
+topk_recon_coeff: 1.0
+schatten_coeff: 1.0
+schatten_pnorm: 2.0
+lp_sparsity_coeff: null
+distil_from_target: false
+pnorm: null
+C: 20
+m: 64
+lr_schedule: "cosine"
+lr_warmup_pct: 0.1
+unit_norm_matrices: false
+attribution_type: "gradient"
+task_config:
+  task_name: "mnist"
+  pretrained_model_path: "path/to/pretrained/mnist_model.pth"  # Replace with actual path

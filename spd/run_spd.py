@@ -48,6 +48,12 @@ class TMSTaskConfig(BaseModel):
     pretrained_model_path: ModelPath  # e.g. wandb:spd-tms/runs/si0zbfxf
 
 
+class MNISTTaskConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    task_name: Literal["mnist"] = "mnist"
+    pretrained_model_path: ModelPath  # e.g. wandb:spd-mnist/runs/abc123
+
+
 class ResidualMLPTaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_name: Literal["residual_mlp"] = "residual_mlp"
@@ -179,14 +185,14 @@ class Config(BaseModel):
 
         # Check that lr_exponential_halflife is not None if lr_schedule is "exponential"
         if self.lr_schedule == "exponential":
-            assert (
-                self.lr_exponential_halflife is not None
-            ), "lr_exponential_halflife must be set if lr_schedule is exponential"
+            assert self.lr_exponential_halflife is not None, (
+                "lr_exponential_halflife must be set if lr_schedule is exponential"
+            )
 
         if self.schatten_coeff is not None:
-            assert (
-                self.schatten_pnorm is not None
-            ), "schatten_pnorm must be set if schatten_coeff is set"
+            assert self.schatten_pnorm is not None, (
+                "schatten_pnorm must be set if schatten_coeff is set"
+            )
 
         return self
 
@@ -360,9 +366,9 @@ def calc_act_recon(
         The activation reconstruction loss. Will have an n_instances dimension if the model has an
             n_instances dimension, otherwise a scalar.
     """
-    assert (
-        target_post_weight_acts.keys() == layer_acts.keys()
-    ), f"Layer keys must match: {target_post_weight_acts.keys()} != {layer_acts.keys()}"
+    assert target_post_weight_acts.keys() == layer_acts.keys(), (
+        f"Layer keys must match: {target_post_weight_acts.keys()} != {layer_acts.keys()}"
+    )
 
     device = next(iter(layer_acts.values())).device
 
@@ -495,9 +501,9 @@ def optimize(
                 # Currently only valid for batch_topk and n_instances = 1. Would need to change the
                 # topk argument in calc_topk_mask to allow for tensors if relaxing these constraints
                 assert config.batch_topk, "exact_topk only works if batch_topk is True"
-                assert (
-                    hasattr(model, "n_instances") and model.n_instances == 1
-                ), "exact_topk only works if n_instances = 1"
+                assert hasattr(model, "n_instances") and model.n_instances == 1, (
+                    "exact_topk only works if n_instances = 1"
+                )
                 # Get the exact number of active features over the batch
                 exact_topk = ((batch != 0).sum() / batch.shape[0]).item()
                 topk_mask = calc_topk_mask(topk_attrs, exact_topk, batch_topk=True)
